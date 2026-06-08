@@ -97,6 +97,16 @@
       font-style: italic;
       font-weight: 400;
     }
+    .section {
+      font-size: 11px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #F6851F;
+      margin: 18px 0 2px 0;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #24275E;
+    }
     .footer {
       margin-top: 24px;
       padding-top: 14px;
@@ -126,18 +136,27 @@
   <div class="container" id="content"></div>
 
   <script>
-    // Field definitions: [URL parameter key, Display label]
+    // Field definitions.
+    // Field entry: [URL key, Display label] or [URL key, Display label, fallbackKey]
+    // Section header: {section: "Heading"}
     var FIELDS = [
-      ["so",       "SO Number"],
+      {section: "Product"},
+      ["no",       "Line Item #"],
       ["model",    "Model"],
+      ["series",   "Series"],
+      ["type",     "Type"],
+      ["watt",     "Wattage"],
+      ["kelvin",   "Color Temp (K)"],
+      {section: "Production"},
+      ["conveyor", "Conveyor"],
+      ["date",     "Production Date"],
       ["line",     "Assembly Line"],
       ["foreman",  "Foreman"],
-      ["asm",      "Assembler"],
       ["qc",       "QC Checker"],
-      ["start",    "Production Start"],
-      ["end",      "Production End"],
-      ["client",   "Client"],
-      ["status",   "Status"]
+      ["status",   "Status"],
+      {section: "Order"},
+      ["so",       "SO Number"],
+      ["customer", "Customer", "client"]
     ];
 
     function getParam(name) {
@@ -149,24 +168,52 @@
       var content = document.getElementById("content");
       var mo = getParam("mo");
 
-      if (!mo) {
-        content.innerHTML = '<div class="nodata"><h2>No MO data</h2>' +
-          '<p>This page expects MO data in the URL.</p></div>';
+      // Render whenever any record data is present, not only when an MO exists.
+      var hasAny = !!(mo && mo.trim());
+      for (var j = 0; j < FIELDS.length && !hasAny; j++) {
+        var f = FIELDS[j];
+        if (f.section) continue;
+        var rv = getParam(f[0]);
+        if ((!rv || !rv.trim()) && f[2]) rv = getParam(f[2]);
+        if (rv && rv.trim()) hasAny = true;
+      }
+      if (!hasAny) {
+        content.innerHTML = '<div class="nodata"><h2>No record data</h2>' +
+          '<p>This page expects production data in the URL.</p></div>';
         return;
       }
 
+      // Headline: MO number if present, otherwise Model, then Line Item #.
+      var bannerLabel, bannerValue;
+      if (mo && mo.trim()) {
+        bannerLabel = "MO Number"; bannerValue = mo;
+      } else if (getParam("model").trim()) {
+        bannerLabel = "Model"; bannerValue = getParam("model");
+      } else if (getParam("no").trim()) {
+        bannerLabel = "Line Item #"; bannerValue = getParam("no");
+      } else {
+        bannerLabel = "Record"; bannerValue = "\u2014";
+      }
+
       var html = '<div class="mo-banner">' +
-                 '<div class="label">MO Number</div>' +
-                 '<div class="value">' + escapeHtml(mo) + '</div>' +
+                 '<div class="label">' + escapeHtml(bannerLabel) + '</div>' +
+                 '<div class="value">' + escapeHtml(bannerValue) + '</div>' +
                  '</div>';
 
       for (var i = 0; i < FIELDS.length; i++) {
-        var key = FIELDS[i][0], label = FIELDS[i][1];
+        var entry = FIELDS[i];
+        if (entry.section) {
+          html += '<div class="section">' + escapeHtml(entry.section) + '</div>';
+          continue;
+        }
+        var key = entry[0], label = entry[1], fallback = entry[2];
         var raw = getParam(key);
-        var value = raw && raw.trim() ? escapeHtml(raw) : '<span class="empty">Not recorded</span>';
+        if ((!raw || !raw.trim()) && fallback) { raw = getParam(fallback); }
+        var has = raw && raw.trim();
+        var value = has ? escapeHtml(raw) : '<span class="empty">Not recorded</span>';
         html += '<div class="field">' +
                 '<div class="label">' + label + '</div>' +
-                '<div class="value' + (raw && raw.trim() ? '' : ' empty') + '">' + value + '</div>' +
+                '<div class="value' + (has ? '' : ' empty') + '">' + value + '</div>' +
                 '</div>';
       }
 
@@ -175,7 +222,7 @@
               '</div>';
 
       content.innerHTML = html;
-      if (mo) document.title = "NLC — " + mo;
+      document.title = "NLC \u2014 " + bannerValue;
     }
 
     function escapeHtml(s) {
