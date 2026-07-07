@@ -216,13 +216,17 @@ async function renderFull(email){
   if(!r) return notFound(true);
 
   const { data:workers } = await db.from("worker_entries")
-    .select("qty,conveyor,start_time,finish_time,work_type,remarks,total_mins,cycle_time,staff(full_name,called_name)")
+    .select("qty,conveyor,start_time,finish_time,work_type,remarks,total_mins,cycle_time,staff_id,staff_ids")
     .eq("record_id", r.id).order("conveyor",{ascending:true});
 
+  const { data:staffList } = await db.from("staff").select("id,full_name");
+  const nameMap = {}; (staffList||[]).forEach(s=>nameMap[s.id]=s.full_name);
+  const workersOf = w => { const ids=(w.staff_ids&&w.staff_ids.length)?w.staff_ids:(w.staff_id?[w.staff_id]:[]);
+    return ids.length?ids.map(i=>nameMap[i]||("ID "+i)).join(", "):"Unassigned"; };
+
   const rows = (workers||[]).map(w=>{
-    const name = w.staff ? (w.staff.full_name||w.staff.called_name) : "Unassigned";
     return `<tr>
-      <td><div class="work-name">${esc(name)}</div><div class="work-sub">${esc(w.conveyor||"")}</div></td>
+      <td><div class="work-name">${esc(workersOf(w))}</div><div class="work-sub">${esc(w.conveyor||"")}</div></td>
       <td>${esc(t(w.start_time))}&ndash;${esc(t(w.finish_time))}</td>
       <td>${w.work_type==="S"?"Stickers":"Complete"}</td>
       <td class="num">${w.qty??0}</td>
