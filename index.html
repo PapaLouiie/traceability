@@ -45,6 +45,10 @@
   input:focus,select:focus{outline:2px solid var(--orange); outline-offset:1px; border-color:transparent}
   .hint{font-size:12px; color:var(--muted); margin-top:5px}
   .hint b{color:var(--navy); font-variant-numeric:tabular-nums}
+  .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
+  .chip-w{display:inline-flex; align-items:center; gap:6px; background:var(--orange-soft); color:#a55a12;
+    border:1px solid #f3d3ad; border-radius:999px; padding:4px 6px 4px 11px; font-size:13px; font-weight:600}
+  .chip-w b{cursor:pointer; color:#c0392b; font-weight:800; padding:0 3px; line-height:1}
 
   .btn{display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:11px 18px;
     font-size:15px; font-weight:700; border:none; border-radius:10px; cursor:pointer; font-family:inherit}
@@ -121,6 +125,7 @@ const CONVEYORS = Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStar
 let STAFF = [];
 let SESSION = null;
 let current = null;   // currently open record
+let selWorkers = [];  // staff ids chosen for the next entry
 
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const t5  = v => v ? String(v).slice(0,5) : "";
@@ -132,6 +137,13 @@ const minsBetween = (s,f)=>{ if(!s||!f) return null;
   const [a,b]=s.split(":").map(Number), [c,d]=f.split(":").map(Number);
   let m=(c*60+d)-(a*60+b); if(m<0) m+=24*60; return m; };
 const staffName = id => { if(!id) return "Unassigned"; const s=STAFF.find(x=>x.id===id); return s?s.full_name:("ID "+id); };
+const namesOf = w => { const ids=(w.staff_ids&&w.staff_ids.length)?w.staff_ids:(w.staff_id?[w.staff_id]:[]);
+  return ids.length?ids.map(staffName).join(", "):"Unassigned"; };
+function renderChips(){
+  const box=document.getElementById("w-chips"); if(!box) return;
+  box.innerHTML=selWorkers.map(id=>`<span class="chip-w">${esc(staffName(id))}<b data-rm="${esc(id)}">\u00d7</b></span>`).join("");
+  box.querySelectorAll("[data-rm]").forEach(x=>x.onclick=()=>{ selWorkers=selWorkers.filter(i=>i!==x.dataset.rm); renderChips(); });
+}
 
 /* ---------------- boot ---------------- */
 (async function(){
@@ -188,6 +200,7 @@ async function renderHome(){
       <button class="btn primary" id="newBtn">+ New record</button>
       <input id="search" placeholder="Search serial, SO, MO, model, customer">
       <button class="btn ghost" id="searchBtn">Search</button>
+      <a class="btn ghost" href="dashboard.html">Dashboard</a>
     </div>
     <div class="card"><h2>Recent</h2><div id="list"><div class="spinner"></div></div></div>
   `);
@@ -278,7 +291,11 @@ function renderEditor(rec){
         <div class="pad">
           <p class="hint" style="margin:0 0 12px">One entry per worker. Total time and cycle time are calculated for you from the start time, completion time and quantity.</p>
           <div class="row">
-            <div class="field full"><label>Worker</label><select id="w-staff">${staffOpts("")}</select></div>
+            <div class="field full"><label>Workers (add one or more)</label>
+              <input id="w-staff-in" list="stafflist" placeholder="Type a name and press Enter">
+              <datalist id="stafflist">${STAFF.map(s=>`<option value="${esc(s.full_name)} (${esc(s.id)})">`).join("")}</datalist>
+              <div id="w-chips" class="chips"></div>
+            </div>
             <div class="field"><label>Conveyor</label><select id="w-conv"><option value=""></option>${CONVEYORS.map(c=>`<option>${c}</option>`).join("")}</select></div>
             <div class="field"><label>Task</label><select id="w-type"><option value="C">Complete</option><option value="S">Stickers</option></select></div>
             <div class="field"><label>Start time</label><input id="w-start" type="time"></div>
@@ -316,6 +333,20 @@ function renderEditor(rec){
       prev.innerHTML=`Total time <b>${mins} min</b>`+(cyc!=null?` &middot; Cycle <b>${Math.round(cyc*10)/10} min/unit</b>`:` &middot; enter a quantity for cycle time`);
     };
     ["w-start","w-finish","w-qty"].forEach(id=>document.getElementById(id).addEventListener("input",calc));
+
+    selWorkers=[];
+    const wIn=document.getElementById("w-staff-in");
+    const commitWorker=()=>{
+      const v=wIn.value.trim(); if(!v) return;
+      const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
+      if(!s){ banner("No worker matches \u201c"+v+"\u201d."); return; }
+      if(!selWorkers.includes(s.id)) selWorkers.push(s.id);
+      wIn.value=""; renderChips();
+    };
+    wIn.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commitWorker(); } });
+    wIn.addEventListener("change",commitWorker);
+    renderChips();
+
     loadWorkers();
   }
 }
@@ -357,10 +388,11 @@ async function saveRecord(){
     loadWorkers();
     banner("Record created. Serial "+data.serial+".",true);
   } else {
-    const { data, error }=await db.from("production_records").update(payload).eq("id",current.id).select().single();
+    const { data, error }=await db.from("production_records").update(payload).eq("id",current.id).select();
     btn.disabled=false; btn.textContent=label;
-    if(error){ banner("Could not save changes: "+error.message); return; }
-    current=data; banner("Changes saved.",true);
+    if(error){ banner(error.message.includes("duplicate")?"Another record already has this date, SO and model.":"Could not save changes: "+error.message); return; }
+    if(!data||!data.length){ banner("No matching record was updated. Reopen it and try again."); return; }
+    current=data[0]; banner("Changes saved.",true);
   }
 }
 
@@ -368,7 +400,7 @@ async function saveRecord(){
 async function loadWorkers(){
   const box=document.getElementById("workers");
   const { data, error }=await db.from("worker_entries")
-    .select("id,qty,conveyor,start_time,finish_time,work_type,total_mins,cycle_time,remarks,staff_id")
+    .select("id,qty,conveyor,start_time,finish_time,work_type,total_mins,cycle_time,remarks,staff_id,staff_ids")
     .eq("record_id",current.id).order("created_at",{ascending:true});
   const wc=document.getElementById("wc");
   if(error){ box.innerHTML=`<div class="empty">Could not load entries: ${esc(error.message)}</div>`; return; }
@@ -380,7 +412,7 @@ async function loadWorkers(){
   box.innerHTML=`<table><thead><tr><th>Worker</th><th>Conveyor</th><th>Start</th><th>Finish</th><th>Task</th>
     <th class="num">Qty</th><th class="num">Total min</th><th class="num">Cycle</th><th></th></tr></thead><tbody>${
     data.map(w=>`<tr>
-      <td>${esc(staffName(w.staff_id))}${w.remarks?`<div class="meta">${esc(w.remarks)}</div>`:""}</td>
+      <td>${esc(namesOf(w))}${w.remarks?`<div class="meta">${esc(w.remarks)}</div>`:""}</td>
       <td>${esc(w.conveyor||"-")}</td>
       <td>${esc(t5(w.start_time))||"-"}</td>
       <td>${esc(t5(w.finish_time))||"-"}</td>
@@ -402,7 +434,8 @@ async function loadWorkers(){
 async function addWorker(){
   const payload={
     record_id:current.id,
-    staff_id:document.getElementById("w-staff").value||null,
+    staff_ids:selWorkers.length?selWorkers.slice():null,
+    staff_id:selWorkers[0]||null,
     conveyor:document.getElementById("w-conv").value||null,
     work_type:document.getElementById("w-type").value,
     start_time:document.getElementById("w-start").value||null,
@@ -414,8 +447,9 @@ async function addWorker(){
   const { error }=await db.from("worker_entries").insert(payload);
   btn.disabled=false; btn.textContent="+ Add entry";
   if(error){ banner("Could not add entry: "+error.message); return; }
-  ["w-staff","w-conv","w-start","w-finish","w-remarks"].forEach(id=>document.getElementById(id).value="");
+  ["w-staff-in","w-conv","w-start","w-finish","w-remarks"].forEach(id=>document.getElementById(id).value="");
   document.getElementById("w-qty").value="0";
+  selWorkers=[]; renderChips(); document.getElementById("wPreview").innerHTML="";
   loadWorkers();
 }
 
