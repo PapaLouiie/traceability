@@ -76,6 +76,15 @@
   .rec .sn{font-weight:700; color:var(--navy); font-variant-numeric:tabular-nums; font-size:14px}
   .rec .meta{font-size:12.5px; color:var(--muted)}
   .rec .r-right{margin-left:auto; text-align:right}
+  .flag{display:inline-block; font-size:10px; font-weight:800; letter-spacing:.5px; color:#fff;
+    background:#c0392b; padding:1px 6px; border-radius:5px; vertical-align:middle}
+  .modal-bg{position:fixed; inset:0; background:rgba(26,28,69,.45); display:flex; align-items:center;
+    justify-content:center; padding:16px; z-index:50}
+  .modal{background:#fff; border-radius:14px; max-width:460px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.3);
+    max-height:86vh; overflow:auto}
+  .modal .mh{padding:16px; border-bottom:1px solid var(--line); font-weight:700; color:var(--navy); display:flex; align-items:center}
+  .modal .mh .x{margin-left:auto; cursor:pointer; color:var(--muted); font-size:20px; line-height:1}
+  .modal .mb{padding:16px}
 
   table{width:100%; border-collapse:collapse; font-size:13.5px}
   thead th{background:#f0f1f8; color:var(--navy); text-align:left; padding:9px 12px; font-size:11px; letter-spacing:.5px}
@@ -110,6 +119,7 @@
 <div id="root"><div class="spinner"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 /* ---------------- CONFIG ---------------- */
 const SUPABASE_URL  = "https://ekwjpezbepkzmcaiwzcm.supabase.co";
@@ -191,40 +201,77 @@ function wireShell(){
   if(so) so.onclick=async()=>{ await db.auth.signOut(); location.reload(); };
 }
 
-/* ---------------- home: new + search + recent ---------------- */
+/* ---------------- home: new + search + filter + recent ---------------- */
+let listFilter={year:"",month:""};
 async function renderHome(){
+  const now=new Date();
+  const years=[now.getFullYear(),now.getFullYear()-1,now.getFullYear()-2];
+  const months=[["01","January"],["02","February"],["03","March"],["04","April"],["05","May"],["06","June"],
+                ["07","July"],["08","August"],["09","September"],["10","October"],["11","November"],["12","December"]];
   root.innerHTML = shell(`
     <h1>Production records</h1>
     <p class="sub">Create a record to generate its serial and QR, then fill details as assembly progresses.</p>
     <div class="toolbar">
       <button class="btn primary" id="newBtn">+ New record</button>
-      <input id="search" placeholder="Search serial, SO, MO, model, customer">
+      <input id="search" placeholder="Search serial, SO, MO, model, customer, ref">
       <button class="btn ghost" id="searchBtn">Search</button>
       <a class="btn ghost" href="dashboard.html">Dashboard</a>
     </div>
-    <div class="card"><h2>Recent</h2><div id="list"><div class="spinner"></div></div></div>
+    <div class="toolbar">
+      <select id="f-month" style="max-width:150px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
+      <select id="f-year" style="max-width:120px"><option value="">All years</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
+      <button class="btn ghost" id="clearFil">Clear</button>
+      <button class="btn orange" id="exportBtn" style="margin-left:auto">Export Excel</button>
+    </div>
+    <div class="card"><h2>Records</h2><div id="list"><div class="spinner"></div></div></div>
   `);
   wireShell();
   document.getElementById("newBtn").onclick=()=>renderEditor(null);
   const doSearch=()=>loadList(document.getElementById("search").value.trim());
   document.getElementById("searchBtn").onclick=doSearch;
   document.getElementById("search").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; loadList(document.getElementById("search").value.trim()); };
+  document.getElementById("f-month").onchange=applyFil;
+  document.getElementById("f-year").onchange=applyFil;
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year;
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:""}; document.getElementById("f-month").value=""; document.getElementById("f-year").value=""; loadList(document.getElementById("search").value.trim()); };
+  document.getElementById("exportBtn").onclick=openExport;
   loadList("");
+}
+
+function monthRange(year,month){
+  // returns [from,to) ISO dates for the chosen filter, or null if none
+  if(!year && !month) return null;
+  const y=year?parseInt(year,10):null;
+  if(y && month){ const m=parseInt(month,10); const from=`${y}-${month}-01`;
+    const to=(m===12)?`${y+1}-01-01`:`${y}-${String(m+1).padStart(2,"0")}-01`; return [from,to]; }
+  if(y && !month){ return [`${y}-01-01`,`${y+1}-01-01`]; }
+  if(!y && month){ const yy=new Date().getFullYear(); const m=parseInt(month,10);
+    const to=(m===12)?`${yy+1}-01-01`:`${yy}-${String(m+1).padStart(2,"0")}-01`; return [`${yy}-${month}-01`,to]; }
+  return null;
 }
 
 async function loadList(q){
   const list=document.getElementById("list");
+  const rng=monthRange(listFilter.year,listFilter.month);
   let query=db.from("production_records")
-    .select("id,serial,production_date,so_number,model,customer,status")
-    .order("created_at",{ascending:false}).limit(30);
-  if(q) query=query.or(`serial.ilike.%${q}%,so_number.ilike.%${q}%,mo_number.ilike.%${q}%,model.ilike.%${q}%,customer.ilike.%${q}%`);
+    .select("id,serial,production_date,so_number,model,customer,customer_reference,status")
+    .order("production_date",{ascending:false}).limit(rng?1000:30);
+  if(rng){ query=query.gte("production_date",rng[0]).lt("production_date",rng[1]); }
+  if(q) query=query.or(`serial.ilike.%${q}%,so_number.ilike.%${q}%,mo_number.ilike.%${q}%,model.ilike.%${q}%,customer.ilike.%${q}%,customer_reference.ilike.%${q}%`);
   const { data, error }=await query;
-  if(error){ list.innerHTML=`<div class="empty">Could not load records.</div>`; return; }
-  if(!data.length){ list.innerHTML=`<div class="empty">${q?"No matches for \u201c"+esc(q)+"\u201d.":"No records yet. Create your first one."}</div>`; return; }
+  if(error){ list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
+  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng)?"No records match the current search or filter.":"No records yet. Create your first one."}</div>`; return; }
+
+  // flags (open CCRs) for the listed records
+  let flags={};
+  try{ const { data:fl }=await db.from("v_record_flags").select("record_id,open_ccrs").in("record_id",data.map(r=>r.id));
+    (fl||[]).forEach(f=>flags[f.record_id]=f.open_ccrs); }catch(e){}
+
   list.innerHTML=data.map(r=>`<div class="rec" data-id="${r.id}">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")}</div>
-        <div class="meta">${esc(r.model||"")} &middot; SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")}${flags[r.id]?` <span class="flag" title="${flags[r.id]} open quality issue(s)">CCR</span>`:""}</div>
+        <div class="meta">${esc(r.model||"")} &middot; SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
       </div>
       <div class="r-right">
         <span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"Open")}</span>
@@ -245,6 +292,73 @@ function opt(list,val){ return list.map(o=>`<option ${o===val?"selected":""}>${e
 function staffOpts(val){
   return `<option value="">Select worker\u2026</option>`+STAFF.map(s=>
     `<option value="${esc(s.id)}" ${s.id===val?"selected":""}>${esc(s.full_name)} (${esc(s.id)})</option>`).join("");
+}
+
+/* ---------------- modal helper ---------------- */
+function modal(title, bodyHTML){
+  const bg=document.createElement("div"); bg.className="modal-bg";
+  bg.innerHTML=`<div class="modal"><div class="mh">${esc(title)}<span class="x">&times;</span></div><div class="mb">${bodyHTML}</div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  return { el:bg, close };
+}
+
+/* ---------------- Excel export (date range) ---------------- */
+function openExport(){
+  const today=new Date().toISOString().slice(0,10);
+  const first=today.slice(0,8)+"01";
+  const m=modal("Export records to Excel", `
+    <p class="hint" style="margin:0 0 12px">Choose the production date range. Every record in that range is exported with its totals.</p>
+    <div class="row">
+      <div class="field"><label>From</label><input id="ex-from" type="date" value="${first}"></div>
+      <div class="field"><label>To</label><input id="ex-to" type="date" value="${today}"></div>
+    </div>
+    <button class="btn primary" id="ex-go">Export</button>
+    <div class="banner" id="ex-msg" style="margin-top:12px"></div>`);
+  const go=m.el.querySelector("#ex-go"), msg=m.el.querySelector("#ex-msg");
+  go.onclick=async()=>{
+    const from=m.el.querySelector("#ex-from").value, to=m.el.querySelector("#ex-to").value;
+    if(!from||!to){ msg.className="banner show err"; msg.textContent="Pick both dates."; return; }
+    go.disabled=true; go.textContent="Building\u2026";
+    try{
+      const rows=await fetchRecordsRange(from,to);
+      if(!rows.length){ msg.className="banner show err"; msg.textContent="No records in that range."; go.disabled=false; go.textContent="Export"; return; }
+      buildWorkbook(rows,from,to);
+      m.close();
+    }catch(e){ msg.className="banner show err"; msg.textContent="Export failed: "+e.message; go.disabled=false; go.textContent="Export"; }
+  };
+}
+async function fetchRecordsRange(from,to){
+  const out=[]; const size=1000; let start=0;
+  while(true){
+    const { data, error }=await db.from("v_record_summary")
+      .select("*").gte("production_date",from).lte("production_date",to)
+      .order("production_date",{ascending:true}).range(start,start+size-1);
+    if(error) throw error;
+    out.push(...(data||[]));
+    if(!data || data.length<size) break;
+    start+=size;
+  }
+  return out;
+}
+function buildWorkbook(rows,from,to){
+  const part=(m,i)=>((m||"").split("-")[i]||"");
+  const data=rows.map(r=>({
+    Serial:r.serial, "Production Date":r.production_date, "SO Number":r.so_number, "MO Number":r.mo_number,
+    Customer:r.customer, "Customer Reference":r.customer_reference, Model:r.model,
+    Series:r.series, Type:part(r.model,1), Watt:part(r.model,2), "Kelvin/Rating":part(r.model,3),
+    Line:r.line, Foreman:r.foreman, "QC Checker":r.qc_checker, Status:r.status,
+    "Total Units":r.total_units, "Entries":r.entry_count, "Workers":r.worker_count,
+    "Total Minutes":r.total_mins!=null?Math.round(r.total_mins):"",
+    "Avg Cycle (min/unit)":r.avg_cycle_time!=null?Math.round(r.avg_cycle_time*100)/100:""
+  }));
+  const ws=XLSX.utils.json_to_sheet(data);
+  ws["!cols"]=Object.keys(data[0]).map(k=>({wch:Math.max(12,k.length+2)}));
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Records");
+  XLSX.writeFile(wb,`NLC_Records_${from}_to_${to}.xlsx`);
 }
 
 function renderEditor(rec){
@@ -268,6 +382,7 @@ function renderEditor(rec){
         <div class="field full"><label>Model *</label><input id="f-model" value="${esc(r.model||"")}" placeholder="SM-01-37W-4000K">
           <div class="hint" id="parse"></div></div>
         <div class="field full"><label>Customer</label><input id="f-customer" value="${esc(r.customer||"")}"></div>
+        <div class="field full"><label>Customer reference (item name on customer PO)</label><input id="f-cref" value="${esc(r.customer_reference||"")}" placeholder="e.g. DL DOWNLIGHT 25W ROUND WHITE"></div>
         <div class="field"><label>Line</label><input id="f-line" list="convlist" value="${esc(r.line||"")}"></div>
         <div class="field"><label>Foreman</label><input id="f-foreman" list="namelist" value="${esc(r.foreman||"")}"></div>
         <div class="field"><label>QC checker</label><input id="f-qc" list="namelist" value="${esc(r.qc_checker||"")}"></div>
@@ -308,6 +423,20 @@ function renderEditor(rec){
         </div>
         <div id="workers"></div>
       </div>
+
+      <div class="card"><h2>Quality issues &amp; CCRs <span id="ccrCount" class="chip" style="margin-left:auto"></span></h2>
+        <div class="pad">
+          <p class="hint" style="margin:0 0 12px">Flag a customer complaint, return, or quality issue on this record. You can attach photos or documents.</p>
+          <div class="row">
+            <div class="field"><label>Issue type</label><select id="ccr-type">
+              <option>Quality Issue</option><option>Customer Complaint</option><option>Customer Return</option></select></div>
+            <div class="field"><label>Attach documents</label><input id="ccr-files" type="file" multiple></div>
+            <div class="field full"><label>Description</label><input id="ccr-desc" placeholder="Describe the issue"></div>
+          </div>
+          <button class="btn orange" id="raiseCcr">Raise issue</button>
+        </div>
+        <div id="ccrList"></div>
+      </div>
     </div>
   `);
   wireShell();
@@ -323,6 +452,8 @@ function renderEditor(rec){
   if(!isNew){
     document.getElementById("printBtn").onclick=()=>printTag(current);
     document.getElementById("addWorker").onclick=addWorker;
+    document.getElementById("raiseCcr").onclick=raiseCcr;
+    loadCcrs();
     const prev=document.getElementById("wPreview");
     const calc=()=>{
       const s=document.getElementById("w-start").value, f=document.getElementById("w-finish").value;
@@ -365,6 +496,7 @@ async function saveRecord(){
     mo_number:document.getElementById("f-mo").value.trim()||null,
     model:document.getElementById("f-model").value.trim(),
     customer:document.getElementById("f-customer").value.trim()||null,
+    customer_reference:document.getElementById("f-cref").value.trim()||null,
     line:document.getElementById("f-line").value.trim()||null,
     foreman:document.getElementById("f-foreman").value.trim()||null,
     qc_checker:document.getElementById("f-qc").value.trim()||null
@@ -388,9 +520,14 @@ async function saveRecord(){
     loadWorkers();
     banner("Record created. Serial "+data.serial+".",true);
   } else {
-    const { data, error }=await db.from("production_records").update(payload).eq("id",current.id).select();
+    let resp=await db.from("production_records").update(payload).eq("id",current.id).select();
+    if(resp.error && /fetch/i.test(resp.error.message||"")){ await new Promise(r=>setTimeout(r,900));
+      resp=await db.from("production_records").update(payload).eq("id",current.id).select(); }
+    const { data, error }=resp;
     btn.disabled=false; btn.textContent=label;
-    if(error){ banner(error.message.includes("duplicate")?"Another record already has this date, SO and model.":"Could not save changes: "+error.message); return; }
+    if(error){ banner(/fetch/i.test(error.message||"")
+        ?"Network error reaching the database. Check your connection or whether the Supabase project is paused, then try again."
+        :(error.message.includes("duplicate")?"Another record already has this date, SO and model.":"Could not save changes: "+error.message)); return; }
     if(!data||!data.length){ banner("No matching record was updated. Reopen it and try again."); return; }
     current=data[0]; banner("Changes saved.",true);
   }
@@ -457,6 +594,67 @@ async function delWorker(id){
   const { error }=await db.from("worker_entries").delete().eq("id",id);
   if(error){ banner("Could not remove entry: "+error.message); return; }
   loadWorkers();
+}
+
+/* ---------------- CCR / quality issues ---------------- */
+async function loadCcrs(){
+  const box=document.getElementById("ccrList"); const cnt=document.getElementById("ccrCount");
+  const { data:ccrs, error }=await db.from("ccrs").select("*").eq("record_id",current.id).order("created_at",{ascending:false});
+  if(error){ box.innerHTML=`<div class="empty">Could not load issues: ${esc(error.message)}</div>`; return; }
+  const open=(ccrs||[]).filter(c=>c.status!=="Resolved").length;
+  cnt.textContent=(ccrs.length||0)+(ccrs.length===1?" issue":" issues"); cnt.setAttribute("data-tone",open?"hold":"ok");
+  if(!ccrs.length){ box.innerHTML=`<div class="empty">No quality issues on this record.</div>`; return; }
+  const ids=ccrs.map(c=>c.id);
+  let docsByCcr={};
+  const { data:docs }=await db.from("ccr_documents").select("*").in("ccr_id",ids);
+  (docs||[]).forEach(d=>{ (docsByCcr[d.ccr_id]=docsByCcr[d.ccr_id]||[]).push(d); });
+  box.innerHTML=ccrs.map(c=>`<div style="padding:14px 16px;border-top:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="chip" data-tone="${c.status==='Resolved'?'ok':'hold'}">${esc(c.issue_type||'Issue')}</span>
+        <span class="meta">${esc(c.status)} &middot; ${esc((c.created_at||'').slice(0,10))}${c.created_by?' &middot; '+esc(c.created_by):''}</span>
+        ${c.status!=='Resolved'?`<button class="btn link" style="margin-left:auto" data-resolve="${c.id}">Mark resolved</button>`:''}
+      </div>
+      <div class="val" style="margin-top:6px">${esc(c.description)}</div>
+      <div class="chips" style="margin-top:8px">${(docsByCcr[c.id]||[]).map(d=>`<a class="chip-w" style="text-decoration:none;cursor:pointer" data-doc="${esc(d.storage_path)}" data-name="${esc(d.file_name)}">\u{1F4CE} ${esc(d.file_name)}</a>`).join("")}</div>
+    </div>`).join("");
+  box.querySelectorAll("[data-resolve]").forEach(b=>b.onclick=()=>resolveCcr(b.dataset.resolve));
+  box.querySelectorAll("[data-doc]").forEach(a=>a.onclick=()=>openDoc(a.dataset.doc));
+}
+
+async function raiseCcr(){
+  const desc=document.getElementById("ccr-desc").value.trim();
+  const type=document.getElementById("ccr-type").value;
+  const files=document.getElementById("ccr-files").files;
+  if(!desc){ banner("Describe the issue before raising it."); return; }
+  const btn=document.getElementById("raiseCcr"); btn.disabled=true; btn.textContent="Saving\u2026";
+  const { data:ccr, error }=await db.from("ccrs")
+    .insert({record_id:current.id, issue_type:type, description:desc, created_by:SESSION.user.email})
+    .select().single();
+  if(error){ btn.disabled=false; btn.textContent="Raise issue"; banner("Could not raise issue: "+error.message); return; }
+  // upload any documents
+  let uploadErr=null;
+  for(const f of files){
+    const path=`${current.id}/${ccr.id}/${Date.now()}_${f.name.replace(/[^\w.\-]/g,"_")}`;
+    const { error:upErr }=await db.storage.from("ccr-docs").upload(path,f);
+    if(upErr){ uploadErr=upErr.message; continue; }
+    await db.from("ccr_documents").insert({ccr_id:ccr.id, file_name:f.name, storage_path:path, uploaded_by:SESSION.user.email});
+  }
+  btn.disabled=false; btn.textContent="Raise issue";
+  document.getElementById("ccr-desc").value=""; document.getElementById("ccr-files").value="";
+  banner(uploadErr?("Issue raised, but a file failed: "+uploadErr):"Issue raised.",!uploadErr);
+  loadCcrs();
+}
+
+async function resolveCcr(id){
+  const { error }=await db.from("ccrs").update({status:"Resolved"}).eq("id",id);
+  if(error){ banner("Could not update issue: "+error.message); return; }
+  loadCcrs();
+}
+
+async function openDoc(path){
+  const { data, error }=await db.storage.from("ccr-docs").createSignedUrl(path,3600);
+  if(error){ banner("Could not open file: "+error.message); return; }
+  window.open(data.signedUrl,"_blank");
 }
 
 /* ---------------- print ---------------- */
