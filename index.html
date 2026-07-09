@@ -24,6 +24,9 @@
   .brand-tag{font-size:11px; letter-spacing:2.5px; text-transform:uppercase; color:#b9bce0;
     padding-left:12px; border-left:1px solid rgba(255,255,255,.28)}
   .who{margin-left:auto; text-align:right; font-size:11.5px; color:#c3c6e6}
+  .brand-home{color:#c3c6e6; text-decoration:none; font-size:12.5px; font-weight:600; padding:4px 11px;
+    border:1px solid rgba(255,255,255,.28); border-radius:8px; cursor:pointer}
+  .brand-home:hover{background:rgba(255,255,255,.12); color:#fff}
   .who a{color:#fff; text-decoration:underline; cursor:pointer; font-weight:600}
 
   h1{font-size:20px; margin:22px 0 2px; color:var(--navy)}
@@ -87,8 +90,11 @@
   .modal .mb{padding:16px}
 
   table{width:100%; border-collapse:collapse; font-size:13.5px}
+  .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  table{min-width:640px}
   thead th{background:#f0f1f8; color:var(--navy); text-align:left; padding:9px 12px; font-size:11px; letter-spacing:.5px}
   tbody td{padding:9px 12px; border-top:1px solid var(--line)}
+  tfoot .totals td{border-top:2px solid var(--navy); background:#f4f5fb; font-weight:800; color:var(--navy); padding:11px 12px}
   tbody td.num{text-align:right; font-variant-numeric:tabular-nums}
 
   .qrbox{display:flex; gap:16px; align-items:center; flex-wrap:wrap}
@@ -133,9 +139,17 @@ const root = document.getElementById("root");
 const STATUSES = ["Open","In Progress","QC","Completed","Hold"];
 const CONVEYORS = Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let STAFF = [];
+let LIGHT_TYPES = [];
 let SESSION = null;
 let current = null;   // currently open record
 let selWorkers = [];  // staff ids chosen for the next entry
+
+const TAGMAP = { "Customer Complaint":{l:"Complaint",c:"#c0392b"}, "Customer Return":{l:"Return",c:"#8e44ad"}, "Quality Issue":{l:"Quality",c:"#c9820b"} };
+function tagsHTML(openTypes){
+  if(!openTypes||!openTypes.length) return "";
+  return openTypes.map(t=>{ const m=TAGMAP[t]||{l:t,c:"#c0392b"};
+    return `<span class="flag" style="background:${m.c}" title="Open ${esc(t)}">${esc(m.l)}</span>`; }).join(" ");
+}
 
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const t5  = v => v ? String(v).slice(0,5) : "";
@@ -162,6 +176,8 @@ function renderChips(){
   SESSION = session;
   const { data:staff } = await db.from("staff").select("id,full_name,called_name").order("full_name");
   STAFF = staff||[];
+  const { data:lt } = await db.from("light_types").select("name").order("name");
+  LIGHT_TYPES = (lt||[]).map(x=>x.name);
   renderHome();
 })();
 
@@ -192,20 +208,24 @@ function renderLogin(msg){
 
 function shell(inner){
   return `<header><div class="head-in">
-      <img class="brand-logo" src="${LOGO}" alt="NLC"><span class="brand-tag">Console</span>
+      <a id="homeLink" title="Home" style="display:flex;align-items:center;text-decoration:none"><img class="brand-logo" src="${LOGO}" alt="NLC"></a>
+      <span class="brand-tag">Console</span>
+      <a id="homeBtn" class="brand-home">Home</a>
       <div class="who">${esc(SESSION.user.email)}<br><a id="signout">Sign out</a></div>
     </div></header><div class="wrap">${inner}</div>`;
 }
 function wireShell(){
   const so=document.getElementById("signout");
   if(so) so.onclick=async()=>{ await db.auth.signOut(); location.reload(); };
+  const hl=document.getElementById("homeLink"), hb=document.getElementById("homeBtn");
+  if(hl) hl.onclick=(e)=>{ e.preventDefault(); renderHome(); };
+  if(hb) hb.onclick=renderHome;
 }
 
 /* ---------------- home: new + search + filter + recent ---------------- */
-let listFilter={year:"",month:""};
 async function renderHome(){
   const now=new Date();
-  const years=[now.getFullYear(),now.getFullYear()-1,now.getFullYear()-2];
+  const maxY=now.getFullYear()+4; const years=[]; for(let y=maxY;y>=2024;y--) years.push(y);
   const months=[["01","January"],["02","February"],["03","March"],["04","April"],["05","May"],["06","June"],
                 ["07","July"],["08","August"],["09","September"],["10","October"],["11","November"],["12","December"]];
   root.innerHTML = shell(`
@@ -218,8 +238,9 @@ async function renderHome(){
       <a class="btn ghost" href="dashboard.html">Dashboard</a>
     </div>
     <div class="toolbar">
-      <select id="f-month" style="max-width:150px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
-      <select id="f-year" style="max-width:120px"><option value="">All years</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
+      <select id="f-month" style="max-width:140px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
+      <select id="f-year" style="max-width:110px"><option value="">All years</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
+      <select id="f-tag" style="max-width:170px"><option value="">All records</option><option value="any">Has any issue</option><option value="Quality Issue">Has quality issue</option><option value="Customer Complaint">Has complaint</option><option value="Customer Return">Has return</option></select>
       <button class="btn ghost" id="clearFil">Clear</button>
       <button class="btn orange" id="exportBtn" style="margin-left:auto">Export Excel</button>
     </div>
@@ -230,11 +251,12 @@ async function renderHome(){
   const doSearch=()=>loadList(document.getElementById("search").value.trim());
   document.getElementById("searchBtn").onclick=doSearch;
   document.getElementById("search").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; loadList(document.getElementById("search").value.trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.tag=document.getElementById("f-tag").value; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
-  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year;
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:""}; document.getElementById("f-month").value=""; document.getElementById("f-year").value=""; loadList(document.getElementById("search").value.trim()); };
+  document.getElementById("f-tag").onchange=applyFil;
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-tag").value=listFilter.tag||"";
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",tag:""}; document.getElementById("f-month").value=""; document.getElementById("f-year").value=""; document.getElementById("f-tag").value=""; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -251,27 +273,42 @@ function monthRange(year,month){
   return null;
 }
 
+let listFilter={year:"",month:"",tag:""};
 async function loadList(q){
   const list=document.getElementById("list");
   const rng=monthRange(listFilter.year,listFilter.month);
+
+  // tag filter -> matching record ids
+  let tagIds=null;
+  if(listFilter.tag){
+    let fq=db.from("v_record_flags").select("record_id,open_types,open_ccrs");
+    if(listFilter.tag==="any") fq=fq.gt("open_ccrs",0);
+    else fq=fq.contains("open_types",[listFilter.tag]);
+    const { data:fids, error:ferr }=await fq;
+    if(ferr){ list.innerHTML=`<div class="empty">Could not apply tag filter: ${esc(ferr.message)}</div>`; return; }
+    tagIds=(fids||[]).map(f=>f.record_id);
+    if(!tagIds.length){ list.innerHTML=`<div class="empty">No records match the selected tag filter.</div>`; return; }
+  }
+
   let query=db.from("production_records")
-    .select("id,serial,production_date,so_number,model,customer,customer_reference,status")
-    .order("production_date",{ascending:false}).limit(rng?1000:30);
+    .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status")
+    .order("production_date",{ascending:false}).limit((rng||listFilter.tag)?1000:30);
   if(rng){ query=query.gte("production_date",rng[0]).lt("production_date",rng[1]); }
+  if(tagIds){ query=query.in("id",tagIds); }
   if(q) query=query.or(`serial.ilike.%${q}%,so_number.ilike.%${q}%,mo_number.ilike.%${q}%,model.ilike.%${q}%,customer.ilike.%${q}%,customer_reference.ilike.%${q}%`);
   const { data, error }=await query;
   if(error){ list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng)?"No records match the current search or filter.":"No records yet. Create your first one."}</div>`; return; }
+  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng||listFilter.tag)?"No records match the current search or filter.":"No records yet. Create your first one."}</div>`; return; }
 
-  // flags (open CCRs) for the listed records
+  // open issue types per listed record, for badges
   let flags={};
-  try{ const { data:fl }=await db.from("v_record_flags").select("record_id,open_ccrs").in("record_id",data.map(r=>r.id));
-    (fl||[]).forEach(f=>flags[f.record_id]=f.open_ccrs); }catch(e){}
+  try{ const { data:fl }=await db.from("v_record_flags").select("record_id,open_types").in("record_id",data.map(r=>r.id));
+    (fl||[]).forEach(f=>flags[f.record_id]=f.open_types||[]); }catch(e){}
 
   list.innerHTML=data.map(r=>`<div class="rec" data-id="${r.id}">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")}${flags[r.id]?` <span class="flag" title="${flags[r.id]} open quality issue(s)">CCR</span>`:""}</div>
-        <div class="meta">${esc(r.model||"")} &middot; SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")} ${tagsHTML(flags[r.id])}</div>
+        <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
       </div>
       <div class="r-right">
         <span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"Open")}</span>
@@ -347,7 +384,9 @@ function buildWorkbook(rows,from,to){
   const part=(m,i)=>((m||"").split("-")[i]||"");
   const data=rows.map(r=>({
     Serial:r.serial, "Production Date":r.production_date, "SO Number":r.so_number, "MO Number":r.mo_number,
-    Customer:r.customer, "Customer Reference":r.customer_reference, Model:r.model,
+    Customer:r.customer, "Customer Reference":r.customer_reference,
+    "Odoo Variant Name":r.odoo_variant_name, "Odoo Variant ID":r.odoo_variant_id,
+    "Light Type":r.light_type, Model:r.model,
     Series:r.series, Type:part(r.model,1), Watt:part(r.model,2), "Kelvin/Rating":part(r.model,3),
     Line:r.line, Foreman:r.foreman, "QC Checker":r.qc_checker, Status:r.status,
     "Total Units":r.total_units, "Entries":r.entry_count, "Workers":r.worker_count,
@@ -383,6 +422,10 @@ function renderEditor(rec){
           <div class="hint" id="parse"></div></div>
         <div class="field full"><label>Customer</label><input id="f-customer" value="${esc(r.customer||"")}"></div>
         <div class="field full"><label>Customer reference (item name on customer PO)</label><input id="f-cref" value="${esc(r.customer_reference||"")}" placeholder="e.g. DL DOWNLIGHT 25W ROUND WHITE"></div>
+        <div class="field"><label>Light type <a id="addLight" style="color:var(--orange);cursor:pointer;font-weight:700;text-transform:none;letter-spacing:0"> + add</a></label>
+          <select id="f-light"><option value=""></option>${LIGHT_TYPES.map(x=>`<option ${x===(r.light_type||"")?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
+        <div class="field"><label>Odoo variant name</label><input id="f-ovn" value="${esc(r.odoo_variant_name||"")}"></div>
+        <div class="field"><label>Odoo variant ID</label><input id="f-ovid" value="${esc(r.odoo_variant_id||"")}"></div>
         <div class="field"><label>Line</label><input id="f-line" list="convlist" value="${esc(r.line||"")}"></div>
         <div class="field"><label>Foreman</label><input id="f-foreman" list="namelist" value="${esc(r.foreman||"")}"></div>
         <div class="field"><label>QC checker</label><input id="f-qc" list="namelist" value="${esc(r.qc_checker||"")}"></div>
@@ -390,6 +433,7 @@ function renderEditor(rec){
       <datalist id="convlist">${CONVEYORS.map(c=>`<option value="${c}">`).join("")}</datalist>
       <datalist id="namelist">${nameList}</datalist>
       <button class="btn primary" id="save">${isNew?"Create record":"Save changes"}</button>
+      <div class="hint" id="auditLine" style="margin-top:10px"></div>
     </div></div>
 
     <div id="afterCreate" class="${isNew?"hidden":""}">
@@ -449,11 +493,12 @@ function renderEditor(rec){
   modelInput.addEventListener("input",showParse); showParse();
 
   document.getElementById("save").onclick=saveRecord;
+  document.getElementById("addLight").onclick=addLightType;
   if(!isNew){
     document.getElementById("printBtn").onclick=()=>printTag(current);
     document.getElementById("addWorker").onclick=addWorker;
     document.getElementById("raiseCcr").onclick=raiseCcr;
-    loadCcrs();
+    loadCcrs(); renderAudit();
     const prev=document.getElementById("wPreview");
     const calc=()=>{
       const s=document.getElementById("w-start").value, f=document.getElementById("w-finish").value;
@@ -497,6 +542,9 @@ async function saveRecord(){
     model:document.getElementById("f-model").value.trim(),
     customer:document.getElementById("f-customer").value.trim()||null,
     customer_reference:document.getElementById("f-cref").value.trim()||null,
+    light_type:document.getElementById("f-light").value.trim()||null,
+    odoo_variant_name:document.getElementById("f-ovn").value.trim()||null,
+    odoo_variant_id:document.getElementById("f-ovid").value.trim()||null,
     line:document.getElementById("f-line").value.trim()||null,
     foreman:document.getElementById("f-foreman").value.trim()||null,
     qc_checker:document.getElementById("f-qc").value.trim()||null
@@ -506,7 +554,7 @@ async function saveRecord(){
   const btn=document.getElementById("save"); btn.disabled=true; const label=btn.textContent; btn.textContent="Saving\u2026";
 
   if(!current){
-    const { data, error }=await db.from("production_records").insert(payload).select().single();
+    const { data, error }=await db.from("production_records").insert({...payload, created_by:SESSION.user.email}).select().single();
     btn.disabled=false; btn.textContent=label;
     if(error){ banner(error.message.includes("duplicate")?"A record with this date, SO and model already exists.":"Could not save: "+error.message); return; }
     current=data;
@@ -517,19 +565,16 @@ async function saveRecord(){
     document.getElementById("save").textContent="Save changes";
     document.getElementById("printBtn").onclick=()=>printTag(current);
     document.getElementById("addWorker").onclick=addWorker;
-    loadWorkers();
+    loadWorkers(); renderAudit();
     banner("Record created. Serial "+data.serial+".",true);
   } else {
-    let resp=await db.from("production_records").update(payload).eq("id",current.id).select();
-    if(resp.error && /fetch/i.test(resp.error.message||"")){ await new Promise(r=>setTimeout(r,900));
-      resp=await db.from("production_records").update(payload).eq("id",current.id).select(); }
-    const { data, error }=resp;
+    // update via POST RPC so proxies that block PATCH do not break saves
+    const { data, error }=await db.rpc("update_production_record",{ p_id:current.id, p_fields:payload });
     btn.disabled=false; btn.textContent=label;
     if(error){ banner(/fetch/i.test(error.message||"")
-        ?"Network error reaching the database. Check your connection or whether the Supabase project is paused, then try again."
-        :(error.message.includes("duplicate")?"Another record already has this date, SO and model.":"Could not save changes: "+error.message)); return; }
-    if(!data||!data.length){ banner("No matching record was updated. Reopen it and try again."); return; }
-    current=data[0]; banner("Changes saved.",true);
+        ?"Network error reaching the database. Check your connection, then try again."
+        :"Could not save changes: "+error.message); return; }
+    current=data; banner("Changes saved.",true); renderAudit();
   }
 }
 
@@ -546,7 +591,7 @@ async function loadWorkers(){
   const totQty=data.reduce((a,w)=>a+(w.qty||0),0);
   const totMin=data.reduce((a,w)=>a+(Number(w.total_mins)||0),0);
   const avgCyc=totQty>0?Math.round(totMin/totQty*10)/10:null;
-  box.innerHTML=`<table><thead><tr><th>Worker</th><th>Conveyor</th><th>Start</th><th>Finish</th><th>Task</th>
+  box.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Worker</th><th>Conveyor</th><th>Start</th><th>Finish</th><th>Task</th>
     <th class="num">Qty</th><th class="num">Total min</th><th class="num">Cycle</th><th></th></tr></thead><tbody>${
     data.map(w=>`<tr>
       <td>${esc(namesOf(w))}${w.remarks?`<div class="meta">${esc(w.remarks)}</div>`:""}</td>
@@ -559,12 +604,12 @@ async function loadWorkers(){
       <td class="num">${w.cycle_time!=null?Math.round(w.cycle_time*10)/10:""}</td>
       <td><button class="btn danger" data-del="${w.id}">Remove</button></td>
     </tr>`).join("")}</tbody>
-    <tfoot><tr style="font-weight:700;color:var(--navy)">
+    <tfoot><tr class="totals">
       <td colspan="5" style="text-align:right">Record totals</td>
       <td class="num">${totQty}</td>
       <td class="num">${Math.round(totMin)}</td>
       <td class="num">${avgCyc!=null?avgCyc:""}</td><td></td>
-    </tr></tfoot></table>`;
+    </tr></tfoot></table></div>`;
   box.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>delWorker(b.dataset.del));
 }
 
@@ -591,8 +636,8 @@ async function addWorker(){
 }
 
 async function delWorker(id){
-  const { error }=await db.from("worker_entries").delete().eq("id",id);
-  if(error){ banner("Could not remove entry: "+error.message); return; }
+  const { error }=await db.rpc("delete_worker_entry",{ p_id:id });
+  if(error){ banner(/fetch/i.test(error.message||"")?"Network error reaching the database. Try again.":"Could not remove entry: "+error.message); return; }
   loadWorkers();
 }
 
@@ -646,9 +691,29 @@ async function raiseCcr(){
 }
 
 async function resolveCcr(id){
-  const { error }=await db.from("ccrs").update({status:"Resolved"}).eq("id",id);
-  if(error){ banner("Could not update issue: "+error.message); return; }
+  const { error }=await db.rpc("set_ccr_status",{ p_id:id, p_status:"Resolved" });
+  if(error){ banner(/fetch/i.test(error.message||"")?"Network error reaching the database. Try again.":"Could not update issue: "+error.message); return; }
   loadCcrs();
+}
+
+async function addLightType(){
+  const name=prompt("New light type category:");
+  if(!name) return;
+  const clean=name.trim(); if(!clean) return;
+  const { error }=await db.from("light_types").insert({name:clean});
+  if(error && !/duplicate/i.test(error.message)){ banner("Could not add type: "+error.message); return; }
+  if(!LIGHT_TYPES.includes(clean)){ LIGHT_TYPES.push(clean); LIGHT_TYPES.sort(); }
+  const sel=document.getElementById("f-light");
+  sel.innerHTML=`<option value=""></option>`+LIGHT_TYPES.map(x=>`<option>${esc(x)}</option>`).join("");
+  sel.value=clean;
+}
+
+async function renderAudit(){
+  const el=document.getElementById("auditLine"); if(!el||!current) return;
+  let txt="";
+  if(current.created_by||current.created_at) txt+=`Created by ${esc(current.created_by||"unknown")}${current.created_at?" on "+esc(current.created_at.slice(0,16).replace("T"," ")):""}`;
+  if(current.updated_by) txt+=`${txt?" &middot; ":""}last updated by ${esc(current.updated_by)}${current.updated_at?" on "+esc(current.updated_at.slice(0,16).replace("T"," ")):""}`;
+  el.innerHTML=txt;
 }
 
 async function openDoc(path){
