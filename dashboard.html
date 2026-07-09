@@ -21,6 +21,8 @@
     padding-left:12px; border-left:1px solid rgba(255,255,255,.28)}
   .who{margin-left:auto; text-align:right; font-size:11.5px; color:#c3c6e6}
   .who a{color:#fff; text-decoration:underline; cursor:pointer; font-weight:600}
+  .brand-home{color:#c3c6e6; text-decoration:none; font-size:12.5px; font-weight:600; padding:4px 11px; border:1px solid rgba(255,255,255,.28); border-radius:8px; cursor:pointer}
+  .brand-home:hover{background:rgba(255,255,255,.12); color:#fff}
   h1{font-size:20px; margin:22px 0 2px; color:var(--navy)}
   .sub{color:var(--muted); font-size:13.5px; margin:0 0 16px}
   .backlink{display:inline-block; margin-top:16px; color:var(--muted); font-weight:600; text-decoration:none; font-size:14px}
@@ -57,6 +59,17 @@
   .modal .mh{padding:16px; border-bottom:1px solid var(--line); font-weight:700; color:var(--navy); display:flex}
   .modal .mh .x{margin-left:auto; cursor:pointer; color:var(--muted); font-size:22px; line-height:1}
   .modal .mb{padding:16px; height:70vh}
+  .modal-lg{max-width:1040px}
+  .mb2{padding:16px}
+  .xctl{display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px}
+  .xctl label{font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); display:flex; gap:6px; align-items:center}
+  .xctl select{font-size:13px; padding:6px 9px}
+  .xchart{height:50vh; position:relative}
+  .xtable{max-height:24vh; overflow:auto; margin-top:14px; border:1px solid var(--line); border-radius:10px}
+  .xtable table{width:100%; border-collapse:collapse; font-size:13px}
+  .xtable th{position:sticky; top:0; background:#f0f1f8; color:var(--navy); text-align:left; padding:8px 11px; font-size:11px; letter-spacing:.4px}
+  .xtable td{padding:7px 11px; border-top:1px solid var(--line)}
+  .xtable td.num,.xtable th.num{text-align:right; font-variant-numeric:tabular-nums}
 
   .spinner{width:30px; height:30px; margin:60px auto; border:3px solid var(--line); border-top-color:var(--orange); border-radius:50%; animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -85,7 +98,7 @@ const PAL=["#24275E","#F6851F","#3457b2","#1f9d63","#c0392b","#8e44ad","#c9820b"
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt=n=>(n==null?"0":Number(n).toLocaleString());
 let SESSION=null, DATA=null, RANGE={from:"",to:""};
-const cfgs={}, insts={};
+const cfgs={}, insts={}, META={};
 
 (async function(){
   const { data:{ session } }=await db.auth.getSession();
@@ -112,7 +125,9 @@ function renderLogin(msg){
 
 function renderShell(){
   root.innerHTML=`<header><div class="head-in">
-      <img class="brand-logo" src="${LOGO}" alt="NLC"><span class="brand-tag">Dashboard</span>
+      <a href="index.html" title="Home" style="display:flex;align-items:center;text-decoration:none"><img class="brand-logo" src="${LOGO}" alt="NLC"></a>
+      <span class="brand-tag">Dashboard</span>
+      <a href="index.html" class="brand-home">Home</a>
       <div class="who">${esc(SESSION.user.email)}<br><a id="signout">Sign out</a></div>
     </div></header>
     <div class="wrap">
@@ -182,6 +197,25 @@ function renderCharts(){
 
   document.getElementById("sortModel").onchange=e=>renderModel(e.target.value);
   g.querySelectorAll("[data-expand]").forEach(b=>b.onclick=()=>expand(b.dataset.expand));
+  buildMeta();
+}
+
+function buildMeta(){
+  const d=DATA;
+  META.month     ={title:"Units by month", kind:"bar", rows:d.by_month, label:"month",
+     metrics:[{key:"units",name:"Units"},{key:"avg_cycle",name:"Avg min/unit"},{key:"manpower",name:"Workers"}], color:PAL[1], sortable:false};
+  META.line      ={title:"Output by line", kind:"bar", rows:d.by_line, label:"line",
+     metrics:[{key:"units",name:"Units"}], color:PAL[0], sortable:true};
+  META.foreman   ={title:"Output by foreman", kind:"bar", rows:d.by_foreman, label:"foreman",
+     metrics:[{key:"units",name:"Units"}], color:PAL[2], sortable:true};
+  META.status    ={title:"Records by status", kind:"doughnut", rows:d.by_status, label:"status",
+     metrics:[{key:"records",name:"Records"}], color:null, sortable:false};
+  META.client    ={title:"Clients by units", kind:"hbar", rows:d.by_client, label:"customer",
+     metrics:[{key:"units",name:"Units"}], color:PAL[3], sortable:true};
+  META.model     ={title:"Cycle time by item", kind:"hbar", rows:d.by_model.filter(m=>m.avg_cycle!=null), label:"model",
+     metrics:[{key:"avg_cycle",name:"Min/unit"},{key:"units",name:"Units"}], color:PAL[5], sortable:true};
+  META.cycle_month={title:"Average cycle time by month", kind:"line", rows:d.by_month, label:"month",
+     metrics:[{key:"avg_cycle",name:"Min/unit"}], color:PAL[0], sortable:false};
 }
 
 function renderModel(sort){
@@ -212,38 +246,121 @@ function make(id,cfg){
   insts[id]=new Chart(document.getElementById("cv-"+id),cfg);
 }
 
-/* ---------- expand ---------- */
+/* ---------- expand: full data, sort, top-N, metric switch, table ---------- */
 function expand(id){
-  const title=document.querySelector(`[data-expand="${id}"]`).closest(".card").querySelector("h2").textContent;
+  const m=META[id]; if(!m) return;
+  let metric=m.metrics[0].key;
+  let sortMode=m.sortable?"val_desc":"none";
+  let topN=(m.rows.length>15)?15:99999;
   const bg=document.createElement("div"); bg.className="modal-bg";
-  bg.innerHTML=`<div class="modal"><div class="mh">${esc(title)}<span class="x">&times;</span></div><div class="mb"><canvas id="cv-big"></canvas></div></div>`;
+  bg.innerHTML=`<div class="modal modal-lg"><div class="mh">${esc(m.title)}<span class="x">&times;</span></div>
+    <div class="mb2">
+      <div class="xctl">
+        ${m.metrics.length>1?`<label>Metric <select id="x-metric">${m.metrics.map(mt=>`<option value="${mt.key}">${mt.name}</option>`).join("")}</select></label>`:""}
+        ${m.sortable?`<label>Sort <select id="x-sort"><option value="val_desc">High to low</option><option value="val_asc">Low to high</option><option value="label">By name</option></select></label>`:""}
+        ${m.rows.length>10?`<label>Show <select id="x-top"><option value="10">Top 10</option><option value="25">Top 25</option><option value="99999" selected>All (${m.rows.length})</option></select></label>`:""}
+      </div>
+      <div class="xchart"><canvas id="cv-big"></canvas></div>
+      <div class="xtable" id="x-table"></div>
+    </div></div>`;
   document.body.appendChild(bg);
-  const big=new Chart(bg.querySelector("#cv-big"), JSON.parse(JSON.stringify(cfgs[id])));
-  const close=()=>{ big.destroy(); bg.remove(); };
+  let chart=null;
+  const metricName=()=>(m.metrics.find(x=>x.key===metric)||{}).name||"";
+  function draw(){
+    let rows=m.rows.slice();
+    if(sortMode==="val_desc") rows.sort((a,b)=>(b[metric]??-Infinity)-(a[metric]??-Infinity));
+    else if(sortMode==="val_asc") rows.sort((a,b)=>(a[metric]??Infinity)-(b[metric]??Infinity));
+    else if(sortMode==="label") rows.sort((a,b)=>String(a[m.label]).localeCompare(String(b[m.label])));
+    const shown=rows.slice(0,topN);
+    const labels=shown.map(r=>r[m.label]), values=shown.map(r=>r[metric]);
+    let cfg;
+    if(m.kind==="doughnut") cfg=doughnutCfg(labels,values);
+    else if(m.kind==="line") cfg=lineCfg(labels,values);
+    else if(m.kind==="hbar") cfg=hbarCfg(labels,values,m.color,metricName());
+    else cfg=barCfg(labels,values,m.color,metricName());
+    if(chart) chart.destroy();
+    chart=new Chart(bg.querySelector("#cv-big"),cfg);
+    bg.querySelector("#x-table").innerHTML=`<table><thead><tr><th>${esc(m.label)}</th>${m.metrics.map(c=>`<th class="num">${esc(c.name)}</th>`).join("")}</tr></thead><tbody>${
+      rows.map(r=>`<tr><td>${esc(r[m.label]??"")}</td>${m.metrics.map(c=>`<td class="num">${r[c.key]??""}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  }
+  const mp=bg.querySelector("#x-metric"); if(mp) mp.onchange=e=>{metric=e.target.value; draw();};
+  const sp=bg.querySelector("#x-sort");   if(sp) sp.onchange=e=>{sortMode=e.target.value; draw();};
+  const tp=bg.querySelector("#x-top");    if(tp) tp.onchange=e=>{topN=parseInt(e.target.value,10); draw();};
+  const close=()=>{ if(chart) chart.destroy(); bg.remove(); };
   bg.querySelector(".x").onclick=close; bg.onclick=e=>{ if(e.target===bg) close(); };
+  draw();
 }
 
-/* ---------- report export ---------- */
+/* ---------- crisp offscreen image for the report ---------- */
+function renderOffscreen(cfg,w,h){
+  const c=document.createElement("canvas"); c.width=w; c.height=h;
+  document.body.appendChild(c);
+  const cf=JSON.parse(JSON.stringify(cfg));
+  cf.options=cf.options||{}; cf.options.responsive=false; cf.options.maintainAspectRatio=false; cf.options.animation=false;
+  const ch=new Chart(c,cf);
+  const url=ch.toBase64Image("image/png",1);
+  ch.destroy(); c.remove();
+  return url;
+}
+
+/* ---------- narrative insights ---------- */
+function insights(){
+  const d=DATA, s=d.stats, out=[];
+  const rt=(RANGE.from||RANGE.to)?`Between ${RANGE.from||"the start"} and ${RANGE.to||"today"}`:"Across all recorded production";
+  out.push(`${rt}, the floor logged ${fmt(s.records)} production record${s.records==1?"":"s"} totalling ${fmt(s.units)} units, worked by ${fmt(s.manpower)} ${s.manpower==1?"person":"people"} across ${fmt(s.lines)} line${s.lines==1?"":"s"}.`+(s.avg_cycle!=null?` The average assembly cycle was ${s.avg_cycle} minutes per unit.`:""));
+  const ln=d.by_line;
+  if(ln.length){ const top=ln[0], low=ln[ln.length-1];
+    out.push(`Output was highest on ${top.line} at ${fmt(top.units)} units`+(ln.length>1?`, and lowest on ${low.line} at ${fmt(low.units)} units.`:".")); }
+  const fm=d.by_foreman.filter(f=>f.foreman!=="Unassigned");
+  if(fm.length) out.push(`${fm[0].foreman} led output among foremen with ${fmt(fm[0].units)} units.`);
+  const cl=d.by_client.filter(c=>c.customer!=="Unspecified");
+  if(cl.length){ const share=s.units?Math.round(cl[0].units/s.units*100):0;
+    out.push(`${cl[0].customer} was the largest customer by volume at ${fmt(cl[0].units)} units`+(share?` (${share}% of the total).`:".")); }
+  const mdl=d.by_model.filter(m=>m.avg_cycle!=null).sort((a,b)=>b.avg_cycle-a.avg_cycle);
+  if(mdl.length>1) out.push(`On cycle time, ${mdl[0].model} was the most time-intensive item at ${mdl[0].avg_cycle} min/unit, while ${mdl[mdl.length-1].model} was the quickest at ${mdl[mdl.length-1].avg_cycle} min/unit.`);
+  const lt=(d.by_light_type||[]).filter(x=>x.light_type!=="Unspecified");
+  if(lt.length) out.push(`By light type, ${lt[0].light_type} carried the most volume at ${fmt(lt[0].units)} units`+(lt[0].avg_cycle!=null?`, averaging ${lt[0].avg_cycle} min/unit.`:"."));
+  const st=d.by_status, tot=st.reduce((a,x)=>a+x.records,0);
+  if(tot){ const done=(st.find(x=>/complete|closed/i.test(x.status))||{}).records||0;
+    const open=(st.find(x=>/open/i.test(x.status))||{}).records||0;
+    out.push(`By status, ${Math.round(done/tot*100)}% of records are completed and ${Math.round(open/tot*100)}% remain open.`); }
+  const bm=d.by_month;
+  if(bm.length>1){ const f=bm[0], l=bm[bm.length-1];
+    const dir=l.units>f.units?"risen":l.units<f.units?"fallen":"held steady";
+    out.push(`Monthly output has ${dir} over the period, from ${fmt(f.units)} units in ${f.month} to ${fmt(l.units)} units in ${l.month}.`); }
+  return out;
+}
+
+/* ---------- report export: narrative + crisp images ---------- */
 function exportReport(){
   if(!DATA||!DATA.stats.records){ alert("No data to report for this range."); return; }
   const s=DATA.stats;
   const rangeTxt=(RANGE.from||RANGE.to)?`${RANGE.from||"start"} to ${RANGE.to||"today"}`:"All time";
-  const order=[["month","Units by month"],["cycle_month","Average cycle time by month"],
-    ["line","Output by line"],["foreman","Output by foreman"],["status","Records by status"],
-    ["client","Top clients by units"],["model","Cycle time by item"]];
-  const imgs=order.map(([id,t])=>insts[id]?`<div class="rep-ch"><h3>${esc(t)}</h3><img src="${insts[id].toBase64Image()}"></div>`:"").join("");
-  const w=window.open("","_blank","width=900,height=1100");
+  const wide=[["month",1160,430],["cycle_month",1160,430],["line",1160,430],["foreman",1160,430],["client",1160,460],["model",1160,520]];
+  const narr=insights().map(p=>`<p>${esc(p)}</p>`).join("");
+  const chartBlocks=wide.map(([id,w,h])=>{
+    if(!cfgs[id]) return "";
+    const title=({month:"Units by month",cycle_month:"Average cycle time by month",line:"Output by line",foreman:"Output by foreman",client:"Clients by units",model:"Cycle time by item"})[id];
+    return `<div class="rep-ch"><h3>${title}</h3><img src="${renderOffscreen(cfgs[id],w,h)}"></div>`;
+  }).join("");
+  const statImg=cfgs.status?`<div class="rep-ch narrow"><h3>Records by status</h3><img src="${renderOffscreen(cfgs.status,760,460)}"></div>`:"";
+  const w=window.open("","_blank","width=920,height=1200");
   w.document.write(`<html><head><title>NLC Production Report</title><style>
-    body{font-family:Arial,sans-serif;color:#1c1e33;margin:0;padding:34px}
-    .top{display:flex;align-items:center;border-bottom:3px solid #F6851F;padding-bottom:14px;margin-bottom:20px}
-    .top img{height:34px} .top .t{margin-left:14px} .top h1{margin:0;font-size:20px;color:#24275E}
+    body{font-family:Arial,Helvetica,sans-serif;color:#1c1e33;margin:0;padding:36px;max-width:900px}
+    .top{display:flex;align-items:center;border-bottom:3px solid #F6851F;padding-bottom:14px;margin-bottom:22px}
+    .top img{height:36px} .top .t{margin-left:14px} .top h1{margin:0;font-size:21px;color:#24275E}
     .top .r{margin-left:auto;text-align:right;color:#71749a;font-size:13px}
-    .digest{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px}
-    .digest .s{border:1px solid #e7e8f1;border-radius:10px;padding:12px;text-align:center}
+    h2{font-size:13px;letter-spacing:1.2px;text-transform:uppercase;color:#24275E;margin:26px 0 10px;border-bottom:1px solid #e7e8f1;padding-bottom:6px}
+    .digest{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+    .digest .s{border:1px solid #e7e8f1;border-radius:10px;padding:13px;text-align:center}
     .digest b{display:block;font-size:22px;color:#24275E} .digest span{font-size:10px;text-transform:uppercase;color:#71749a;letter-spacing:1px}
-    .rep-ch{margin-bottom:22px;page-break-inside:avoid} .rep-ch h3{font-size:13px;color:#24275E;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px}
-    .rep-ch img{width:100%;border:1px solid #e7e8f1;border-radius:8px}
-    @media print{.noprint{display:none}}
+    .summary p{font-size:14px;line-height:1.55;margin:0 0 9px;color:#2a2c44}
+    .rep-ch{margin:0 0 20px;page-break-inside:avoid}
+    .rep-ch h3{font-size:12px;color:#24275E;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px}
+    .rep-ch img{display:block;width:100%;height:auto;max-width:820px;border:1px solid #e7e8f1;border-radius:8px}
+    .rep-ch.narrow img{max-width:460px}
+    .foot{margin-top:20px;color:#9a9cb5;font-size:11px;border-top:1px solid #e7e8f1;padding-top:10px}
+    @media print{.noprint{display:none} body{padding:0}}
   </style></head><body>
     <div class="top"><img src="${LOGO}"><div class="t"><h1>Production Report</h1></div>
       <div class="r">${esc(rangeTxt)}<br>Generated ${new Date().toLocaleDateString()}</div></div>
@@ -254,8 +371,11 @@ function exportReport(){
       <div class="s"><b>${fmt(s.manpower)}</b><span>Workers</span></div>
       <div class="s"><b>${fmt(s.lines)}</b><span>Lines</span></div>
     </div>
-    ${imgs}
-    <button class="noprint" onclick="window.print()" style="padding:10px 18px;background:#24275E;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">Print / Save as PDF</button>
+    <h2>Summary</h2><div class="summary">${narr}</div>
+    <h2>Charts</h2>
+    ${chartBlocks}${statImg}
+    <div class="foot">NLC Traceability. Figures reflect data entered in the console for the selected period.</div>
+    <button class="noprint" onclick="window.print()" style="margin-top:16px;padding:10px 18px;background:#24275E;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">Print / Save as PDF</button>
   </body></html>`);
   w.document.close();
 }
