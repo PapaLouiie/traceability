@@ -121,6 +121,10 @@
     border-radius:10px; background:#fbfbfe; color:var(--ink); font-family:inherit}
   .card .pad input:disabled{background:#f2f3f8; color:var(--muted)}
   .card .pad .hint{font-size:12px; color:var(--warn); margin:10px 0 0}
+  .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
+  .chip-w{display:inline-flex; align-items:center; gap:6px; background:var(--orange-soft); color:#a55a12;
+    border:1px solid #f3d3ad; border-radius:999px; padding:6px 8px 6px 13px; font-size:14px; font-weight:600}
+  .chip-w b{cursor:pointer; color:#c0392b; font-weight:800; padding:0 4px; line-height:1; font-size:16px}
   .editbar{display:flex; gap:10px; margin-top:16px}
   .btn-save{flex:2; padding:15px; font-size:16px; font-weight:700; color:#fff; background:var(--navy);
     border:none; border-radius:12px; cursor:pointer; font-family:inherit}
@@ -170,6 +174,7 @@ const app = document.getElementById("app");
 const whoEl = document.getElementById("who");
 const sn = new URLSearchParams(location.search).get("sn");
 const PERMS = {};
+let STAFF_CACHE = [];
 
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dash = v => (v==null||v==="") ? '<span class="val dim">&mdash;</span>' : esc(v);
@@ -241,27 +246,33 @@ async function renderFull(email){
   if(!r) return notFound(true);
 
   const { data:workers } = await db.from("worker_entries")
-    .select("qty,conveyor,start_time,finish_time,work_type,remarks,total_mins,cycle_time,staff_id,staff_ids")
+    .select("id,qty,conveyor,start_time,finish_time,work_type,remarks,total_mins,cycle_time,staff_id,staff_ids")
     .eq("record_id", r.id).order("conveyor",{ascending:true});
 
-  const { data:staffList } = await db.from("staff").select("id,full_name");
-  const nameMap = {}; (staffList||[]).forEach(s=>nameMap[s.id]=s.full_name);
+  if(!STAFF_CACHE.length){
+    const { data:staffList } = await db.from("staff").select("id,full_name").order("full_name");
+    STAFF_CACHE = staffList||[];
+  }
+  const nameMap = {}; STAFF_CACHE.forEach(s=>nameMap[s.id]=s.full_name);
   const workersOf = w => { const ids=(w.staff_ids&&w.staff_ids.length)?w.staff_ids:(w.staff_id?[w.staff_id]:[]);
     return ids.length?ids.map(i=>nameMap[i]||("ID "+i)).join(", "):"Unassigned"; };
 
+  const canEntries = !(PERMS.entries && PERMS.entries.edit===false);
+
   const rows = (workers||[]).map(w=>{
-    return `<tr>
+    return `<tr ${canEntries?`data-entry="${w.id}" style="cursor:pointer"`:""}>
       <td><div class="work-name">${esc(workersOf(w))}</div><div class="work-sub">${esc(w.conveyor||"")}</div></td>
       <td>${esc(t(w.start_time))}&ndash;${esc(t(w.finish_time))}</td>
       <td>${w.work_type==="S"?"Stickers":"Complete"}</td>
       <td class="num">${w.qty??0}</td>
-      <td class="num">${n1(w.cycle_time)}</td>
+      <td class="num">${canEntries?'<span style="color:var(--orange);font-weight:700">edit</span>':n1(w.cycle_time)}</td>
     </tr>`;
   }).join("");
 
   const units = (workers||[]).reduce((a,w)=>a+(w.qty||0),0);
   const mins  = (workers||[]).reduce((a,w)=>a+(Number(w.total_mins)||0),0);
   const cyc   = units ? (mins/units) : null;
+  const remaining = r.planned_qty!=null ? (r.planned_qty-units) : null;
 
   app.innerHTML =
     hero(r) + productCard(r) + orderCard(r) +
@@ -277,14 +288,116 @@ async function renderFull(email){
       <div class="stat"><b>${cyc?n1(cyc):"&mdash;"}</b><span>Min / unit</span></div>
     </div>` +
     `<section class="card"><h2>Worker entries</h2>
-      ${rows ? `<table><thead><tr><th>Worker</th><th>Shift</th><th>Task</th><th class="num">Qty</th><th class="num">Cyc</th></tr></thead><tbody>${rows}</tbody></table>`
-             : `<div class="grid"><div class="cell full"><div class="val dim">No worker entries yet. This record was created but assembly data has not been logged.</div></div></div>`}
-    </section>`;
+      ${r.planned_qty!=null?`<div class="grid"><div class="cell full"><div class="lbl">Progress</div>
+        <div class="val" style="color:${remaining<0?'var(--hold)':(remaining===0?'var(--ok)':'var(--ink)')}">${units} of ${r.planned_qty} logged &middot; ${remaining} remaining</div></div></div>`:""}
+      ${rows ? `<table><thead><tr><th>Worker</th><th>Shift</th><th>Task</th><th class="num">Qty</th><th class="num">${canEntries?"":"Cyc"}</th></tr></thead><tbody>${rows}</tbody></table>`
+             : `<div class="grid"><div class="cell full"><div class="val dim">No worker entries yet.</div></div></div>`}
+    </section>` +
+    (canEntries?`<button class="btn-edit" id="addEntryBtn" style="background:var(--navy)">+ Add worker entry</button>`:"");
 
   whoEl.innerHTML = `${esc(email)}<br><a id="out">Sign out</a>`;
   document.getElementById("out").onclick = async ()=>{ await db.auth.signOut(); location.reload(); };
   const eb=document.getElementById("editBtn");
   if(eb) eb.onclick=()=>renderEdit(r, email);
+  const ab=document.getElementById("addEntryBtn");
+  if(ab) ab.onclick=()=>entryForm(r, null, units, email);
+  app.querySelectorAll("[data-entry]").forEach(tr=>tr.onclick=()=>{
+    const w=(workers||[]).find(x=>x.id===tr.dataset.entry);
+    if(w) entryForm(r, w, units, email);
+  });
+}
+
+/* ---------------- worker entry form (phone) --------------------------- */
+async function entryForm(r, w, loggedTotal, email){
+  const isNew=!w;
+  const others=loggedTotal-((w&&w.qty)||0);
+  const headroom=r.planned_qty!=null?(r.planned_qty-others):null;
+  let sel=(w&&w.staff_ids&&w.staff_ids.length)?w.staff_ids.slice():((w&&w.staff_id)?[w.staff_id]:[]);
+  const conveyors=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
+
+  app.innerHTML=
+    `<div class="hero"><div class="eyebrow">${isNew?"New entry":"Editing entry"}</div>
+      <div class="serial">${esc(r.serial)}</div><div class="model">${esc(r.model||"")}</div></div>
+    <div class="banner" id="wb"></div>
+    <section class="card"><h2>Entry</h2><div class="pad">
+      <label>Workers</label>
+      <input id="w-in" list="wstaff" placeholder="Type a name, then pick it">
+      <datalist id="wstaff">${STAFF_CACHE.map(s=>`<option value="${esc(s.full_name)} (${esc(s.id)})">`).join("")}</datalist>
+      <div id="w-chips" class="chips"></div>
+      <label>Conveyor</label><select id="w-conv"><option value=""></option>${conveyors.map(c=>`<option ${w&&c===w.conveyor?"selected":""}>${c}</option>`).join("")}</select>
+      <label>Task</label><select id="w-type"><option value="C" ${!w||w.work_type!=="S"?"selected":""}>Complete</option><option value="S" ${w&&w.work_type==="S"?"selected":""}>Stickers</option></select>
+      <label>Start time</label><input id="w-start" type="time" value="${w?esc(t(w.start_time)):""}">
+      <label>Completion time</label><input id="w-finish" type="time" value="${w?esc(t(w.finish_time)):""}">
+      <label>Quantity finished</label><input id="w-qty" type="number" min="0" value="${w?(w.qty??0):0}">
+      ${headroom!=null?`<p class="hint" style="color:var(--muted)">Maximum for this entry is <b>${headroom}</b> of ${r.planned_qty} total.</p>`:""}
+      <div class="hint" id="w-prev" style="color:var(--muted)"></div>
+      <label>Remarks</label><input id="w-remarks" value="${w?esc(w.remarks||""):""}">
+    </div></section>
+    <div class="editbar">
+      <button class="btn-save" id="w-save">${isNew?"Add entry":"Save entry"}</button>
+      <button class="btn-cancel" id="w-cancel">Cancel</button>
+    </div>
+    ${!isNew?`<button class="btn-edit" id="w-del" style="background:var(--hold)">Delete this entry</button>`:""}`;
+
+  const chips=()=>{ const box=document.getElementById("w-chips");
+    box.innerHTML=sel.map(id=>{ const s=STAFF_CACHE.find(x=>x.id===id);
+      return `<span class="chip-w">${esc(s?s.full_name:id)}<b data-rm="${esc(id)}">\u00d7</b></span>`; }).join("");
+    box.querySelectorAll("[data-rm]").forEach(x=>x.onclick=()=>{ sel=sel.filter(i=>i!==x.dataset.rm); chips(); }); };
+  chips();
+  const inp=document.getElementById("w-in");
+  const commit=()=>{ const v=inp.value.trim(); if(!v) return;
+    const s=STAFF_CACHE.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
+    if(!s) return; if(!sel.includes(s.id)) sel.push(s.id); inp.value=""; chips(); };
+  inp.addEventListener("change",commit);
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } });
+
+  const prev=document.getElementById("w-prev");
+  const mins=(a,b)=>{ if(!a||!b) return null; const [h1,m1]=a.split(":").map(Number),[h2,m2]=b.split(":").map(Number);
+    let d=(h2*60+m2)-(h1*60+m1); if(d<0) d+=1440; return d; };
+  const calc=()=>{ const m=mins(document.getElementById("w-start").value, document.getElementById("w-finish").value);
+    const q=parseInt(document.getElementById("w-qty").value||"0",10);
+    prev.innerHTML = m==null?"":`Total <b>${m} min</b>`+(q>0?` &middot; Cycle <b>${Math.round(m/q*10)/10} min/unit</b>`:""); };
+  ["w-start","w-finish","w-qty"].forEach(id=>document.getElementById(id).addEventListener("input",calc));
+  calc();
+
+  document.getElementById("w-cancel").onclick=()=>renderFull(email);
+  const del=document.getElementById("w-del");
+  if(del) del.onclick=async()=>{
+    if(!confirm("Delete this entry?")) return;
+    const { error }=await db.rpc("delete_worker_entry",{ p_id:w.id });
+    if(error){ showWb(error.message,false); return; }
+    renderFull(email);
+  };
+  function showWb(msg,ok){ const b=document.getElementById("wb");
+    b.textContent=msg; b.className="banner show "+(ok?"ok":"err"); window.scrollTo(0,0); }
+
+  document.getElementById("w-save").onclick=async()=>{
+    const btn=document.getElementById("w-save");
+    const qty=parseInt(document.getElementById("w-qty").value||"0",10);
+    if(headroom!=null && qty>headroom){ showWb(`Quantity cannot exceed ${headroom}. The record total is ${r.planned_qty} and other entries account for ${others}.`,false); return; }
+    btn.disabled=true; btn.textContent="Saving\u2026";
+    const fields={ staff_ids:sel, staff_id:sel[0]||null,
+      conveyor:document.getElementById("w-conv").value||null,
+      work_type:document.getElementById("w-type").value,
+      start_time:document.getElementById("w-start").value||null,
+      finish_time:document.getElementById("w-finish").value||null,
+      qty:String(qty),
+      remarks:document.getElementById("w-remarks").value.trim()||null };
+    let error;
+    if(isNew){
+      const res=await db.from("worker_entries").insert({ record_id:r.id, staff_ids:sel.length?sel:null, staff_id:sel[0]||null,
+        conveyor:fields.conveyor, work_type:fields.work_type, start_time:fields.start_time,
+        finish_time:fields.finish_time, qty:qty, remarks:fields.remarks });
+      error=res.error;
+    } else {
+      const res=await db.rpc("update_worker_entry",{ p_id:w.id, p_fields:fields });
+      error=res.error;
+    }
+    btn.disabled=false; btn.textContent=isNew?"Add entry":"Save entry";
+    if(error){ showWb(/fetch/i.test(error.message||"")?"Network error. Check your connection and try again.":error.message,false); return; }
+    showWb("Saved.",true);
+    setTimeout(()=>renderFull(email),600);
+  };
 }
 
 /* ---------------- edit form (phone) ----------------------------------- */
