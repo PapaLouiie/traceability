@@ -152,6 +152,8 @@ const STATUSES = ["Open","In Progress","QC","Completed","Hold"];
 const CONVEYORS = Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let STAFF = [];
 let LIGHT_TYPES = [];
+const PERMS = {};
+const may = (section,what)=>{ const p=PERMS[section]; if(!p) return true; return what==="edit"?!!p.edit:!!p.view; };
 let SESSION = null;
 let current = null;   // currently open record
 let selWorkers = [];  // staff ids chosen for the next entry
@@ -190,6 +192,8 @@ function renderChips(){
   STAFF = staff||[];
   const { data:lt } = await db.from("light_types").select("name").order("name");
   LIGHT_TYPES = (lt||[]).map(x=>x.name);
+  try{ const { data:pm } = await db.rpc("my_permissions");
+    (pm||[]).forEach(p=>PERMS[p.section]={view:p.can_view, edit:p.can_edit}); }catch(e){}
   renderHome();
 })();
 
@@ -223,6 +227,7 @@ function shell(inner){
       <a id="homeLink" title="Home" style="display:flex;align-items:center;text-decoration:none"><img class="brand-logo" src="${LOGO}" alt="NLC"></a>
       <span class="brand-tag">Console</span>
       <a id="homeBtn" class="brand-home">Home</a>
+      ${may("admin","view")?'<a id="adminBtn" class="brand-home">Admin</a>':''}
       <div class="who">${esc(SESSION.user.email)}<br><a id="signout">Sign out</a></div>
     </div></header><div class="wrap">${inner}</div>`;
 }
@@ -232,6 +237,8 @@ function wireShell(){
   const hl=document.getElementById("homeLink"), hb=document.getElementById("homeBtn");
   if(hl) hl.onclick=(e)=>{ e.preventDefault(); renderHome(); };
   if(hb) hb.onclick=renderHome;
+  const ab=document.getElementById("adminBtn");
+  if(ab) ab.onclick=renderAdmin;
 }
 
 /* ---------------- home: new + search + filter + recent ---------------- */
@@ -526,6 +533,7 @@ function renderEditor(rec){
   ["f-bdriver","f-bled","f-bem","f-bhousing"].forEach(id=>
     document.getElementById(id).addEventListener("input",updateBomChip));
   updateBomChip();
+  applyGating();
   if(!isNew){
     const qi=document.getElementById("qrimg");
     if(qi) qi.className="kind-"+(r.record_kind||"Production");
@@ -565,6 +573,127 @@ function banner(msg,ok){
   const b=document.getElementById("banner");
   b.textContent=msg; b.className="banner show "+(ok?"ok":"err");
   if(ok) setTimeout(()=>b.classList.remove("show"),2500);
+}
+
+/* ---------------- admin: users and permissions ---------------- */
+const SECTIONS=[["records","Production records"],["entries","Production entries"],
+  ["engineering","Engineering / BOM"],["quality","Quality & CCRs"],
+  ["dashboard","Dashboard"],["admin","User administration"]];
+const ROLES=["admin","supervisor","foreman","viewer"];
+
+async function renderAdmin(){
+  root.innerHTML=shell(`
+    <button class="btn link" id="back">&larr; All records</button>
+    <h1>User access</h1>
+    <p class="sub">Assign a role to each person, then decide what each role can see and edit.</p>
+    <div class="banner" id="banner"></div>
+    <div id="adminBody"><div class="spinner"></div></div>`);
+  wireShell();
+  document.getElementById("back").onclick=renderHome;
+
+  const { data, error }=await db.rpc("admin_overview");
+  const body=document.getElementById("adminBody");
+  if(error){ body.innerHTML=`<div class="card"><div class="empty">Could not load: ${esc(error.message)}</div></div>`; return; }
+
+  const users=data.users||[], perms=data.perms||[];
+  const pm={}; perms.forEach(p=>{ (pm[p.role]=pm[p.role]||{})[p.section]=p; });
+
+  body.innerHTML=`
+    <div class="card"><h2>People</h2><div class="pad">
+      <p class="hint" style="margin:0 0 12px">The login itself is created in Supabase (Authentication, Users). Here you set what that email is allowed to do. Anyone signing in who is not listed gets the viewer role.</p>
+      <div class="row">
+        <div class="field"><label>Email</label><input id="au-email" type="email" placeholder="name@nlc.com"></div>
+        <div class="field"><label>Role</label><select id="au-role">${ROLES.map(r=>`<option ${r==="foreman"?"selected":""}>${r}</option>`).join("")}</select></div>
+      </div>
+      <button class="btn primary" id="au-add">Add or update person</button>
+    </div>
+    <div class="tbl-wrap"><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${
+      users.length?users.map(u=>`<tr>
+        <td>${esc(u.email)}${u.email===data.me?' <span class="badge-sample" style="background:var(--navy)">YOU</span>':''}</td>
+        <td><select data-role-for="${esc(u.email)}">${ROLES.map(r=>`<option ${r===u.role?"selected":""}>${r}</option>`).join("")}</select></td>
+        <td><label class="radio"><input type="checkbox" data-active-for="${esc(u.email)}" ${u.active?"checked":""}> Active</label></td>
+        <td><button class="btn danger" data-del-user="${esc(u.email)}">Remove</button></td>
+      </tr>`).join(""):`<tr><td colspan="4" style="color:var(--muted)">No one assigned yet. While this list is empty everyone signing in is treated as an admin, so add yourself first.</td></tr>`}
+    </tbody></table></div></div>
+
+    <div class="card"><h2>What each role can do</h2><div class="pad">
+      <p class="hint" style="margin:0 0 12px">View lets someone open a section. Edit lets them change it. Turning View off also turns Edit off.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Section</th>${ROLES.map(r=>`<th style="text-align:center">${r}</th>`).join("")}</tr></thead><tbody>${
+        SECTIONS.map(([sec,label])=>`<tr><td><b>${esc(label)}</b></td>${ROLES.map(role=>{
+          const p=(pm[role]||{})[sec]||{can_view:false,can_edit:false};
+          return `<td style="text-align:center;white-space:nowrap">
+            <label class="radio" style="display:inline-flex"><input type="checkbox" data-pv="${role}|${sec}" ${p.can_view?"checked":""}> view</label>
+            <label class="radio" style="display:inline-flex;margin-left:8px"><input type="checkbox" data-pe="${role}|${sec}" ${p.can_edit?"checked":""}> edit</label>
+          </td>`;}).join("")}</tr>`).join("")
+      }</tbody></table></div>
+    </div></div>`;
+
+  document.getElementById("au-add").onclick=async()=>{
+    const email=document.getElementById("au-email").value.trim().toLowerCase();
+    const role=document.getElementById("au-role").value;
+    if(!email) return banner("Enter an email address.");
+    const { error }=await db.rpc("set_user_role",{ p_email:email, p_role:role, p_active:true });
+    if(error) return banner(error.message);
+    banner("Access updated for "+email+".",true); renderAdmin();
+  };
+  body.querySelectorAll("[data-role-for]").forEach(sel=>sel.onchange=async()=>{
+    const email=sel.dataset.roleFor;
+    const active=body.querySelector(`[data-active-for="${email}"]`).checked;
+    const { error }=await db.rpc("set_user_role",{ p_email:email, p_role:sel.value, p_active:active });
+    if(error){ banner(error.message); renderAdmin(); return; }
+    banner("Role updated for "+email+".",true);
+  });
+  body.querySelectorAll("[data-active-for]").forEach(cb=>cb.onchange=async()=>{
+    const email=cb.dataset.activeFor;
+    const role=body.querySelector(`[data-role-for="${email}"]`).value;
+    const { error }=await db.rpc("set_user_role",{ p_email:email, p_role:role, p_active:cb.checked });
+    if(error){ banner(error.message); renderAdmin(); return; }
+    banner((cb.checked?"Enabled ":"Disabled ")+email+".",true);
+  });
+  body.querySelectorAll("[data-del-user]").forEach(b=>b.onclick=async()=>{
+    const email=b.dataset.delUser;
+    if(!confirm("Remove access for "+email+"? They will fall back to the viewer role.")) return;
+    const { error }=await db.rpc("delete_app_user",{ p_email:email });
+    if(error) return banner(error.message);
+    banner("Removed "+email+".",true); renderAdmin();
+  });
+  const savePerm=async(role,sec)=>{
+    const v=body.querySelector(`[data-pv="${role}|${sec}"]`).checked;
+    const eBox=body.querySelector(`[data-pe="${role}|${sec}"]`);
+    if(!v) eBox.checked=false;
+    const { error }=await db.rpc("set_role_permission",{ p_role:role, p_section:sec, p_can_view:v, p_can_edit:eBox.checked });
+    if(error){ banner(error.message); renderAdmin(); return; }
+    banner("Permissions updated.",true);
+  };
+  body.querySelectorAll("[data-pv]").forEach(cb=>cb.onchange=()=>{ const [r,s]=cb.dataset.pv.split("|"); savePerm(r,s); });
+  body.querySelectorAll("[data-pe]").forEach(cb=>cb.onchange=()=>{ const [r,s]=cb.dataset.pe.split("|");
+    if(cb.checked) body.querySelector(`[data-pv="${r}|${s}"]`).checked=true; savePerm(r,s); });
+}
+
+function applyGating(){
+  const lock=(ids,allowed)=>{ if(allowed) return;
+    ids.forEach(id=>{ const el=document.getElementById(id); if(el){ el.disabled=true; el.style.background="#f2f3f8"; } }); };
+  // record fields
+  lock(["f-date","f-status","f-so","f-mo","f-model","f-customer","f-cref","f-light","f-ovn","f-ovid",
+        "f-qty","f-line","f-foreman","f-qc","save","addLight"], may("records","edit"));
+  if(!may("records","edit")) document.querySelectorAll('input[name="kind"]').forEach(el=>el.disabled=true);
+  // engineering
+  lock(["f-bdriver","f-bled","f-bem","f-bhousing"], may("engineering","edit"));
+  // entries
+  lock(["w-staff-in","w-conv","w-type","w-start","w-finish","w-qty","w-remarks","addWorker"], may("entries","edit"));
+  // quality
+  lock(["ccr-type","ccr-files","ccr-desc","ccr-qty","raiseCcr"], may("quality","edit"));
+  // hide sections the role cannot view at all
+  const hideCard=(headingText)=>{
+    document.querySelectorAll(".card h2").forEach(h=>{
+      if(h.textContent.trim().toLowerCase().startsWith(headingText)) h.closest(".card").style.display="none"; });
+  };
+  if(!may("engineering","view")) hideCard("engineering");
+  if(!may("quality","view")) hideCard("quality issues");
+  if(!may("entries","view")) hideCard("production entries");
+  const note=document.getElementById("auditLine");
+  if(note && !may("records","edit"))
+    note.innerHTML='<span style="color:var(--warn)">Your role has read-only access to this section.</span>';
 }
 
 async function saveRecord(){
