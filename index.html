@@ -194,8 +194,26 @@ function renderChips(){
   LIGHT_TYPES = (lt||[]).map(x=>x.name);
   try{ const { data:pm } = await db.rpc("my_permissions");
     (pm||[]).forEach(p=>PERMS[p.section]={view:p.can_view, edit:p.can_edit}); }catch(e){}
-  renderHome();
+  route();
 })();
+
+/* ---------------- URL routing so refresh keeps your place ------------- */
+let suppressHash=false;
+function setHash(h){
+  if(location.hash===h) return;
+  suppressHash=true; location.hash=h;
+  setTimeout(()=>{ suppressHash=false; },0);
+}
+window.addEventListener("hashchange",()=>{ if(!suppressHash) route(); });
+
+async function route(){
+  const h=location.hash||"";
+  const m=h.match(/^#\/record\/([0-9a-fA-F-]{36})$/);
+  if(m){ await openRecord(m[1],true); return; }
+  if(h==="#/admin" && may("admin","view")){ renderAdmin(); return; }
+  if(h==="#/new"){ renderEditor(null); return; }
+  renderHome();
+}
 
 /* ---------------- login ---------------- */
 function renderLogin(msg){
@@ -243,6 +261,7 @@ function wireShell(){
 
 /* ---------------- home: new + search + filter + recent ---------------- */
 async function renderHome(){
+  setHash("#/");
   const now=new Date();
   const maxY=now.getFullYear()+4; const years=[]; for(let y=maxY;y>=2024;y--) years.push(y);
   const months=[["01","January"],["02","February"],["03","March"],["04","April"],["05","May"],["06","June"],
@@ -371,9 +390,13 @@ async function loadList(q){
   list.querySelectorAll(".rec").forEach(el=>el.onclick=()=>openRecord(el.dataset.id));
 }
 
-async function openRecord(id){
-  const { data, error }=await db.from("production_records").select("*").eq("id",id).single();
-  if(error) return;
+async function openRecord(id, fromRoute){
+  const { data, error }=await db.from("production_records").select("*").eq("id",id).maybeSingle();
+  if(error || !data){
+    if(fromRoute){ setHash("#/"); renderHome(); }
+    return;
+  }
+  if(!fromRoute) setHash("#/record/"+id);
   renderEditor(data);
 }
 
@@ -456,6 +479,7 @@ function buildWorkbook(rows,from,to){
 function renderEditor(rec){
   current=rec;
   const isNew=!rec;
+  setHash(isNew?"#/new":"#/record/"+rec.id);
   const r=rec||{ production_date:new Date().toISOString().slice(0,10), status:"Open" };
   const nameList=STAFF.map(s=>`<option value="${esc(s.full_name)}">`).join("");
 
@@ -618,6 +642,7 @@ const SECTIONS=[["records","Production records"],["entries","Production entries"
 const ROLES=["admin","supervisor","foreman","viewer"];
 
 async function renderAdmin(){
+  setHash("#/admin");
   root.innerHTML=shell(`
     <button class="btn link" id="back">&larr; All records</button>
     <h1>User access</h1>
@@ -778,6 +803,7 @@ async function saveRecord(){
     btn.disabled=false; btn.textContent=label;
     if(error){ banner(error.message.includes("duplicate")?"A record with this date, SO and model already exists.":"Could not save: "+error.message); return; }
     current=data;
+    setHash("#/record/"+data.id);
     const qi=document.getElementById("qrimg");
     qi.src=qrURL(data.serial); qi.className="kind-"+(data.record_kind||"Production");
     document.getElementById("serialTxt").textContent=data.serial;
