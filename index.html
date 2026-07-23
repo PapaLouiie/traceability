@@ -259,7 +259,19 @@ async function renderHome(){
     <div class="toolbar">
       <select id="f-month" style="max-width:140px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
       <select id="f-year" style="max-width:110px"><option value="">All years</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
-      <select id="f-tag" style="max-width:170px"><option value="">All records</option><option value="any">Has any issue</option><option value="Quality Issue">Has quality issue</option><option value="Customer Complaint">Has complaint</option><option value="Customer Return">Has return</option></select>
+      <select id="f-tag" style="max-width:190px">
+        <option value="">Any issue status</option>
+        <option value="any">Has any open issue</option>
+        <option value="Quality Issue">Quality issue</option>
+        <option value="Customer Complaint">Customer complaint</option>
+        <option value="Customer Return">Customer return</option>
+        <option value="none">No open issues</option>
+      </select>
+      <select id="f-kind" style="max-width:150px">
+        <option value="">All pieces</option>
+        <option value="Production">Production only</option>
+        <option value="Sample">Samples only</option>
+      </select>
       <select id="f-sort" style="max-width:180px">
         <option value="production_date|desc">Date, newest first</option>
         <option value="production_date|asc">Date, oldest first</option>
@@ -284,13 +296,14 @@ async function renderHome(){
   const doSearch=()=>loadList(document.getElementById("search").value.trim());
   document.getElementById("searchBtn").onclick=doSearch;
   document.getElementById("search").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.sort=document.getElementById("f-sort").value; loadList(document.getElementById("search").value.trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.sort=document.getElementById("f-sort").value; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
   document.getElementById("f-tag").onchange=applyFil;
+  document.getElementById("f-kind").onchange=applyFil;
   document.getElementById("f-sort").onchange=applyFil;
-  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",tag:"",sort:"production_date|desc"}; document.getElementById("f-month").value=""; document.getElementById("f-year").value=""; document.getElementById("f-tag").value=""; document.getElementById("f-sort").value="production_date|desc"; loadList(document.getElementById("search").value.trim()); };
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",tag:"",kind:"",sort:"production_date|desc"}; ["f-month","f-year","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-sort").value="production_date|desc"; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -307,33 +320,38 @@ function monthRange(year,month){
   return null;
 }
 
-let listFilter={year:"",month:"",tag:"",sort:"production_date|desc"};
+let listFilter={year:"",month:"",tag:"",kind:"",sort:"production_date|desc"};
 async function loadList(q){
   const list=document.getElementById("list");
   const rng=monthRange(listFilter.year,listFilter.month);
   const [scol,sdir]=(listFilter.sort||"production_date|desc").split("|");
 
-  // tag filter -> matching record ids
-  let tagIds=null;
-  if(listFilter.tag){
+  // issue filter -> matching record ids (or ids to exclude)
+  let tagIds=null, excludeIds=null;
+  if(listFilter.tag==="none"){
+    const { data:fids }=await db.from("v_record_flags").select("record_id").gt("open_ccrs",0);
+    excludeIds=(fids||[]).map(f=>f.record_id);
+  } else if(listFilter.tag){
     let fq=db.from("v_record_flags").select("record_id,open_types,open_ccrs");
     if(listFilter.tag==="any") fq=fq.gt("open_ccrs",0);
     else fq=fq.contains("open_types",[listFilter.tag]);
     const { data:fids, error:ferr }=await fq;
-    if(ferr){ list.innerHTML=`<div class="empty">Could not apply tag filter: ${esc(ferr.message)}</div>`; return; }
+    if(ferr){ list.innerHTML=`<div class="empty">Could not apply issue filter: ${esc(ferr.message)}</div>`; return; }
     tagIds=(fids||[]).map(f=>f.record_id);
-    if(!tagIds.length){ list.innerHTML=`<div class="empty">No records match the selected tag filter.</div>`; return; }
+    if(!tagIds.length){ list.innerHTML=`<div class="empty">No records match the selected issue filter.</div>`; return; }
   }
 
   let query=db.from("production_records")
     .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty")
-    .order(scol,{ascending:sdir==="asc", nullsFirst:false}).limit((rng||listFilter.tag)?1000:30);
+    .order(scol,{ascending:sdir==="asc", nullsFirst:false}).limit((rng||listFilter.tag||listFilter.kind)?1000:30);
   if(rng){ query=query.gte("production_date",rng[0]).lt("production_date",rng[1]); }
   if(tagIds){ query=query.in("id",tagIds); }
+  if(excludeIds && excludeIds.length){ query=query.not("id","in","("+excludeIds.join(",")+")"); }
+  if(listFilter.kind){ query=query.eq("record_kind",listFilter.kind); }
   if(q) query=query.or(`serial.ilike.%${q}%,so_number.ilike.%${q}%,mo_number.ilike.%${q}%,model.ilike.%${q}%,customer.ilike.%${q}%,customer_reference.ilike.%${q}%`);
   const { data, error }=await query;
   if(error){ list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng||listFilter.tag)?"No records match the current search or filter.":"No records yet. Create your first one."}</div>`; return; }
+  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng||listFilter.tag||listFilter.kind)?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
 
   // open issue types per listed record, for badges
   let flags={};
@@ -526,7 +544,9 @@ function renderEditor(rec){
           <div class="row">
             <div class="field"><label>Issue type</label><select id="ccr-type">
               <option>Quality Issue</option><option>Customer Complaint</option><option>Customer Return</option></select></div>
-            <div class="field"><label>Attach documents</label><input id="ccr-files" type="file" multiple></div>
+            <div class="field"><label>Pieces affected</label><input id="ccr-qty" type="number" min="0" placeholder="e.g. 12">
+              <div class="hint" id="ccrQtyHint"></div></div>
+            <div class="field full"><label>Attach documents</label><input id="ccr-files" type="file" multiple></div>
             <div class="field full"><label>Description</label><input id="ccr-desc" placeholder="Describe the issue"></div>
           </div>
           <button class="btn orange" id="raiseCcr">Raise issue</button>
@@ -805,6 +825,10 @@ async function loadWorkers(){
   const totMin=data.reduce((a,w)=>a+(Number(w.total_mins)||0),0);
   const avgCyc=totQty>0?Math.round(totMin/totQty*10)/10:null;
   const qh=document.getElementById("qtyHint");
+  window.__loggedUnits = totQty>0 ? totQty : null;
+  const ch=document.getElementById("ccrQtyHint");
+  if(ch){ const ceil=ccrCeiling();
+    ch.innerHTML = ceil!=null ? `Out of <b>${ceil}</b> units on this record` : ""; }
   if(qh && current && current.planned_qty!=null){
     const rem=current.planned_qty-totQty;
     qh.innerHTML=`<b>${totQty}</b> of <b>${current.planned_qty}</b> logged &middot; <b>${rem}</b> remaining`;
@@ -934,6 +958,12 @@ async function delWorker(id){
 }
 
 /* ---------------- CCR / quality issues ---------------- */
+function ccrCeiling(){
+  if(!current) return null;
+  if(window.__loggedUnits) return window.__loggedUnits;
+  return current.planned_qty!=null?current.planned_qty:null;
+}
+
 async function loadCcrs(){
   const box=document.getElementById("ccrList"); const cnt=document.getElementById("ccrCount");
   const { data:ccrs, error }=await db.from("ccrs").select("*").eq("record_id",current.id).order("created_at",{ascending:false});
@@ -948,6 +978,7 @@ async function loadCcrs(){
   box.innerHTML=ccrs.map(c=>`<div style="padding:14px 16px;border-top:1px solid var(--line)">
       <div style="display:flex;align-items:center;gap:8px">
         <span class="chip" data-tone="${c.status==='Resolved'?'ok':'hold'}">${esc(c.issue_type||'Issue')}</span>
+        ${c.affected_qty!=null?`<span class="badge-sample" style="background:var(--hold)">${c.affected_qty} affected</span>`:""}
         <span class="meta">${esc(c.status)} &middot; ${esc((c.created_at||'').slice(0,10))}${c.created_by?' &middot; '+esc(c.created_by):''}</span>
         ${c.status!=='Resolved'?`<button class="btn link" style="margin-left:auto" data-resolve="${c.id}">Mark resolved</button>`:''}
       </div>
@@ -962,10 +993,15 @@ async function raiseCcr(){
   const desc=document.getElementById("ccr-desc").value.trim();
   const type=document.getElementById("ccr-type").value;
   const files=document.getElementById("ccr-files").files;
+  const qtyRaw=document.getElementById("ccr-qty").value.trim();
+  const affected=qtyRaw===""?null:parseInt(qtyRaw,10);
   if(!desc){ banner("Describe the issue before raising it."); return; }
+  const ceiling=ccrCeiling();
+  if(affected!=null && ceiling!=null && affected>ceiling){
+    banner(`Pieces affected cannot exceed the ${ceiling} units on this record.`); return; }
   const btn=document.getElementById("raiseCcr"); btn.disabled=true; btn.textContent="Saving\u2026";
   const { data:ccr, error }=await db.from("ccrs")
-    .insert({record_id:current.id, issue_type:type, description:desc, created_by:SESSION.user.email})
+    .insert({record_id:current.id, issue_type:type, description:desc, affected_qty:affected, created_by:SESSION.user.email})
     .select().single();
   if(error){ btn.disabled=false; btn.textContent="Raise issue"; banner("Could not raise issue: "+error.message); return; }
   // upload any documents
@@ -977,7 +1013,7 @@ async function raiseCcr(){
     await db.from("ccr_documents").insert({ccr_id:ccr.id, file_name:f.name, storage_path:path, uploaded_by:SESSION.user.email});
   }
   btn.disabled=false; btn.textContent="Raise issue";
-  document.getElementById("ccr-desc").value=""; document.getElementById("ccr-files").value="";
+  document.getElementById("ccr-desc").value=""; document.getElementById("ccr-files").value=""; document.getElementById("ccr-qty").value="";
   banner(uploadErr?("Issue raised, but a file failed: "+uploadErr):"Issue raised.",!uploadErr);
   loadCcrs();
 }
