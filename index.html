@@ -260,6 +260,20 @@ async function renderHome(){
       <select id="f-month" style="max-width:140px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
       <select id="f-year" style="max-width:110px"><option value="">All years</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
       <select id="f-tag" style="max-width:170px"><option value="">All records</option><option value="any">Has any issue</option><option value="Quality Issue">Has quality issue</option><option value="Customer Complaint">Has complaint</option><option value="Customer Return">Has return</option></select>
+      <select id="f-sort" style="max-width:180px">
+        <option value="production_date|desc">Date, newest first</option>
+        <option value="production_date|asc">Date, oldest first</option>
+        <option value="serial|asc">Serial, A to Z</option>
+        <option value="serial|desc">Serial, Z to A</option>
+        <option value="customer|asc">Client, A to Z</option>
+        <option value="customer|desc">Client, Z to A</option>
+        <option value="model|asc">Model, A to Z</option>
+        <option value="so_number|asc">SO number</option>
+        <option value="status|asc">Status</option>
+        <option value="planned_qty|desc">Quantity, high to low</option>
+        <option value="planned_qty|asc">Quantity, low to high</option>
+        <option value="created_at|desc">Recently added</option>
+      </select>
       <button class="btn ghost" id="clearFil">Clear</button>
       <button class="btn orange" id="exportBtn" style="margin-left:auto">Export Excel</button>
     </div>
@@ -270,12 +284,13 @@ async function renderHome(){
   const doSearch=()=>loadList(document.getElementById("search").value.trim());
   document.getElementById("searchBtn").onclick=doSearch;
   document.getElementById("search").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.tag=document.getElementById("f-tag").value; loadList(document.getElementById("search").value.trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.sort=document.getElementById("f-sort").value; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
   document.getElementById("f-tag").onchange=applyFil;
-  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-tag").value=listFilter.tag||"";
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",tag:""}; document.getElementById("f-month").value=""; document.getElementById("f-year").value=""; document.getElementById("f-tag").value=""; loadList(document.getElementById("search").value.trim()); };
+  document.getElementById("f-sort").onchange=applyFil;
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",tag:"",sort:"production_date|desc"}; document.getElementById("f-month").value=""; document.getElementById("f-year").value=""; document.getElementById("f-tag").value=""; document.getElementById("f-sort").value="production_date|desc"; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -292,10 +307,11 @@ function monthRange(year,month){
   return null;
 }
 
-let listFilter={year:"",month:"",tag:""};
+let listFilter={year:"",month:"",tag:"",sort:"production_date|desc"};
 async function loadList(q){
   const list=document.getElementById("list");
   const rng=monthRange(listFilter.year,listFilter.month);
+  const [scol,sdir]=(listFilter.sort||"production_date|desc").split("|");
 
   // tag filter -> matching record ids
   let tagIds=null;
@@ -311,7 +327,7 @@ async function loadList(q){
 
   let query=db.from("production_records")
     .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty")
-    .order("production_date",{ascending:false}).limit((rng||listFilter.tag)?1000:30);
+    .order(scol,{ascending:sdir==="asc", nullsFirst:false}).limit((rng||listFilter.tag)?1000:30);
   if(rng){ query=query.gte("production_date",rng[0]).lt("production_date",rng[1]); }
   if(tagIds){ query=query.in("id",tagIds); }
   if(q) query=query.or(`serial.ilike.%${q}%,so_number.ilike.%${q}%,mo_number.ilike.%${q}%,model.ilike.%${q}%,customer.ilike.%${q}%,customer_reference.ilike.%${q}%`);
@@ -805,7 +821,8 @@ async function loadWorkers(){
       <td class="num">${w.qty??0}</td>
       <td class="num">${w.total_mins!=null?Math.round(w.total_mins):""}</td>
       <td class="num">${w.cycle_time!=null?Math.round(w.cycle_time*10)/10:""}</td>
-      <td><button class="btn danger" data-del="${w.id}">Remove</button></td>
+      <td style="white-space:nowrap"><button class="btn link" data-edit="${w.id}" style="color:var(--navy)">Edit</button>
+        <button class="btn danger" data-del="${w.id}">Remove</button></td>
     </tr>`).join("")}</tbody>
     <tfoot><tr class="totals">
       <td colspan="5" style="text-align:right">Record totals</td>
@@ -814,6 +831,78 @@ async function loadWorkers(){
       <td class="num">${avgCyc!=null?avgCyc:""}</td><td></td>
     </tr></tfoot></table></div>`;
   box.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>delWorker(b.dataset.del));
+  box.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{
+    const w=data.find(x=>x.id===b.dataset.edit); if(w) editEntry(w, totQty);
+  });
+  if(!may("entries","edit")) box.querySelectorAll("[data-edit],[data-del]").forEach(b=>b.remove());
+}
+
+/* ---------------- edit a worker entry ---------------- */
+function editEntry(w, loggedTotal){
+  const planned=current&&current.planned_qty!=null?current.planned_qty:null;
+  const others=loggedTotal-(w.qty||0);
+  const headroom=planned!=null?(planned-others):null;
+  let sel=(w.staff_ids&&w.staff_ids.length)?w.staff_ids.slice():(w.staff_id?[w.staff_id]:[]);
+
+  const m=modal("Edit entry", `
+    <div class="row">
+      <div class="field full"><label>Workers</label>
+        <input id="ee-staff-in" list="stafflist2" placeholder="Type a name and press Enter">
+        <datalist id="stafflist2">${STAFF.map(s=>`<option value="${esc(s.full_name)} (${esc(s.id)})">`).join("")}</datalist>
+        <div id="ee-chips" class="chips"></div></div>
+      <div class="field"><label>Conveyor</label><select id="ee-conv"><option value=""></option>${CONVEYORS.map(c=>`<option ${c===w.conveyor?"selected":""}>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Task</label><select id="ee-type"><option value="C" ${w.work_type!=="S"?"selected":""}>Complete</option><option value="S" ${w.work_type==="S"?"selected":""}>Stickers</option></select></div>
+      <div class="field"><label>Start time</label><input id="ee-start" type="time" value="${esc(t5(w.start_time))}"></div>
+      <div class="field"><label>Completion time</label><input id="ee-finish" type="time" value="${esc(t5(w.finish_time))}"></div>
+      <div class="field"><label>Quantity finished</label><input id="ee-qty" type="number" min="0" value="${w.qty??0}">
+        ${headroom!=null?`<div class="hint">Maximum for this entry is <b>${headroom}</b> (record total ${planned}, other entries ${others}).</div>`:""}</div>
+      <div class="field full"><label>Remarks</label><input id="ee-remarks" value="${esc(w.remarks||"")}"></div>
+    </div>
+    <div class="hint" id="ee-preview" style="margin-bottom:12px"></div>
+    <button class="btn primary" id="ee-save">Save entry</button>
+    <div class="banner" id="ee-msg" style="margin-top:12px"></div>`);
+
+  const chips=()=>{ const box=m.el.querySelector("#ee-chips");
+    box.innerHTML=sel.map(id=>`<span class="chip-w">${esc(staffName(id))}<b data-rm="${esc(id)}">\u00d7</b></span>`).join("");
+    box.querySelectorAll("[data-rm]").forEach(x=>x.onclick=()=>{ sel=sel.filter(i=>i!==x.dataset.rm); chips(); }); };
+  chips();
+  const inp=m.el.querySelector("#ee-staff-in");
+  const commit=()=>{ const v=inp.value.trim(); if(!v) return;
+    const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
+    if(!s) return; if(!sel.includes(s.id)) sel.push(s.id); inp.value=""; chips(); };
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } });
+  inp.addEventListener("change",commit);
+
+  const prev=m.el.querySelector("#ee-preview");
+  const calc=()=>{ const mins=minsBetween(m.el.querySelector("#ee-start").value, m.el.querySelector("#ee-finish").value);
+    const q=parseInt(m.el.querySelector("#ee-qty").value||"0",10);
+    if(mins==null){ prev.innerHTML=""; return; }
+    const c=q>0?Math.round(mins/q*10)/10:null;
+    prev.innerHTML=`Total time <b>${mins} min</b>`+(c!=null?` &middot; Cycle <b>${c} min/unit</b>`:""); };
+  ["ee-start","ee-finish","ee-qty"].forEach(id=>m.el.querySelector("#"+id).addEventListener("input",calc));
+  calc();
+
+  m.el.querySelector("#ee-save").onclick=async()=>{
+    const btn=m.el.querySelector("#ee-save"), msg=m.el.querySelector("#ee-msg");
+    const qty=parseInt(m.el.querySelector("#ee-qty").value||"0",10);
+    if(headroom!=null && qty>headroom){
+      msg.className="banner show err";
+      msg.textContent=`Quantity cannot exceed ${headroom}. The record total is ${planned} and other entries already account for ${others}.`;
+      return;
+    }
+    btn.disabled=true; btn.textContent="Saving\u2026";
+    const fields={ staff_ids:sel, staff_id:sel[0]||null,
+      conveyor:m.el.querySelector("#ee-conv").value||null,
+      work_type:m.el.querySelector("#ee-type").value,
+      start_time:m.el.querySelector("#ee-start").value||null,
+      finish_time:m.el.querySelector("#ee-finish").value||null,
+      qty:String(qty),
+      remarks:m.el.querySelector("#ee-remarks").value.trim()||null };
+    const { error }=await db.rpc("update_worker_entry",{ p_id:w.id, p_fields:fields });
+    btn.disabled=false; btn.textContent="Save entry";
+    if(error){ msg.className="banner show err"; msg.textContent=error.message; return; }
+    m.close(); loadWorkers(); banner("Entry updated.",true);
+  };
 }
 
 async function addWorker(){
