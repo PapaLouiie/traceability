@@ -52,6 +52,14 @@
   input:focus,select:focus{outline:2px solid var(--orange); outline-offset:1px; border-color:transparent}
   .hint{font-size:12px; color:var(--muted); margin-top:5px}
   .hint b{color:var(--navy); font-variant-numeric:tabular-nums}
+  .radios{display:flex; gap:14px; padding-top:4px}
+  .radio{display:flex; align-items:center; gap:6px; font-size:14px; font-weight:600;
+    color:var(--ink); text-transform:none; letter-spacing:0; cursor:pointer; margin:0}
+  .radio input{width:auto; margin:0; accent-color:var(--orange)}
+  .qrbox img.kind-Production{border:5px solid var(--navy)}
+  .qrbox img.kind-Sample{border:5px solid var(--orange)}
+  .badge-sample{display:inline-block; font-size:10px; font-weight:800; letter-spacing:.5px; color:#fff;
+    background:var(--orange); padding:1px 6px; border-radius:5px; vertical-align:middle}
   .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
   .chip-w{display:inline-flex; align-items:center; gap:6px; background:var(--orange-soft); color:#a55a12;
     border:1px solid #f3d3ad; border-radius:999px; padding:4px 6px 4px 11px; font-size:13px; font-weight:600}
@@ -295,7 +303,7 @@ async function loadList(q){
   }
 
   let query=db.from("production_records")
-    .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status")
+    .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty")
     .order("production_date",{ascending:false}).limit((rng||listFilter.tag)?1000:30);
   if(rng){ query=query.gte("production_date",rng[0]).lt("production_date",rng[1]); }
   if(tagIds){ query=query.in("id",tagIds); }
@@ -311,8 +319,8 @@ async function loadList(q){
 
   list.innerHTML=data.map(r=>`<div class="rec" data-id="${r.id}">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")} ${tagsHTML(flags[r.id])}</div>
-        <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${tagsHTML(flags[r.id])}</div>
+        <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
       </div>
       <div class="r-right">
         <span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"Open")}</span>
@@ -430,6 +438,13 @@ function renderEditor(rec){
           <select id="f-light"><option value=""></option>${LIGHT_TYPES.map(x=>`<option ${x===(r.light_type||"")?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
         <div class="field"><label>Odoo variant name</label><input id="f-ovn" value="${esc(r.odoo_variant_name||"")}"></div>
         <div class="field"><label>Odoo variant ID</label><input id="f-ovid" value="${esc(r.odoo_variant_id||"")}"></div>
+        <div class="field"><label>Quantity *</label><input id="f-qty" type="number" min="0" value="${r.planned_qty!=null?r.planned_qty:""}" placeholder="e.g. 120">
+          <div class="hint" id="qtyHint"></div></div>
+        <div class="field"><label>Piece type</label>
+          <div class="radios">
+            <label class="radio"><input type="radio" name="kind" value="Production" ${(r.record_kind||"Production")==="Production"?"checked":""}> Production</label>
+            <label class="radio"><input type="radio" name="kind" value="Sample" ${r.record_kind==="Sample"?"checked":""}> Sample</label>
+          </div></div>
         <div class="field"><label>Line</label><input id="f-line" list="convlist" value="${esc(r.line||"")}"></div>
         <div class="field"><label>Foreman</label><input id="f-foreman" list="namelist" value="${esc(r.foreman||"")}"></div>
         <div class="field"><label>QC checker</label><input id="f-qc" list="namelist" value="${esc(r.qc_checker||"")}"></div>
@@ -438,6 +453,16 @@ function renderEditor(rec){
       <datalist id="namelist">${nameList}</datalist>
       <button class="btn primary" id="save">${isNew?"Create record":"Save changes"}</button>
       <div class="hint" id="auditLine" style="margin-top:10px"></div>
+    </div></div>
+
+    <div class="card"><h2>Engineering (BOM) <span id="bomChip" class="chip" style="margin-left:auto"></span></h2><div class="pad">
+      <p class="hint" style="margin:0 0 12px">Bill of materials for this build. None of these block the record from being saved, but you will be warned if any are left empty.</p>
+      <div class="row">
+        <div class="field"><label>Driver</label><input id="f-bdriver" value="${esc(r.bom_driver||"")}" placeholder="e.g. DRV-40W-1050mA"></div>
+        <div class="field"><label>LED</label><input id="f-bled" value="${esc(r.bom_led||"")}" placeholder="e.g. LED-2835-4000K"></div>
+        <div class="field"><label>EM (optional)</label><input id="f-bem" value="${esc(r.bom_em||"")}" placeholder="Emergency module"></div>
+        <div class="field"><label>Housing (optional)</label><input id="f-bhousing" value="${esc(r.bom_housing||"")}" placeholder="e.g. ALU-R100-WHT"></div>
+      </div>
     </div></div>
 
     <div id="afterCreate" class="${isNew?"hidden":""}">
@@ -498,7 +523,12 @@ function renderEditor(rec){
 
   document.getElementById("save").onclick=saveRecord;
   document.getElementById("addLight").onclick=addLightType;
+  ["f-bdriver","f-bled","f-bem","f-bhousing"].forEach(id=>
+    document.getElementById(id).addEventListener("input",updateBomChip));
+  updateBomChip();
   if(!isNew){
+    const qi=document.getElementById("qrimg");
+    if(qi) qi.className="kind-"+(r.record_kind||"Production");
     document.getElementById("printBtn").onclick=()=>printTag(current);
     document.getElementById("addWorker").onclick=addWorker;
     document.getElementById("raiseCcr").onclick=raiseCcr;
@@ -538,6 +568,7 @@ function banner(msg,ok){
 }
 
 async function saveRecord(){
+  const kindEl=document.querySelector('input[name="kind"]:checked');
   const payload={
     production_date:document.getElementById("f-date").value||null,
     status:document.getElementById("f-status").value,
@@ -549,12 +580,32 @@ async function saveRecord(){
     light_type:document.getElementById("f-light").value.trim()||null,
     odoo_variant_name:document.getElementById("f-ovn").value.trim()||null,
     odoo_variant_id:document.getElementById("f-ovid").value.trim()||null,
+    planned_qty:document.getElementById("f-qty").value.trim()||null,
+    record_kind:kindEl?kindEl.value:"Production",
+    bom_driver:document.getElementById("f-bdriver").value.trim()||null,
+    bom_led:document.getElementById("f-bled").value.trim()||null,
+    bom_em:document.getElementById("f-bem").value.trim()||null,
+    bom_housing:document.getElementById("f-bhousing").value.trim()||null,
     line:document.getElementById("f-line").value.trim()||null,
     foreman:document.getElementById("f-foreman").value.trim()||null,
     qc_checker:document.getElementById("f-qc").value.trim()||null
   };
   if(!payload.production_date||!payload.so_number||!payload.model)
     return banner("Production date, SO and model are required.");
+  if(!payload.planned_qty)
+    return banner("Quantity is required so entries can be checked against it.");
+
+  // BOM completeness: warn, but let the user proceed
+  const missing=[];
+  if(!payload.bom_driver) missing.push("Driver");
+  if(!payload.bom_led) missing.push("LED");
+  if(!payload.bom_em) missing.push("EM");
+  if(!payload.bom_housing) missing.push("Housing");
+  if(missing.length){
+    const ok=confirm("The BOM is missing: "+missing.join(", ")+".\n\nYou can fill these in later. Save anyway?");
+    if(!ok) return;
+  }
+
   const btn=document.getElementById("save"); btn.disabled=true; const label=btn.textContent; btn.textContent="Saving\u2026";
 
   if(!current){
@@ -562,14 +613,15 @@ async function saveRecord(){
     btn.disabled=false; btn.textContent=label;
     if(error){ banner(error.message.includes("duplicate")?"A record with this date, SO and model already exists.":"Could not save: "+error.message); return; }
     current=data;
-    document.getElementById("qrimg").src=qrURL(data.serial);
+    const qi=document.getElementById("qrimg");
+    qi.src=qrURL(data.serial); qi.className="kind-"+(data.record_kind||"Production");
     document.getElementById("serialTxt").textContent=data.serial;
     document.getElementById("afterCreate").classList.remove("hidden");
     document.querySelector("h1").textContent=data.serial;
     document.getElementById("save").textContent="Save changes";
     document.getElementById("printBtn").onclick=()=>printTag(current);
     document.getElementById("addWorker").onclick=addWorker;
-    loadWorkers(); renderAudit();
+    loadWorkers(); renderAudit(); updateBomChip();
     banner("Record created. Serial "+data.serial+".",true);
   } else {
     // update via POST RPC so proxies that block PATCH do not break saves
@@ -578,8 +630,20 @@ async function saveRecord(){
     if(error){ banner(/fetch/i.test(error.message||"")
         ?"Network error reaching the database. Check your connection, then try again."
         :"Could not save changes: "+error.message); return; }
-    current=data; banner("Changes saved.",true); renderAudit();
+    current=data; banner("Changes saved.",true); renderAudit(); updateBomChip();
+    const qi=document.getElementById("qrimg");
+    if(qi) qi.className="kind-"+(data.record_kind||"Production");
+    loadWorkers();
   }
+}
+
+function updateBomChip(){
+  const c=document.getElementById("bomChip"); if(!c) return;
+  const vals=["f-bdriver","f-bled","f-bem","f-bhousing"].map(id=>{
+    const el=document.getElementById(id); return el?el.value.trim():""; });
+  const filled=vals.filter(Boolean).length;
+  c.textContent=filled+" of 4 set";
+  c.setAttribute("data-tone", filled===4?"ok":(filled===0?"hold":""));
 }
 
 /* ---------------- worker entries ---------------- */
@@ -595,6 +659,12 @@ async function loadWorkers(){
   const totQty=data.reduce((a,w)=>a+(w.qty||0),0);
   const totMin=data.reduce((a,w)=>a+(Number(w.total_mins)||0),0);
   const avgCyc=totQty>0?Math.round(totMin/totQty*10)/10:null;
+  const qh=document.getElementById("qtyHint");
+  if(qh && current && current.planned_qty!=null){
+    const rem=current.planned_qty-totQty;
+    qh.innerHTML=`<b>${totQty}</b> of <b>${current.planned_qty}</b> logged &middot; <b>${rem}</b> remaining`;
+    qh.style.color = rem<0 ? "var(--hold)" : (rem===0 ? "var(--ok)" : "var(--muted)");
+  }
   box.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Worker</th><th>Conveyor</th><th>Start</th><th>Finish</th><th>Task</th>
     <th class="num">Qty</th><th class="num">Total min</th><th class="num">Cycle</th><th></th></tr></thead><tbody>${
     data.map(w=>`<tr>
@@ -728,18 +798,23 @@ async function openDoc(path){
 
 /* ---------------- print ---------------- */
 function printTag(r){
+  const isSample=(r.record_kind==="Sample");
+  const bcol=isSample?"#F6851F":"#24275E";
   const w=window.open("","_blank","width=420,height=560");
   w.document.write(`<html><head><title>${esc(r.serial)}</title><style>
     body{font-family:Arial,sans-serif;text-align:center;padding:26px;color:#1c1e33}
-    img{width:260px;height:260px}
-    .sn{font-size:26px;font-weight:800;color:#24275E;margin:14px 0 4px;letter-spacing:.5px}
+    img{width:260px;height:260px;border:6px solid ${bcol};border-radius:6px;box-sizing:content-box}
+    .kind{margin-top:12px;display:inline-block;font-size:12px;font-weight:800;letter-spacing:1px;
+      color:#fff;background:${bcol};padding:3px 12px;border-radius:5px}
+    .sn{font-size:26px;font-weight:800;color:#24275E;margin:10px 0 4px;letter-spacing:.5px}
     .m{font-size:15px;color:#444;margin:2px 0}
-    .b{height:6px;background:#F6851F;margin:18px auto 0;width:260px;border-radius:3px}
+    .b{height:6px;background:${bcol};margin:18px auto 0;width:272px;border-radius:3px}
   </style></head><body>
     <img src="${qrURL(r.serial)}" alt="QR">
+    <div class="kind">${isSample?"SAMPLE":"PRODUCTION"}</div>
     <div class="sn">${esc(r.serial)}</div>
     <div class="m">${esc(r.model||"")}</div>
-    <div class="m">SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}</div>
+    <div class="m">SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}${r.planned_qty!=null?" &middot; Qty "+r.planned_qty:""}</div>
     <div class="b"></div>
     <script>setTimeout(function(){window.print()},400)<\/script>
   </body></html>`);
