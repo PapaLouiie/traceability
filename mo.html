@@ -110,6 +110,26 @@
 
   /* status blocks */
   .state{margin-top:40px; text-align:center; color:var(--muted)}
+  .btn-edit{width:100%; margin-top:14px; padding:14px; font-size:16px; font-weight:700; color:#fff;
+    background:var(--orange); border:none; border-radius:12px; cursor:pointer; font-family:inherit}
+  .btn-edit:active{filter:brightness(.94)}
+  .card .pad{padding:14px 16px 18px}
+  .card .pad label{display:block; font-size:10.5px; letter-spacing:1px; text-transform:uppercase;
+    color:var(--muted); margin:12px 0 5px}
+  .card .pad label:first-child{margin-top:0}
+  .card .pad input,.card .pad select{width:100%; padding:12px; font-size:16px; border:1px solid var(--line);
+    border-radius:10px; background:#fbfbfe; color:var(--ink); font-family:inherit}
+  .card .pad input:disabled{background:#f2f3f8; color:var(--muted)}
+  .card .pad .hint{font-size:12px; color:var(--warn); margin:10px 0 0}
+  .editbar{display:flex; gap:10px; margin-top:16px}
+  .btn-save{flex:2; padding:15px; font-size:16px; font-weight:700; color:#fff; background:var(--navy);
+    border:none; border-radius:12px; cursor:pointer; font-family:inherit}
+  .btn-cancel{flex:1; padding:15px; font-size:16px; font-weight:700; color:var(--navy); background:#fff;
+    border:1px solid var(--line); border-radius:12px; cursor:pointer; font-family:inherit}
+  .banner{display:none; margin-top:14px; padding:12px 14px; border-radius:10px; font-size:14px}
+  .banner.show{display:block}
+  .banner.ok{background:var(--ok-bg); color:var(--ok)}
+  .banner.err{background:var(--hold-bg); color:var(--hold)}
   .state .mk{font-size:34px; margin-bottom:8px}
   .state h3{margin:0 0 4px; color:var(--ink); font-size:17px}
   .state p{margin:0; font-size:14px}
@@ -149,6 +169,7 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 const app = document.getElementById("app");
 const whoEl = document.getElementById("who");
 const sn = new URLSearchParams(location.search).get("sn");
+const PERMS = {};
 
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dash = v => (v==null||v==="") ? '<span class="val dim">&mdash;</span>' : esc(v);
@@ -244,6 +265,8 @@ async function renderFull(email){
 
   app.innerHTML =
     hero(r) + productCard(r) + orderCard(r) +
+    (PERMS.records && PERMS.records.edit===false ? "" :
+      `<button class="btn-edit" id="editBtn">Edit this record</button>`) +
     `<section class="card"><h2>Assignment</h2><div class="grid">
       ${cell("Foreman", dash(r.foreman))}
       ${cell("QC checker", dash(r.qc_checker))}
@@ -256,11 +279,79 @@ async function renderFull(email){
     `<section class="card"><h2>Worker entries</h2>
       ${rows ? `<table><thead><tr><th>Worker</th><th>Shift</th><th>Task</th><th class="num">Qty</th><th class="num">Cyc</th></tr></thead><tbody>${rows}</tbody></table>`
              : `<div class="grid"><div class="cell full"><div class="val dim">No worker entries yet. This record was created but assembly data has not been logged.</div></div></div>`}
-    </section>` +
-    (r.remarks ? `<section class="card"><h2>Remarks</h2><div class="grid"><div class="cell full"><div class="val dim">${esc(r.remarks)}</div></div></div></section>` : "");
+    </section>`;
 
   whoEl.innerHTML = `${esc(email)}<br><a id="out">Sign out</a>`;
   document.getElementById("out").onclick = async ()=>{ await db.auth.signOut(); location.reload(); };
+  const eb=document.getElementById("editBtn");
+  if(eb) eb.onclick=()=>renderEdit(r, email);
+}
+
+/* ---------------- edit form (phone) ----------------------------------- */
+const STATUSES=["Open","In Progress","QC","Completed","Hold"];
+async function renderEdit(r, email){
+  const canEng = !(PERMS.engineering && PERMS.engineering.edit===false);
+  const { data:lt } = await db.from("light_types").select("name").order("name");
+  const types=(lt||[]).map(x=>x.name);
+  const opt=(list,v)=>list.map(o=>`<option ${o===v?"selected":""}>${esc(o)}</option>`).join("");
+
+  app.innerHTML =
+    `<div class="hero"><div class="eyebrow">Editing</div>
+      <div class="serial">${esc(r.serial)}</div><div class="model">${esc(r.model||"")}</div></div>
+    <div class="banner" id="eb"></div>
+    <section class="card"><h2>Record</h2><div class="pad">
+      <label>Status</label><select id="e-status">${opt(STATUSES, r.status||"Open")}</select>
+      <label>Quantity</label><input id="e-qty" type="number" min="0" value="${r.planned_qty!=null?r.planned_qty:""}">
+      <label>Customer</label><input id="e-customer" value="${esc(r.customer||"")}">
+      <label>Customer reference</label><input id="e-cref" value="${esc(r.customer_reference||"")}">
+      <label>MO number</label><input id="e-mo" value="${esc(r.mo_number||"")}">
+      <label>Light type</label><select id="e-light"><option value=""></option>${opt(types, r.light_type||"")}</select>
+      <label>Line</label><input id="e-line" value="${esc(r.line||"")}">
+      <label>Foreman</label><input id="e-foreman" value="${esc(r.foreman||"")}">
+      <label>QC checker</label><input id="e-qc" value="${esc(r.qc_checker||"")}">
+    </div></section>
+    <section class="card"><h2>Engineering (BOM)</h2><div class="pad">
+      <label>Driver</label><input id="e-bdriver" value="${esc(r.bom_driver||"")}" ${canEng?"":"disabled"}>
+      <label>LED</label><input id="e-bled" value="${esc(r.bom_led||"")}" ${canEng?"":"disabled"}>
+      <label>EM</label><input id="e-bem" value="${esc(r.bom_em||"")}" ${canEng?"":"disabled"}>
+      <label>Housing</label><input id="e-bhousing" value="${esc(r.bom_housing||"")}" ${canEng?"":"disabled"}>
+      ${canEng?"":'<p class="hint">Your role has read-only access to engineering fields.</p>'}
+    </div></section>
+    <div class="editbar">
+      <button class="btn-save" id="e-save">Save changes</button>
+      <button class="btn-cancel" id="e-cancel">Cancel</button>
+    </div>`;
+
+  document.getElementById("e-cancel").onclick=()=>renderFull(email);
+  document.getElementById("e-save").onclick=async()=>{
+    const btn=document.getElementById("e-save"); const eb=document.getElementById("eb");
+    const payload={
+      production_date:r.production_date, so_number:r.so_number, model:r.model,
+      status:document.getElementById("e-status").value,
+      planned_qty:document.getElementById("e-qty").value.trim()||null,
+      customer:document.getElementById("e-customer").value.trim()||null,
+      customer_reference:document.getElementById("e-cref").value.trim()||null,
+      mo_number:document.getElementById("e-mo").value.trim()||null,
+      light_type:document.getElementById("e-light").value||null,
+      line:document.getElementById("e-line").value.trim()||null,
+      foreman:document.getElementById("e-foreman").value.trim()||null,
+      qc_checker:document.getElementById("e-qc").value.trim()||null,
+      record_kind:r.record_kind||"Production",
+      odoo_variant_name:r.odoo_variant_name, odoo_variant_id:r.odoo_variant_id,
+      bom_driver:canEng?(document.getElementById("e-bdriver").value.trim()||null):r.bom_driver,
+      bom_led:canEng?(document.getElementById("e-bled").value.trim()||null):r.bom_led,
+      bom_em:canEng?(document.getElementById("e-bem").value.trim()||null):r.bom_em,
+      bom_housing:canEng?(document.getElementById("e-bhousing").value.trim()||null):r.bom_housing
+    };
+    btn.disabled=true; btn.textContent="Saving\u2026";
+    const { data, error }=await db.rpc("update_production_record",{ p_id:r.id, p_fields:payload });
+    btn.disabled=false; btn.textContent="Save changes";
+    if(error){ eb.textContent=/fetch/i.test(error.message||"")
+        ?"Network error. Check your connection and try again."
+        :error.message; eb.className="banner show err"; window.scrollTo(0,0); return; }
+    eb.textContent="Saved."; eb.className="banner show ok";
+    setTimeout(()=>renderFull(email),700);
+  };
 }
 
 /* ---------------- sign-in affordance ---------------------------------- */
@@ -311,7 +402,11 @@ function fail(title,sub){
 (async function(){
   if(!sn){ fail("Nothing to show","This page opens from a scanned NLC QR code."); return; }
   const { data:{ session } } = await db.auth.getSession();
-  if(session){ await renderFull(session.user.email); }
+  if(session){
+    try{ const { data:pm } = await db.rpc("my_permissions");
+      (pm||[]).forEach(p=>PERMS[p.section]={view:p.can_view, edit:p.can_edit}); }catch(e){}
+    await renderFull(session.user.email);
+  }
   else { await renderPublic(); }
 })();
 </script>
