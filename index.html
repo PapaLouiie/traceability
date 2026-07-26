@@ -290,6 +290,7 @@ async function renderHome(){
       <input id="search" placeholder="Search serial, SO, MO, model, customer, ref">
       <button class="btn ghost" id="searchBtn">Search</button>
       <a class="btn ghost" href="dashboard.html">Dashboard</a>
+      <a class="btn ghost" href="planning.html">Planning</a>
       ${may("engineering","edit")?'<button class="btn ghost" id="bomBtn">BOM editor</button>':''}
     </div>
     <div class="toolbar">
@@ -523,6 +524,7 @@ function renderEditor(rec){
           <select id="f-light"><option value=""></option>${LIGHT_TYPES.map(x=>`<option ${x===(r.light_type||"")?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
         <div class="field"><label>Odoo variant name</label><input id="f-ovn" value="${esc(r.odoo_variant_name||"")}"></div>
         <div class="field"><label>Odoo variant ID</label><input id="f-ovid" value="${esc(r.odoo_variant_id||"")}"></div>
+        <div class="field"><label>Voltage</label><input id="f-voltage" value="${esc(r.voltage||"")}" placeholder="e.g. 220V"></div>
         <div class="field"><label>Quantity *</label><input id="f-qty" type="number" min="0" value="${r.planned_qty!=null?r.planned_qty:""}" placeholder="e.g. 120">
           <div class="hint" id="qtyHint"></div></div>
         <div class="field"><label>Piece type</label>
@@ -798,7 +800,7 @@ function applyGating(){
     ids.forEach(id=>{ const el=document.getElementById(id); if(el){ el.disabled=true; el.style.background="#f2f3f8"; } }); };
   // record fields
   lock(["f-date","f-status","f-so","f-mo","f-model","f-customer","f-cref","f-light","f-ovn","f-ovid",
-        "f-qty","f-line","f-foreman","f-qc","save","addLight"], may("records","edit"));
+        "f-qty","f-voltage","f-line","f-foreman","f-qc","save","addLight"], may("records","edit"));
   if(!may("records","edit")) document.querySelectorAll('input[name="kind"]').forEach(el=>el.disabled=true);
   // engineering
   lock(["f-bdriver","f-bled","f-bem","f-bhousing"], may("engineering","edit"));
@@ -930,6 +932,7 @@ async function saveRecord(){
     light_type:document.getElementById("f-light").value.trim()||null,
     odoo_variant_name:document.getElementById("f-ovn").value.trim()||null,
     odoo_variant_id:document.getElementById("f-ovid").value.trim()||null,
+    voltage:document.getElementById("f-voltage").value.trim()||null,
     planned_qty:document.getElementById("f-qty").value.trim()||null,
     record_kind:kindEl?kindEl.value:"Production",
     needs_fabrication:fabEl?fabEl.value==="yes":false,
