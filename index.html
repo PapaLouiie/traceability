@@ -21,6 +21,14 @@
   body{font-family:"Bizmo","Bizmo Semi Bold",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg); color:var(--ink); line-height:1.45; -webkit-font-smoothing:antialiased}
   .wrap{max-width:760px; margin:0 auto; padding:0 16px 60px}
+  body.wide .wrap{max-width:96vw}
+  body.wide .bom-table{min-width:0; width:100%; table-layout:fixed}
+  body.wide .bom-table th:nth-child(1){width:13%}
+  body.wide .bom-table th:nth-child(2){width:14%}
+  body.wide .bom-table th:nth-child(3){width:8%}
+  body.wide .bom-table th:nth-child(n+4){width:auto}
+  body.wide .bom-table td{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  body.wide .bom-table td.bom-cell input{min-width:0}
 
   header{background:var(--navy); color:#fff; padding:14px 16px; border-bottom:3px solid var(--orange)}
   .head-in{max-width:760px; margin:0 auto; display:flex; align-items:center; gap:12px}
@@ -269,6 +277,7 @@ function wireShell(){
 /* ---------------- home: new + search + filter + recent ---------------- */
 async function renderHome(){
   setHash("#/");
+  document.body.classList.remove("wide");
   const now=new Date();
   const maxY=now.getFullYear()+4; const years=[]; for(let y=maxY;y>=2024;y--) years.push(y);
   const months=[["01","January"],["02","February"],["03","March"],["04","April"],["05","May"],["06","June"],
@@ -489,6 +498,7 @@ function buildWorkbook(rows,from,to){
 function renderEditor(rec){
   current=rec;
   const isNew=!rec;
+  document.body.classList.remove("wide");
   setHash(isNew?"#/new":"#/record/"+rec.id);
   const r=rec||{ production_date:new Date().toISOString().slice(0,10), status:"Open" };
   const nameList=STAFF.map(s=>`<option value="${esc(s.full_name)}">`).join("");
@@ -694,6 +704,7 @@ const ROLES=["admin","supervisor","foreman","sales","viewer"];
 
 async function renderAdmin(){
   setHash("#/admin");
+  document.body.classList.remove("wide");
   root.innerHTML=shell(`
     <button class="btn link" id="back">&larr; All records</button>
     <h1>User access</h1>
@@ -811,6 +822,7 @@ function applyGating(){
 /* ---------------- BOM bulk editor ---------------- */
 async function renderBomEditor(){
   setHash("#/bom");
+  document.body.classList.add("wide");
   root.innerHTML=shell(`
     <button class="btn link" id="back">&larr; All records</button>
     <h1>BOM editor</h1>
