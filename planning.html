@@ -231,7 +231,7 @@ function renderShell(){
         headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" } });
       const j=await res.json();
       if(j.error) banner("Sync failed: "+j.error);
-      else { banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated.`,true); await load(); }
+      else { banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated.`+(j.note?` ${j.note}`:""),true); await load(); }
     }catch(e){ banner("Sync failed: "+e.message+". Is the odoo-sync function deployed?"); }
     sb.disabled=false; sb.textContent="Sync from Odoo";
   };
