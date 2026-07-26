@@ -103,6 +103,12 @@
 
   table{width:100%; border-collapse:collapse; font-size:13.5px}
   .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  .bom-table td.bom-cell{padding:3px 4px}
+  .bom-table td.bom-cell input{width:100%; min-width:130px; padding:8px 10px; border:1px solid transparent;
+    border-radius:7px; background:transparent; font-size:13.5px; font-family:inherit}
+  .bom-table td.bom-cell input:hover{border-color:var(--line); background:#fbfbfe}
+  .bom-table td.bom-cell input:focus{outline:2px solid var(--orange); background:#fff}
+  .bom-table td.bom-cell.changed input{background:var(--orange-soft); border-color:#f3d3ad; font-weight:600}
   table{min-width:640px}
   thead th{background:#f0f1f8; color:var(--navy); text-align:left; padding:9px 12px; font-size:11px; letter-spacing:.5px}
   tbody td{padding:9px 12px; border-top:1px solid var(--line)}
@@ -211,6 +217,7 @@ async function route(){
   const m=h.match(/^#\/record\/([0-9a-fA-F-]{36})$/);
   if(m){ await openRecord(m[1],true); return; }
   if(h==="#/admin" && may("admin","view")){ renderAdmin(); return; }
+  if(h==="#/bom" && may("engineering","edit")){ renderBomEditor(); return; }
   if(h==="#/new"){ renderEditor(null); return; }
   renderHome();
 }
@@ -274,6 +281,7 @@ async function renderHome(){
       <input id="search" placeholder="Search serial, SO, MO, model, customer, ref">
       <button class="btn ghost" id="searchBtn">Search</button>
       <a class="btn ghost" href="dashboard.html">Dashboard</a>
+      ${may("engineering","edit")?'<button class="btn ghost" id="bomBtn">BOM editor</button>':''}
     </div>
     <div class="toolbar">
       <select id="f-month" style="max-width:140px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
@@ -312,6 +320,8 @@ async function renderHome(){
   `);
   wireShell();
   document.getElementById("newBtn").onclick=()=>renderEditor(null);
+  const bb=document.getElementById("bomBtn");
+  if(bb) bb.onclick=renderBomEditor;
   const doSearch=()=>loadList(document.getElementById("search").value.trim());
   document.getElementById("searchBtn").onclick=doSearch;
   document.getElementById("search").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
@@ -361,7 +371,7 @@ async function loadList(q){
   }
 
   let query=db.from("production_records")
-    .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty")
+    .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty,needs_fabrication,fabrication_stage")
     .order(scol,{ascending:sdir==="asc", nullsFirst:false}).limit((rng||listFilter.tag||listFilter.kind)?1000:30);
   if(rng){ query=query.gte("production_date",rng[0]).lt("production_date",rng[1]); }
   if(tagIds){ query=query.in("id",tagIds); }
@@ -379,7 +389,7 @@ async function loadList(q){
 
   list.innerHTML=data.map(r=>`<div class="rec" data-id="${r.id}">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${tagsHTML(flags[r.id])}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${tagsHTML(flags[r.id])}</div>
         <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
       </div>
       <div class="r-right">
@@ -510,6 +520,11 @@ function renderEditor(rec){
             <label class="radio"><input type="radio" name="kind" value="Production" ${(r.record_kind||"Production")==="Production"?"checked":""}> Production</label>
             <label class="radio"><input type="radio" name="kind" value="Sample" ${r.record_kind==="Sample"?"checked":""}> Sample</label>
           </div></div>
+        <div class="field"><label>Fabrication needed?</label>
+          <div class="radios">
+            <label class="radio"><input type="radio" name="fab" value="no" ${!r.needs_fabrication?"checked":""}> No</label>
+            <label class="radio"><input type="radio" name="fab" value="yes" ${r.needs_fabrication?"checked":""}> Yes</label>
+          </div></div>
         <div class="field"><label>Line</label><input id="f-line" list="convlist" value="${esc(r.line||"")}"></div>
         <div class="field"><label>Foreman</label><input id="f-foreman" list="namelist" value="${esc(r.foreman||"")}"></div>
         <div class="field"><label>QC checker</label><input id="f-qc" list="namelist" value="${esc(r.qc_checker||"")}"></div>
@@ -562,6 +577,36 @@ function renderEditor(rec){
         <div id="workers"></div>
       </div>
 
+      <div class="card" id="fabCard" style="display:${r.needs_fabrication?"block":"none"}">
+        <h2>Fabrication <span id="fabStageChip" class="chip" style="margin-left:auto"></span></h2>
+        <div class="pad">
+          <div class="row">
+            <div class="field"><label>Stage</label><select id="fab-stage">
+              <option value="">Not started</option>
+              <option ${r.fabrication_stage==="Fabrication"?"selected":""}>Fabrication</option>
+              <option ${r.fabrication_stage==="Painting Pending"?"selected":""}>Painting Pending</option>
+              <option ${r.fabrication_stage==="Fabrication Complete"?"selected":""}>Fabrication Complete</option>
+            </select></div>
+            <div class="field"><label>&nbsp;</label><button class="btn ghost" id="fabStageSave" style="width:100%">Update stage</button></div>
+          </div>
+          <p class="hint" style="margin:8px 0 14px">Flow: Fabrication &rarr; Painting Pending &rarr; Fabrication Complete.</p>
+          <div class="row">
+            <div class="field full"><label>Workers (add one or more)</label>
+              <input id="fw-staff-in" list="stafflist" placeholder="Type a name and press Enter">
+              <div id="fw-chips" class="chips"></div></div>
+            <div class="field"><label>Stage for this entry</label><select id="fw-stage">
+              <option>Fabrication</option><option>Painting Pending</option><option>Fabrication Complete</option></select></div>
+            <div class="field"><label>Quantity</label><input id="fw-qty" type="number" min="0" value="0"></div>
+            <div class="field"><label>Start time</label><input id="fw-start" type="time"></div>
+            <div class="field"><label>Completion time</label><input id="fw-finish" type="time"></div>
+            <div class="field full"><label>Remarks</label><input id="fw-remarks"></div>
+          </div>
+          <div class="hint" id="fwPreview" style="margin-bottom:12px"></div>
+          <button class="btn ghost" id="addFab">+ Add fabrication entry</button>
+        </div>
+        <div id="fabList"></div>
+      </div>
+
       <div class="card"><h2>Quality issues &amp; CCRs <span id="ccrCount" class="chip" style="margin-left:auto"></span></h2>
         <div class="pad">
           <p class="hint" style="margin:0 0 12px">Flag a customer complaint, return, or quality issue on this record. You can attach photos or documents.</p>
@@ -593,8 +638,14 @@ function renderEditor(rec){
   ["f-bdriver","f-bled","f-bem","f-bhousing"].forEach(id=>
     document.getElementById(id).addEventListener("input",updateBomChip));
   updateBomChip();
+  document.querySelectorAll('input[name="fab"]').forEach(el=>el.addEventListener("change",()=>{
+    const on=document.querySelector('input[name="fab"]:checked').value==="yes";
+    const fc=document.getElementById("fabCard"); if(fc) fc.style.display=(on&&!isNew)?"block":(on?"none":"none");
+    if(!isNew && on) fc.style.display="block";
+  }));
   applyGating();
   if(!isNew){
+    if(r.needs_fabrication){ wireFabrication(); loadFabs(); }
     const qi=document.getElementById("qrimg");
     if(qi) qi.className="kind-"+(r.record_kind||"Production");
     document.getElementById("printBtn").onclick=()=>printTag(current);
@@ -637,9 +688,9 @@ function banner(msg,ok){
 
 /* ---------------- admin: users and permissions ---------------- */
 const SECTIONS=[["records","Production records"],["entries","Production entries"],
-  ["engineering","Engineering / BOM"],["quality","Quality & CCRs"],
+  ["engineering","Engineering / BOM"],["fabrication","Fabrication"],["quality","Quality & CCRs"],
   ["dashboard","Dashboard"],["admin","User administration"]];
-const ROLES=["admin","supervisor","foreman","viewer"];
+const ROLES=["admin","supervisor","foreman","sales","viewer"];
 
 async function renderAdmin(){
   setHash("#/admin");
@@ -757,8 +808,105 @@ function applyGating(){
     note.innerHTML='<span style="color:var(--warn)">Your role has read-only access to this section.</span>';
 }
 
+/* ---------------- BOM bulk editor ---------------- */
+async function renderBomEditor(){
+  setHash("#/bom");
+  root.innerHTML=shell(`
+    <button class="btn link" id="back">&larr; All records</button>
+    <h1>BOM editor</h1>
+    <p class="sub">Edit engineering fields for many records at once. Type in the cells, then save all changes together. Changed cells are highlighted.</p>
+    <div class="banner" id="banner"></div>
+    <div class="toolbar">
+      <input id="bomSearch" placeholder="Filter by serial, SO, model, customer">
+      <select id="bomOnly" style="max-width:190px">
+        <option value="">All records</option>
+        <option value="missing">Incomplete BOM only</option>
+      </select>
+      <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
+    </div>
+    <div class="card"><div id="bomGrid"><div class="spinner"></div></div></div>`);
+  wireShell();
+  document.getElementById("back").onclick=renderHome;
+
+  const { data, error }=await db.from("production_records")
+    .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing")
+    .order("production_date",{ascending:false}).limit(1000);
+  const grid=document.getElementById("bomGrid");
+  if(error){ grid.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
+  if(!data.length){ grid.innerHTML=`<div class="empty">No records yet.</div>`; return; }
+
+  const dirty={};   // id -> {bom_driver,...}
+  const orig={}; data.forEach(r=>orig[r.id]={bom_driver:r.bom_driver||"",bom_led:r.bom_led||"",bom_em:r.bom_em||"",bom_housing:r.bom_housing||""});
+  const COLS=[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"]];
+
+  function rowVisible(r,q,only){
+    if(only==="missing" && r.bom_driver && r.bom_led && r.bom_em && r.bom_housing) {
+      const d=dirty[r.id]; if(!d) return false;
+    }
+    if(!q) return true;
+    q=q.toLowerCase();
+    return [r.serial,r.so_number,r.model,r.customer].some(v=>(v||"").toLowerCase().includes(q));
+  }
+  function draw(){
+    const q=document.getElementById("bomSearch").value.trim();
+    const only=document.getElementById("bomOnly").value;
+    const rows=data.filter(r=>rowVisible(r,q,only));
+    grid.innerHTML=`<div class="tbl-wrap"><table class="bom-table"><thead><tr>
+        <th style="min-width:150px">Serial</th><th>Model</th><th>SO</th>
+        ${COLS.map(c=>`<th style="min-width:150px">${c[1]}</th>`).join("")}
+      </tr></thead><tbody>${
+      rows.map(r=>`<tr>
+        <td><b>${esc(r.serial||"")}</b><div class="meta">${esc(r.production_date||"")}</div></td>
+        <td>${esc(r.model||"")}</td>
+        <td>${esc(r.so_number||"")}</td>
+        ${COLS.map(([k])=>{
+          const cur=(dirty[r.id]&&dirty[r.id][k]!==undefined)?dirty[r.id][k]:orig[r.id][k];
+          const changed=dirty[r.id]&&dirty[r.id][k]!==undefined&&dirty[r.id][k]!==orig[r.id][k];
+          return `<td class="bom-cell${changed?" changed":""}"><input data-id="${r.id}" data-col="${k}" value="${esc(cur)}"></td>`;
+        }).join("")}
+      </tr>`).join("")}</tbody></table></div>
+      ${rows.length?"":'<div class="empty">Nothing matches the current filter.</div>'}`;
+    grid.querySelectorAll("input[data-id]").forEach(inp=>{
+      inp.addEventListener("input",()=>{
+        const id=inp.dataset.id, col=inp.dataset.col, v=inp.value;
+        dirty[id]=dirty[id]||{};
+        if(v===orig[id][col]){ delete dirty[id][col]; if(!Object.keys(dirty[id]).length) delete dirty[id]; }
+        else dirty[id][col]=v;
+        inp.closest("td").classList.toggle("changed", dirty[id]&&dirty[id][col]!==undefined);
+        updateSaveBtn();
+      });
+    });
+  }
+  function updateSaveBtn(){
+    const n=Object.keys(dirty).length;
+    const b=document.getElementById("bomSave");
+    b.disabled=n===0; b.textContent=`Save changes (${n})`;
+  }
+  document.getElementById("bomSearch").addEventListener("input",draw);
+  document.getElementById("bomOnly").addEventListener("change",draw);
+  document.getElementById("bomSave").onclick=async()=>{
+    const b=document.getElementById("bomSave");
+    const rows=Object.entries(dirty).map(([id,ch])=>({ id,
+      bom_driver:ch.bom_driver!==undefined?ch.bom_driver:orig[id].bom_driver,
+      bom_led:ch.bom_led!==undefined?ch.bom_led:orig[id].bom_led,
+      bom_em:ch.bom_em!==undefined?ch.bom_em:orig[id].bom_em,
+      bom_housing:ch.bom_housing!==undefined?ch.bom_housing:orig[id].bom_housing }));
+    b.disabled=true; b.textContent="Saving\u2026";
+    const { data:count, error }=await db.rpc("bulk_update_bom",{ p_rows:rows });
+    if(error){ banner(error.message); updateSaveBtn(); return; }
+    rows.forEach(r=>{ orig[r.id]={bom_driver:r.bom_driver||"",bom_led:r.bom_led||"",bom_em:r.bom_em||"",bom_housing:r.bom_housing||""};
+      const rec=data.find(x=>x.id===r.id);
+      if(rec){ rec.bom_driver=r.bom_driver; rec.bom_led=r.bom_led; rec.bom_em=r.bom_em; rec.bom_housing=r.bom_housing; } });
+    Object.keys(dirty).forEach(k=>delete dirty[k]);
+    updateSaveBtn(); draw();
+    banner(`Updated ${count} record${count==1?"":"s"}.`,true);
+  };
+  draw();
+}
+
 async function saveRecord(){
   const kindEl=document.querySelector('input[name="kind"]:checked');
+  const fabEl=document.querySelector('input[name="fab"]:checked');
   const payload={
     production_date:document.getElementById("f-date").value||null,
     status:document.getElementById("f-status").value,
@@ -772,6 +920,7 @@ async function saveRecord(){
     odoo_variant_id:document.getElementById("f-ovid").value.trim()||null,
     planned_qty:document.getElementById("f-qty").value.trim()||null,
     record_kind:kindEl?kindEl.value:"Production",
+    needs_fabrication:fabEl?fabEl.value==="yes":false,
     bom_driver:document.getElementById("f-bdriver").value.trim()||null,
     bom_led:document.getElementById("f-bled").value.trim()||null,
     bom_em:document.getElementById("f-bem").value.trim()||null,
@@ -981,6 +1130,139 @@ async function delWorker(id){
   const { error }=await db.rpc("delete_worker_entry",{ p_id:id });
   if(error){ banner(/fetch/i.test(error.message||"")?"Network error reaching the database. Try again.":"Could not remove entry: "+error.message); return; }
   loadWorkers();
+}
+
+/* ---------------- fabrication ---------------- */
+let selFabWorkers=[];
+function fabChips(){
+  const box=document.getElementById("fw-chips"); if(!box) return;
+  box.innerHTML=selFabWorkers.map(id=>`<span class="chip-w">${esc(staffName(id))}<b data-frm="${esc(id)}">\u00d7</b></span>`).join("");
+  box.querySelectorAll("[data-frm]").forEach(x=>x.onclick=()=>{ selFabWorkers=selFabWorkers.filter(i=>i!==x.dataset.frm); fabChips(); });
+}
+function wireFabrication(){
+  selFabWorkers=[];
+  const inp=document.getElementById("fw-staff-in");
+  const commit=()=>{ const v=inp.value.trim(); if(!v) return;
+    const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
+    if(!s){ banner("No worker matches \u201c"+v+"\u201d."); return; }
+    if(!selFabWorkers.includes(s.id)) selFabWorkers.push(s.id);
+    inp.value=""; fabChips(); };
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } });
+  inp.addEventListener("change",commit);
+  fabChips();
+  const prev=document.getElementById("fwPreview");
+  const calc=()=>{ const m=minsBetween(document.getElementById("fw-start").value, document.getElementById("fw-finish").value);
+    const q=parseInt(document.getElementById("fw-qty").value||"0",10);
+    prev.innerHTML=m==null?"":`Total time <b>${m} min</b>`+(q>0?` &middot; Cycle <b>${Math.round(m/q*10)/10} min/unit</b>`:""); };
+  ["fw-start","fw-finish","fw-qty"].forEach(id=>document.getElementById(id).addEventListener("input",calc));
+  document.getElementById("addFab").onclick=addFab;
+  document.getElementById("fabStageSave").onclick=async()=>{
+    const stage=document.getElementById("fab-stage").value||null;
+    const { data, error }=await db.rpc("set_fabrication_stage",{ p_record:current.id, p_stage:stage });
+    if(error){ banner(error.message); return; }
+    current=data; banner("Fabrication stage updated.",true); fabStageChip();
+  };
+  fabStageChip();
+  if(!may("fabrication","edit")){
+    ["fab-stage","fabStageSave","fw-staff-in","fw-stage","fw-qty","fw-start","fw-finish","fw-remarks","addFab"]
+      .forEach(id=>{ const el=document.getElementById(id); if(el){ el.disabled=true; el.style.background="#f2f3f8"; } });
+  }
+}
+function fabStageChip(){
+  const c=document.getElementById("fabStageChip"); if(!c||!current) return;
+  const s=current.fabrication_stage;
+  c.textContent=s||"Not started";
+  c.setAttribute("data-tone", s==="Fabrication Complete"?"ok":(s?"info":"hold"));
+}
+async function loadFabs(){
+  const box=document.getElementById("fabList"); if(!box) return;
+  const { data, error }=await db.from("fabrication_entries")
+    .select("id,qty,stage,start_time,finish_time,total_mins,cycle_time,remarks,staff_id,staff_ids")
+    .eq("record_id",current.id).order("created_at",{ascending:true});
+  if(error){ box.innerHTML=`<div class="empty">Could not load fabrication entries: ${esc(error.message)}</div>`; return; }
+  if(!data.length){ box.innerHTML=`<div class="empty">No fabrication entries yet.</div>`; return; }
+  const totQty=data.reduce((a,w)=>a+(w.qty||0),0);
+  const totMin=data.reduce((a,w)=>a+(Number(w.total_mins)||0),0);
+  box.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Workers</th><th>Stage</th><th>Start</th><th>Finish</th>
+    <th class="num">Qty</th><th class="num">Total min</th><th class="num">Cycle</th><th></th></tr></thead><tbody>${
+    data.map(w=>`<tr>
+      <td>${esc(namesOf(w))}${w.remarks?`<div class="meta">${esc(w.remarks)}</div>`:""}</td>
+      <td>${esc(w.stage||"-")}</td>
+      <td>${esc(t5(w.start_time))||"-"}</td>
+      <td>${esc(t5(w.finish_time))||"-"}</td>
+      <td class="num">${w.qty??0}</td>
+      <td class="num">${w.total_mins!=null?Math.round(w.total_mins):""}</td>
+      <td class="num">${w.cycle_time!=null?Math.round(w.cycle_time*10)/10:""}</td>
+      <td style="white-space:nowrap"><button class="btn link" data-fedit="${w.id}" style="color:var(--navy)">Edit</button>
+        <button class="btn danger" data-fdel="${w.id}">Remove</button></td>
+    </tr>`).join("")}</tbody>
+    <tfoot><tr class="totals"><td colspan="4" style="text-align:right">Fabrication totals</td>
+      <td class="num">${totQty}</td><td class="num">${Math.round(totMin)}</td><td class="num"></td><td></td></tr></tfoot>
+    </table></div>`;
+  box.querySelectorAll("[data-fdel]").forEach(b=>b.onclick=async()=>{
+    const { error }=await db.rpc("delete_fabrication_entry",{ p_id:b.dataset.fdel });
+    if(error){ banner(error.message); return; } loadFabs(); });
+  box.querySelectorAll("[data-fedit]").forEach(b=>b.onclick=()=>{
+    const w=data.find(x=>x.id===b.dataset.fedit); if(w) editFab(w, totQty); });
+  if(!may("fabrication","edit")) box.querySelectorAll("[data-fedit],[data-fdel]").forEach(b=>b.remove());
+}
+async function addFab(){
+  const qty=parseInt(document.getElementById("fw-qty").value||"0",10);
+  const btn=document.getElementById("addFab"); btn.disabled=true; btn.textContent="Adding\u2026";
+  const { error }=await db.from("fabrication_entries").insert({
+    record_id:current.id, staff_ids:selFabWorkers.length?selFabWorkers.slice():null, staff_id:selFabWorkers[0]||null,
+    stage:document.getElementById("fw-stage").value,
+    start_time:document.getElementById("fw-start").value||null,
+    finish_time:document.getElementById("fw-finish").value||null,
+    qty:qty, remarks:document.getElementById("fw-remarks").value.trim()||null });
+  btn.disabled=false; btn.textContent="+ Add fabrication entry";
+  if(error){ banner("Could not add fabrication entry: "+error.message); return; }
+  ["fw-staff-in","fw-start","fw-finish","fw-remarks"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("fw-qty").value="0"; selFabWorkers=[]; fabChips();
+  document.getElementById("fwPreview").innerHTML="";
+  loadFabs();
+}
+function editFab(w, loggedTotal){
+  const planned=current&&current.planned_qty!=null?current.planned_qty:null;
+  const others=loggedTotal-(w.qty||0);
+  const headroom=planned!=null?(planned-others):null;
+  let sel=(w.staff_ids&&w.staff_ids.length)?w.staff_ids.slice():(w.staff_id?[w.staff_id]:[]);
+  const m=modal("Edit fabrication entry", `
+    <div class="row">
+      <div class="field full"><label>Workers</label>
+        <input id="fe-staff-in" list="stafflist3" placeholder="Type a name and press Enter">
+        <datalist id="stafflist3">${STAFF.map(s=>`<option value="${esc(s.full_name)} (${esc(s.id)})">`).join("")}</datalist>
+        <div id="fe-chips" class="chips"></div></div>
+      <div class="field"><label>Stage</label><select id="fe-stage">${["Fabrication","Painting Pending","Fabrication Complete"].map(s=>`<option ${s===w.stage?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="field"><label>Quantity</label><input id="fe-qty" type="number" min="0" value="${w.qty??0}">
+        ${headroom!=null?`<div class="hint">Maximum for this entry is <b>${headroom}</b>.</div>`:""}</div>
+      <div class="field"><label>Start time</label><input id="fe-start" type="time" value="${esc(t5(w.start_time))}"></div>
+      <div class="field"><label>Completion time</label><input id="fe-finish" type="time" value="${esc(t5(w.finish_time))}"></div>
+      <div class="field full"><label>Remarks</label><input id="fe-remarks" value="${esc(w.remarks||"")}"></div>
+    </div>
+    <button class="btn primary" id="fe-save">Save entry</button>
+    <div class="banner" id="fe-msg" style="margin-top:12px"></div>`);
+  const chips=()=>{ const box=m.el.querySelector("#fe-chips");
+    box.innerHTML=sel.map(id=>`<span class="chip-w">${esc(staffName(id))}<b data-rm="${esc(id)}">\u00d7</b></span>`).join("");
+    box.querySelectorAll("[data-rm]").forEach(x=>x.onclick=()=>{ sel=sel.filter(i=>i!==x.dataset.rm); chips(); }); };
+  chips();
+  const inp=m.el.querySelector("#fe-staff-in");
+  const commit=()=>{ const v=inp.value.trim(); if(!v) return;
+    const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
+    if(!s) return; if(!sel.includes(s.id)) sel.push(s.id); inp.value=""; chips(); };
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } });
+  inp.addEventListener("change",commit);
+  m.el.querySelector("#fe-save").onclick=async()=>{
+    const msg=m.el.querySelector("#fe-msg");
+    const qty=parseInt(m.el.querySelector("#fe-qty").value||"0",10);
+    if(headroom!=null && qty>headroom){ msg.className="banner show err"; msg.textContent=`Quantity cannot exceed ${headroom}.`; return; }
+    const { error }=await db.rpc("update_fabrication_entry",{ p_id:w.id, p_fields:{
+      staff_ids:sel, staff_id:sel[0]||null, stage:m.el.querySelector("#fe-stage").value,
+      start_time:m.el.querySelector("#fe-start").value||null, finish_time:m.el.querySelector("#fe-finish").value||null,
+      qty:String(qty), remarks:m.el.querySelector("#fe-remarks").value.trim()||null } });
+    if(error){ msg.className="banner show err"; msg.textContent=error.message; return; }
+    m.close(); loadFabs(); banner("Fabrication entry updated.",true);
+  };
 }
 
 /* ---------------- CCR / quality issues ---------------- */
