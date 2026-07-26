@@ -445,6 +445,7 @@ async function renderEdit(r, email){
       <label>Customer reference</label><input id="e-cref" value="${esc(r.customer_reference||"")}">
       <label>MO number</label><input id="e-mo" value="${esc(r.mo_number||"")}">
       <label>Light type</label><select id="e-light"><option value=""></option>${opt(types, r.light_type||"")}</select>
+      <label>Voltage</label><input id="e-voltage" value="${esc(r.voltage||"")}">
       <label>Line</label><input id="e-line" value="${esc(r.line||"")}">
       <label>Foreman</label><input id="e-foreman" value="${esc(r.foreman||"")}">
       <label>QC checker</label><input id="e-qc" value="${esc(r.qc_checker||"")}">
@@ -472,6 +473,7 @@ async function renderEdit(r, email){
       customer_reference:document.getElementById("e-cref").value.trim()||null,
       mo_number:document.getElementById("e-mo").value.trim()||null,
       light_type:document.getElementById("e-light").value||null,
+      voltage:document.getElementById("e-voltage").value.trim()||null,
       line:document.getElementById("e-line").value.trim()||null,
       foreman:document.getElementById("e-foreman").value.trim()||null,
       qc_checker:document.getElementById("e-qc").value.trim()||null,
