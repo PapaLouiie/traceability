@@ -274,8 +274,34 @@ async function renderFull(email){
   const cyc   = units ? (mins/units) : null;
   const remaining = r.planned_qty!=null ? (r.planned_qty-units) : null;
 
+  const canFabView = !(PERMS.fabrication && PERMS.fabrication.view===false);
+  let fabSection="";
+  if(r.needs_fabrication && canFabView){
+    const { data:fabs } = await db.from("fabrication_entries")
+      .select("qty,stage,start_time,finish_time,total_mins,remarks,staff_id,staff_ids")
+      .eq("record_id", r.id).order("created_at",{ascending:true});
+    const fabUnits=(fabs||[]).reduce((a,f)=>a+(f.qty||0),0);
+    const fabRows=(fabs||[]).map(f=>`<tr>
+        <td><div class="work-name">${esc(workersOf(f))}</div><div class="work-sub">${esc(f.stage||"")}</div></td>
+        <td>${esc(t(f.start_time))}&ndash;${esc(t(f.finish_time))}</td>
+        <td class="num">${f.qty??0}</td>
+        <td class="num">${f.total_mins!=null?Math.round(f.total_mins):""}</td>
+      </tr>`).join("");
+    const stone=r.fabrication_stage==="Fabrication Complete"?"ok":(r.fabrication_stage?"info":"warn");
+    fabSection=`<section class="card"><h2>Fabrication</h2>
+      <div class="grid">
+        <div class="cell"><div class="lbl">Stage</div><div class="val"><span class="chip" data-tone="${stone}">${esc(r.fabrication_stage||"Not started")}</span></div></div>
+        <div class="cell"><div class="lbl">Fabricated units</div><div class="val mono">${fabUnits}${r.planned_qty!=null?" of "+r.planned_qty:""}</div></div>
+      </div>
+      ${fabRows?`<table><thead><tr><th>Workers / stage</th><th>Shift</th><th class="num">Qty</th><th class="num">Min</th></tr></thead><tbody>${fabRows}</tbody></table>`
+              :`<div class="grid"><div class="cell full"><div class="val dim">No fabrication entries logged yet.</div></div></div>`}
+    </section>`;
+  }
+
   app.innerHTML =
     hero(r) + productCard(r) + orderCard(r) +
+    (r.needs_fabrication?`<div style="margin-top:12px"><span class="chip" data-tone="info">FABRICATION ITEM</span></div>`:"") +
+    fabSection +
     (PERMS.records && PERMS.records.edit===false ? "" :
       `<button class="btn-edit" id="editBtn">Edit this record</button>`) +
     `<section class="card"><h2>Assignment</h2><div class="grid">
