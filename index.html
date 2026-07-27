@@ -43,6 +43,15 @@
   input[type="file"]::file-selector-button{background:#fff; color:var(--navy); border:1px solid var(--line);
     border-radius:8px; padding:7px 13px; font-weight:700; font-size:13px; font-family:inherit; cursor:pointer; margin-right:10px}
   html[data-theme="dark"] input[type="file"]::file-selector-button{background:#23254a; color:var(--ink)}
+  .chipsearch{display:flex; flex-wrap:wrap; gap:6px; align-items:center; background:#fbfbfe;
+    border:1px solid var(--line); border-radius:9px; padding:5px 9px; cursor:text}
+  .chipsearch:focus-within{outline:2px solid var(--orange); outline-offset:1px}
+  .chipsearch input{border:none; background:none; outline:none; flex:1; min-width:110px; padding:5px 2px}
+  .chip-s{display:inline-flex; align-items:center; gap:5px; background:var(--orange-soft); color:#a55a12;
+    border:1px solid #f3d3ad; border-radius:999px; padding:3px 6px 3px 11px; font-size:12.5px; font-weight:700}
+  .chip-s b{cursor:pointer; color:#c0392b; font-weight:800; padding:0 3px; line-height:1; font-size:14px}
+  html[data-theme="dark"] .chipsearch{background:#23254a}
+  html[data-theme="dark"] .chip-s{background:#3a2a17; color:#f0b075; border-color:#5a4020}
   .cap-edit{color:var(--info); cursor:pointer; text-decoration:underline dotted; font-size:12.5px}
   .ld-chip{cursor:pointer}
   .ld-chip:hover{outline:2px solid var(--orange); outline-offset:1px}
@@ -349,7 +358,7 @@ async function renderHome(){
     <p class="sub">Create a record to generate its serial and QR, then fill details as assembly progresses.</p>
     <div class="toolbar">
       <button class="btn primary" id="newBtn">+ New record</button>
-      <input id="search" placeholder="Search serial, SO, MO, model, customer, ref">
+      <div class="chipsearch" id="searchBox" style="flex:1;min-width:180px"><input id="search" placeholder="Search: type, press Enter to tag; several tags find all"></div>
       <button class="btn ghost" id="searchBtn">Search</button>
       <a class="btn ghost" href="dashboard.html">Dashboard</a>
       <a class="btn ghost" href="planning.html">Planning</a>
@@ -399,10 +408,11 @@ async function renderHome(){
   if(bb) bb.onclick=renderBomEditor;
   const lb=document.getElementById("linesBtn");
   if(lb) lb.onclick=renderLines;
-  const doSearch=()=>loadList(document.getElementById("search").value.trim());
-  document.getElementById("searchBtn").onclick=doSearch;
-  document.getElementById("search").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.sort=document.getElementById("f-sort").value; loadList(document.getElementById("search").value.trim()); };
+  const searchCtl=chipSearch("searchBox","search",q=>{ HOME_TERMS=searchCtl.terms(); loadList(q.trim()); },false);
+  searchCtl.set(HOME_TERMS);
+  window.__homeSearch=searchCtl;
+  document.getElementById("searchBtn").onclick=()=>{ searchCtl.commit(); loadList(searchCtl.get().trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.sort=document.getElementById("f-sort").value; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
   document.getElementById("f-week").onchange=applyFil;
@@ -410,7 +420,7 @@ async function renderHome(){
   document.getElementById("f-kind").onchange=applyFil;
   document.getElementById("f-sort").onchange=applyFil;
   document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-sort").value="production_date|desc"; loadList(document.getElementById("search").value.trim()); };
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -513,6 +523,34 @@ function staffOpts(val){
 }
 
 /* ---------------- modal helper ---------------- */
+function chipSearch(boxId, inputId, onChange, live){
+  const box=document.getElementById(boxId), inp=document.getElementById(inputId);
+  let terms=[];
+  const all=()=>terms.concat(inp.value.trim()?[inp.value.trim()]:[]).join(" ");
+  const draw=()=>{
+    box.querySelectorAll(".chip-s").forEach(x=>x.remove());
+    terms.forEach((t,i)=>{
+      const sp=document.createElement("span"); sp.className="chip-s";
+      sp.innerHTML=`${esc(t)}<b data-i="${i}">\u00d7</b>`;
+      box.insertBefore(sp,inp);
+    });
+    box.querySelectorAll(".chip-s b").forEach(b=>b.onclick=()=>{ terms.splice(+b.dataset.i,1); draw(); onChange(all()); });
+  };
+  const commit=()=>{
+    const v=inp.value.trim(); if(!v) return false;
+    v.split(/[,\s]+/).forEach(t=>{ if(t&&!terms.includes(t)) terms.push(t); });
+    inp.value=""; draw(); onChange(all()); return true;
+  };
+  inp.addEventListener("keydown",e=>{
+    if(e.key==="Enter"||e.key===","){ e.preventDefault(); commit(); }
+    else if(e.key==="Backspace"&&!inp.value&&terms.length){ terms.pop(); draw(); onChange(all()); }
+  });
+  if(live) inp.addEventListener("input",()=>onChange(all()));
+  box.addEventListener("click",()=>inp.focus());
+  return { get:all, set:a=>{ terms=a.slice(); draw(); }, commit, terms:()=>terms.slice() };
+}
+let HOME_TERMS=[];   // records search chips survive navigation
+
 function modal(title, bodyHTML){
   const bg=document.createElement("div"); bg.className="modal-bg";
   bg.innerHTML=`<div class="modal"><div class="mh">${esc(title)}<span class="x">&times;</span></div><div class="mb">${bodyHTML}</div></div>`;
@@ -922,7 +960,7 @@ async function renderBomEditor(){
         <button data-src="plans" class="${BOMSRC==="plans"?"on":""}">Planning drafts</button>
         <button data-src="records" class="${BOMSRC==="records"?"on":""}">Production records</button>
       </div>
-      <input id="bomSearch" placeholder="Filter by SO, serial, model, customer">
+      <div class="chipsearch" id="bomSearchBox" style="flex:1;min-width:170px"><input id="bomSearch" placeholder="Filter: type a term, press Enter to tag it"></div>
       <select id="bomOnly" style="max-width:190px">
         <option value="">All rows</option>
         <option value="missing">Incomplete BOM only</option>
@@ -965,7 +1003,7 @@ async function renderBomEditor(){
     return terms.some(t=>hay.some(v=>v.includes(t)));
   }
   function draw(){
-    const q=document.getElementById("bomSearch").value.trim();
+    const q=bomCtl.get().trim();
     const only=document.getElementById("bomOnly").value;
     const rows=data.filter(r=>rowVisible(r,q,only));
     grid.innerHTML=`<div class="tbl-wrap"><table class="bom-table"><thead><tr>
@@ -1003,7 +1041,7 @@ async function renderBomEditor(){
     const b=document.getElementById("bomSave");
     b.disabled=n===0; b.textContent=`Save changes (${n})`;
   }
-  document.getElementById("bomSearch").addEventListener("input",draw);
+  const bomCtl=chipSearch("bomSearchBox","bomSearch",()=>draw(),true);
   document.getElementById("bomOnly").addEventListener("change",draw);
   document.getElementById("bomSave").onclick=async()=>{
     const b=document.getElementById("bomSave");
