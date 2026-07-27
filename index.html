@@ -33,7 +33,21 @@
   html[data-theme="dark"] .bom-table td.bom-cell input:hover{background:#20224a}
   html[data-theme="dark"] .bom-table td.bom-cell input:focus{background:#23254a}
   html[data-theme="dark"] input:disabled{background:#181a33 !important; color:var(--muted)}
+  .tabs{display:flex; gap:6px; background:#eceef6; padding:4px; border-radius:11px}
+  .tabs button{border:none; background:none; padding:8px 16px; font-size:13.5px; font-weight:700; color:var(--muted);
+    border-radius:8px; cursor:pointer; font-family:inherit}
+  .tabs button.on{background:#fff; color:var(--navy); box-shadow:0 1px 3px rgba(36,39,94,.12)}
+  html[data-theme="dark"] .tabs{background:#181a33}
+  html[data-theme="dark"] .tabs button.on{background:#2a2c52; color:var(--ink)}
+  input[type="file"]{padding:7px}
+  input[type="file"]::file-selector-button{background:#fff; color:var(--navy); border:1px solid var(--line);
+    border-radius:8px; padding:7px 13px; font-weight:700; font-size:13px; font-family:inherit; cursor:pointer; margin-right:10px}
+  html[data-theme="dark"] input[type="file"]::file-selector-button{background:#23254a; color:var(--ink)}
   .cap-edit{color:var(--info); cursor:pointer; text-decoration:underline dotted; font-size:12.5px}
+  .ld-chip{cursor:pointer}
+  .ld-chip:hover{outline:2px solid var(--orange); outline-offset:1px}
+  html[data-theme="dark"] .ld-row:hover td{background:#20224a}
+  .ld-row:hover td{background:#f4f5fb}
   .ld-bar{height:4px; background:var(--line); border-radius:2px; margin-top:4px; overflow:hidden}
   .ld-bar i{display:block; height:100%}
   .role-tag{display:inline-block; font-size:10px; font-weight:800; letter-spacing:.8px; text-transform:uppercase;
@@ -345,6 +359,7 @@ async function renderHome(){
     <div class="toolbar">
       <select id="f-month" style="max-width:140px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
       <select id="f-year" style="max-width:110px"><option value="">All years</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
+      <select id="f-week" style="max-width:170px"><option value="">All weeks</option>${(()=>{let o="";const now=new Date();for(let i=-30;i<=35;i++){const d=new Date(now);d.setDate(now.getDate()+i*7);const w=wkStr(d.toISOString().slice(0,10));const mon=wkMon(w);const a=new Date(mon+"T00:00:00Z");const f=a.toLocaleDateString("en",{day:"numeric",month:"short",timeZone:"UTC"});o+=`<option value="${w}">${w} (${f})</option>`;}return o;})()}</select>
       <select id="f-tag" style="max-width:190px">
         <option value="">Any issue status</option>
         <option value="any">Has any open issue</option>
@@ -387,14 +402,15 @@ async function renderHome(){
   const doSearch=()=>loadList(document.getElementById("search").value.trim());
   document.getElementById("searchBtn").onclick=doSearch;
   document.getElementById("search").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.sort=document.getElementById("f-sort").value; loadList(document.getElementById("search").value.trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.sort=document.getElementById("f-sort").value; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
+  document.getElementById("f-week").onchange=applyFil;
   document.getElementById("f-tag").onchange=applyFil;
   document.getElementById("f-kind").onchange=applyFil;
   document.getElementById("f-sort").onchange=applyFil;
-  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",tag:"",kind:"",sort:"production_date|desc"}; ["f-month","f-year","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-sort").value="production_date|desc"; loadList(document.getElementById("search").value.trim()); };
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-sort").value="production_date|desc"; loadList(document.getElementById("search").value.trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -411,10 +427,15 @@ function monthRange(year,month){
   return null;
 }
 
-let listFilter={year:"",month:"",tag:"",kind:"",sort:"production_date|desc"};
+let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
 async function loadList(q){
   const list=document.getElementById("list");
-  const rng=monthRange(listFilter.year,listFilter.month);
+  let rng=monthRange(listFilter.year,listFilter.month);
+  if(listFilter.week){
+    const mon=wkMon(listFilter.week);
+    if(mon){ const end=new Date(mon+"T00:00:00Z"); end.setUTCDate(end.getUTCDate()+7);
+      rng=[mon, end.toISOString().slice(0,10)]; }
+  }
   let [scol,sdir]=(listFilter.sort||"production_date|desc").split("|");
   const weekGroup=(scol==="week"); if(weekGroup) scol="production_date";
 
@@ -447,7 +468,7 @@ async function loadList(q){
   }
   const { data, error }=await query;
   if(error){ list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng||listFilter.tag||listFilter.kind)?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
+  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng||listFilter.week||listFilter.tag||listFilter.kind)?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
 
   // open issue types per listed record, for badges
   let flags={};
@@ -1061,17 +1082,19 @@ async function drawLines(){
   }
   const [{ data:caps }, { data:recs, error }]=await Promise.all([
     db.from("line_capacity").select("line,daily_capacity").order("line"),
-    db.from("production_records").select("line,production_date,planned_qty,status")
+    db.from("production_records").select("id,serial,so_number,model,customer,line,production_date,planned_qty,status,record_kind")
       .gte("production_date",from).lte("production_date",to).not("line","is",null)
   ]);
   if(error){ grid.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
   const capOf={}; (caps||[]).forEach(c=>capOf[c.line]=c.daily_capacity);
   const lines=[...new Set([...(caps||[]).map(c=>c.line), ...(recs||[]).map(r=>r.line)])].sort();
   const load={};   // line -> colkey -> pieces
+  const cellOrders={}; // "line|colkey" -> records
   (recs||[]).forEach(r=>{
     const key=LINESMODE==="day"?r.production_date:wkStr(r.production_date);
     if(!key) return;
     (load[r.line]=load[r.line]||{})[key]=(load[r.line]?.[key]||0)+(r.planned_qty||0);
+    (cellOrders[r.line+"|"+key]=cellOrders[r.line+"|"+key]||[]).push(r);
   });
   const capFor=line=>LINESMODE==="day"?(capOf[line]??200):(capOf[line]??200)*5;
   grid.innerHTML=`<div class="tbl-wrap"><table style="min-width:900px"><thead><tr>
@@ -1088,7 +1111,7 @@ async function drawLines(){
         const tone=n===0?"":(pct>1?"hold":(pct>=.8?"":"ok"));
         const bar=Math.min(100,Math.round(pct*100));
         return `<td style="text-align:center;min-width:74px">
-          ${n?`<span class="chip" data-tone="${tone}">${n}</span>
+          ${n?`<span class="chip ld-chip" data-tone="${tone}" data-cell="${esc(line)}|${c.key}" title="Show the orders behind this number">${n}</span>
           <div class="ld-bar"><i style="width:${bar}%;background:${pct>1?"var(--hold)":(pct>=.8?"var(--warn)":"var(--ok)")}"></i></div>`
           :'<span style="color:var(--muted)">\u2013</span>'}</td>`;
       }).join("");
@@ -1100,6 +1123,27 @@ async function drawLines(){
     }).join("")}
   </tbody></table></div>
   <p class="hint" style="padding:0 16px 14px">Green under 80% of capacity, amber from 80%, red over capacity. Load counts the record quantities assigned to each line for the ${LINESMODE==="day"?"day":"ISO week"}.</p>`;
+  grid.querySelectorAll(".ld-chip").forEach(ch=>ch.onclick=()=>{
+    const [line,key]=ch.dataset.cell.split("|");
+    const list=(cellOrders[ch.dataset.cell]||[]).slice().sort((a,b)=>(b.planned_qty||0)-(a.planned_qty||0));
+    const total=list.reduce((a,r)=>a+(r.planned_qty||0),0);
+    const label=LINESMODE==="day"
+      ? new Date(key+"T00:00:00Z").toLocaleDateString("en",{weekday:"long",day:"numeric",month:"short",timeZone:"UTC"})
+      : key;
+    const m=modal(`${line} \u00b7 ${label} \u00b7 ${total} pieces`, `
+      <div class="tbl-wrap"><table><thead><tr><th>Serial</th><th>SO</th><th>Model</th><th>Customer</th>
+        <th class="num">Qty</th><th>Status</th></tr></thead><tbody>${
+        list.map(r=>`<tr class="ld-row" data-open="${r.id}" style="cursor:pointer" title="Open this record">
+          <td><b>${esc(r.serial||"")}</b>${r.record_kind==="Sample"?' <span class="badge-sample">SAMPLE</span>':""}</td>
+          <td>${esc(r.so_number||"")}</td>
+          <td>${esc(r.model||"")}</td>
+          <td>${esc(r.customer||"")}</td>
+          <td class="num">${r.planned_qty??""}</td>
+          <td><span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"Open")}</span></td>
+        </tr>`).join("")}</tbody></table></div>
+      <p class="hint" style="margin-top:10px">Click a row to open the record.</p>`);
+    m.el.querySelectorAll("[data-open]").forEach(tr=>tr.onclick=()=>{ m.close(); openRecord(tr.dataset.open); });
+  });
   grid.querySelectorAll(".cap-edit").forEach(a=>a.onclick=async()=>{
     if(!may("records","edit")){ banner("Your role cannot change line capacity."); return; }
     const line=a.dataset.line;
