@@ -159,7 +159,41 @@ const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;
 const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
-let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", CALMONTH=null, LIGHT_TYPES=[];
+let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
+function isoWeekStr(d){
+  const dt=(typeof d==="string")?new Date(d+"T00:00:00Z"):new Date(d);
+  if(isNaN(dt)) return null;
+  const t=new Date(Date.UTC(dt.getUTCFullYear(),dt.getUTCMonth(),dt.getUTCDate()));
+  const day=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-day+3);
+  const wy=t.getUTCFullYear();
+  const jan4=new Date(Date.UTC(wy,0,4));
+  const week=1+Math.round(((t-jan4)/86400000-3+((jan4.getUTCDay()+6)%7))/7);
+  return wy+"-W"+String(week).padStart(2,"0");
+}
+function weekMonday(ws){
+  const m=(ws||"").match(/^(\d{4})-W(\d{2})$/); if(!m) return null;
+  const y=+m[1], w=+m[2];
+  const jan4=new Date(Date.UTC(y,0,4));
+  const day=(jan4.getUTCDay()+6)%7;
+  const mon=new Date(jan4); mon.setUTCDate(jan4.getUTCDate()-day+(w-1)*7);
+  return mon.toISOString().slice(0,10);
+}
+function weekLabel(ws){
+  const mon=weekMonday(ws); if(!mon) return ws||"";
+  const a=new Date(mon+"T00:00:00Z"), b=new Date(a); b.setUTCDate(a.getUTCDate()+4);
+  const f=d=>d.toLocaleDateString("en",{day:"numeric",month:"short",timeZone:"UTC"});
+  return `${ws.slice(5)} \u00b7 ${f(a)}\u2013${f(b)}`;
+}
+function weekOptions(sel){
+  const now=new Date(); let out=`<option value=""></option>`;
+  for(let i=-6;i<=30;i++){
+    const d=new Date(now); d.setDate(now.getDate()+i*7);
+    const ws=isoWeekStr(d);
+    out+=`<option value="${ws}" ${ws===sel?"selected":""}>${weekLabel(ws)}</option>`;
+  }
+  if(sel && !out.includes(`value="${sel}"`)) out+=`<option value="${sel}" selected>${weekLabel(sel)}</option>`;
+  return out;
+}
 const may=(s,w)=>{ const p=PERMS[s]; if(!p) return true; return w==="edit"?!!p.edit:!!p.view; };
 
 (async function(){
@@ -210,7 +244,12 @@ function renderShell(){
           <button data-v="sheet">Spreadsheet</button>
           <button data-v="queue">Acceptance queue</button>
         </div>
-        <input id="q" placeholder="Filter by SO, product, client, sales" style="flex:1;min-width:170px">
+        <input id="q" placeholder="Filter by SO, product, client, sales" style="flex:1;min-width:150px">
+        <select id="fabFilter" style="max-width:150px">
+          <option value="">All items</option>
+          <option value="fab">Fabrication only</option>
+          <option value="nofab">No fabrication</option>
+        </select>
         ${may("planning","edit")?`<button class="btn ghost" id="syncBtn">Sync from Odoo</button>
         <button class="btn primary" id="newPlan">+ New plan</button>`:""}
       </div>
@@ -221,6 +260,7 @@ function renderShell(){
     document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); VIEW=b.dataset.v; draw(); });
   document.getElementById("q").addEventListener("input",draw);
+  document.getElementById("fabFilter").onchange=e=>{ FABFILTER=e.target.value; draw(); };
   const np=document.getElementById("newPlan");
   if(np) np.onclick=()=>planModal(null);
   const sb=document.getElementById("syncBtn");
@@ -253,22 +293,26 @@ async function load(){
 
 function filtered(){
   const q=(document.getElementById("q")?.value||"").trim().toLowerCase();
-  if(!q) return PLANS;
-  return PLANS.filter(p=>[p.odoo_so,p.sap_so,p.product_name,p.c_ref,p.customer,p.contact,p.sales_person,p.model,p.region]
+  let rows=PLANS;
+  if(FABFILTER==="fab") rows=rows.filter(p=>p.needs_fabrication);
+  else if(FABFILTER==="nofab") rows=rows.filter(p=>!p.needs_fabrication);
+  if(!q) return rows;
+  return rows.filter(p=>[p.odoo_so,p.sap_so,p.product_name,p.c_ref,p.customer,p.contact,p.sales_person,p.model,p.region]
     .some(v=>(v||"").toLowerCase().includes(q)));
 }
 
 function cardHTML(p){
-  return `<div class="pcard" draggable="${may("planning","edit")&&p.plan_status==="Draft"?"true":"false"}" data-id="${p.id}">
+  return `<div class="pcard" draggable="${may("planning","edit")&&(p.plan_status==="Draft"||p.plan_status==="Returned")?"true":"false"}" data-id="${p.id}">
     <div class="t">${esc(p.odoo_so||p.sap_so||"(no SO)")}
       ${p.plan_indicator==="Late"?'<span class="late">LATE</span>':""}
-      ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}</div>
+      ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
+      ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED</span>':""}</div>
     <div class="m">${esc(p.product_name||p.model||"")}${p.planned_qty?` &middot; qty ${p.planned_qty}`:""}</div>
     <div class="m">${esc(p.customer||"")}${p.sales_person?" &middot; "+esc(p.sales_person):""}</div>
     <div class="foot">
       ${p.bom_stock_status?`<span class="chip" data-tone="${p.bom_stock_status==='In Stock'?'ok':(p.bom_stock_status==='Partial Stock'?'':'info')}">${esc(p.bom_stock_status)}</span>`:""}
-      ${p.planned_date?`<span class="chip">${esc(p.planned_date)}</span>`:""}
-      ${p.estimated_ready_week?`<span class="chip" data-tone="info">${esc(p.estimated_ready_week)}</span>`:""}
+      ${p.planned_date?`<span class="chip">${esc(weekLabel(isoWeekStr(p.planned_date)))}</span>`:""}
+      ${p.needs_fabrication&&p.fabrication_stage?`<span class="chip" data-tone="${p.fabrication_stage==='Fabrication Complete'?'ok':'info'}">${esc(p.fabrication_stage)}</span>`:""}
     </div></div>`;
 }
 
@@ -284,18 +328,27 @@ function draw(){
 /* ---------------- kanban (columns = plan status) ---------------- */
 function drawKanban(v){
   const rows=filtered();
-  v.innerHTML=`<div class="kb">${STATUSES.map(st=>{
-    const cards=rows.filter(p=>p.plan_status===st);
-    return `<div class="kb-col" data-st="${st}">
-      <h3><span class="chip" data-tone="${STONE[st]}">${st}</span><span class="n">${cards.length}</span></h3>
+  const isNewSync=p=>p.created_by==="odoo-sync"&&!p.updated_by;
+  const cols=[
+    ["new","New from Odoo","", rows.filter(p=>p.plan_status==="Draft"&&isNewSync(p))],
+    ["draft","In planning","", rows.filter(p=>(p.plan_status==="Draft"&&!isNewSync(p))||p.plan_status==="Returned")],
+    ["Pushed","Pushed","info", rows.filter(p=>p.plan_status==="Pushed")],
+    ["Accepted","Accepted","ok", rows.filter(p=>p.plan_status==="Accepted")]
+  ];
+  const byRecent=(a,b)=>new Date(b.updated_at||b.created_at)-new Date(a.updated_at||a.created_at);
+  v.innerHTML=`<div class="kb">${cols.map(([key,label,tone,cards])=>{
+    cards.sort(byRecent);
+    return `<div class="kb-col" data-st="${key}">
+      <h3><span class="chip" data-tone="${tone}">${label}</span><span class="n">${cards.length}</span></h3>
       ${cards.map(cardHTML).join("")||'<div class="empty" style="padding:14px">None</div>'}
-    </div>`;}).join("")}</div>`;
+    </div>`;}).join("")}</div>
+    <p class="sub" style="margin-top:10px">Returned plans appear in "In planning" with a RETURNED tag. Recently edited cards float to the top.</p>`;
   v.querySelectorAll(".pcard").forEach(c=>{
     c.onclick=()=>planModal(PLANS.find(p=>p.id===c.dataset.id));
     c.addEventListener("dragstart",e=>{ c.classList.add("dragging"); e.dataTransfer.setData("text/plain",c.dataset.id); });
     c.addEventListener("dragend",()=>c.classList.remove("dragging"));
   });
-  // drag Draft -> Pushed pushes the plan
+  // drag a draft/returned card into Pushed to push it
   const pushed=v.querySelector('.kb-col[data-st="Pushed"]');
   if(pushed && may("planning","edit")){
     pushed.addEventListener("dragover",e=>{ e.preventDefault(); pushed.classList.add("dragover"); });
@@ -310,52 +363,50 @@ function drawKanban(v){
   }
 }
 
-/* ---------------- calendar (month, drag to reschedule) ---------------- */
+/* ---------------- weeks board (ISO weeks, drag to reschedule) ---------- */
 function drawCalendar(v){
-  if(!CALMONTH){ const n=new Date(); CALMONTH=new Date(n.getFullYear(),n.getMonth(),1); }
-  const y=CALMONTH.getFullYear(), mo=CALMONTH.getMonth();
-  const monthName=CALMONTH.toLocaleString("en",{month:"long",year:"numeric"});
-  const first=new Date(y,mo,1);
-  const startDow=first.getDay();               // 0 = Sunday
-  const start=new Date(y,mo,1-startDow);
-  const todayISO=new Date().toISOString().slice(0,10);
   const rows=filtered();
-  const byDate={}; rows.forEach(p=>{ if(p.planned_date) (byDate[p.planned_date]=byDate[p.planned_date]||[]).push(p); });
-  let cells="";
-  for(let i=0;i<42;i++){
-    const d=new Date(start); d.setDate(start.getDate()+i);
-    const iso=d.toISOString().slice(0,10);
-    const other=d.getMonth()!==mo;
-    cells+=`<div class="cal-day${other?" other":""}${iso===todayISO?" today":""}" data-date="${iso}">
-      <div class="d">${d.getDate()}</div>
-      ${(byDate[iso]||[]).map(p=>`<div class="cal-card" draggable="${may("planning","edit")?"true":"false"}"
-          data-id="${p.id}" data-status="${p.plan_status}" title="${esc(p.product_name||p.model||"")}">
-          ${esc(p.odoo_so||p.model||"plan")}${p.planned_qty?" \u00b7 "+p.planned_qty:""}</div>`).join("")}
-    </div>`;
-  }
+  const now=new Date(); now.setDate(now.getDate()+WEEKPAGE*8*7);
+  const weeks=[];
+  for(let i=0;i<8;i++){ const d=new Date(now); d.setDate(now.getDate()+i*7); weeks.push(isoWeekStr(d)); }
+  const byWeek={};
+  rows.forEach(p=>{ const w=p.planned_date?isoWeekStr(p.planned_date):null;
+    if(w) (byWeek[w]=byWeek[w]||[]).push(p); });
+  const unscheduled=rows.filter(p=>!p.planned_date&&(p.plan_status==="Draft"||p.plan_status==="Returned"));
+  const thisWeek=isoWeekStr(new Date());
   v.innerHTML=`<div class="toolbar" style="margin-bottom:10px">
-      <button class="btn ghost sm" id="calPrev">&larr;</button>
-      <b style="color:var(--navy)">${esc(monthName)}</b>
-      <button class="btn ghost sm" id="calNext">&rarr;</button>
-      <span class="sub" style="margin:0 0 0 8px">Drag a plan onto a day to reschedule it.</span>
+      <button class="btn ghost sm" id="wkPrev">&larr;</button>
+      <b style="color:var(--navy)">${esc(weeks[0])} to ${esc(weeks[weeks.length-1])}</b>
+      <button class="btn ghost sm" id="wkNext">&rarr;</button>
+      ${WEEKPAGE!==0?'<button class="btn ghost sm" id="wkNow">This week</button>':''}
+      <span class="sub" style="margin:0 0 0 8px">Drag a plan onto a week to reschedule it (lands on that week's Monday).</span>
     </div>
-    <div class="cal">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div class="dow">${d}</div>`).join("")}${cells}</div>`;
-  document.getElementById("calPrev").onclick=()=>{ CALMONTH=new Date(y,mo-1,1); draw(); };
-  document.getElementById("calNext").onclick=()=>{ CALMONTH=new Date(y,mo+1,1); draw(); };
-  v.querySelectorAll(".cal-card").forEach(c=>{
+    <div class="kb" style="grid-template-columns:repeat(4,1fr)">
+      ${weeks.map(w=>`<div class="kb-col wk${w===thisWeek?" today":""}" data-week="${w}" ${w===thisWeek?'style="outline:2px solid var(--orange)"':""}>
+        <h3><span class="chip" data-tone="info">${esc(weekLabel(w))}</span><span class="n">${(byWeek[w]||[]).length}</span></h3>
+        ${(byWeek[w]||[]).map(cardHTML).join("")||'<div class="empty" style="padding:10px">None</div>'}
+      </div>`).join("")}
+    </div>
+    ${unscheduled.length?`<h1 style="font-size:15px">Unscheduled (${unscheduled.length})</h1>
+      <div class="kb" style="grid-template-columns:repeat(4,1fr)"><div class="kb-col" style="grid-column:1/-1">
+      ${unscheduled.map(cardHTML).join("")}</div></div>`:""}`;
+  document.getElementById("wkPrev").onclick=()=>{ WEEKPAGE--; draw(); };
+  document.getElementById("wkNext").onclick=()=>{ WEEKPAGE++; draw(); };
+  const wn=document.getElementById("wkNow"); if(wn) wn.onclick=()=>{ WEEKPAGE=0; draw(); };
+  v.querySelectorAll(".pcard").forEach(c=>{
     c.onclick=()=>planModal(PLANS.find(p=>p.id===c.dataset.id));
     c.addEventListener("dragstart",e=>e.dataTransfer.setData("text/plain",c.dataset.id));
   });
-  if(may("planning","edit")) v.querySelectorAll(".cal-day").forEach(day=>{
-    day.addEventListener("dragover",e=>{ e.preventDefault(); day.classList.add("dragover"); });
-    day.addEventListener("dragleave",()=>day.classList.remove("dragover"));
-    day.addEventListener("drop",async e=>{
-      e.preventDefault(); day.classList.remove("dragover");
+  if(may("planning","edit")) v.querySelectorAll("[data-week]").forEach(col=>{
+    col.addEventListener("dragover",e=>{ e.preventDefault(); col.classList.add("dragover"); });
+    col.addEventListener("dragleave",()=>col.classList.remove("dragover"));
+    col.addEventListener("drop",async e=>{
+      e.preventDefault(); col.classList.remove("dragover");
       const id=e.dataTransfer.getData("text/plain");
       const p=PLANS.find(x=>x.id===id); if(!p) return;
-      const { error }=await db.rpc("upsert_planned_record",{ p_id:id, p_fields:{ ...fieldsOf(p), planned_date:day.dataset.date } });
+      const { error }=await db.rpc("upsert_planned_record",{ p_id:id, p_fields:{ ...fieldsOf(p), planned_date:weekMonday(col.dataset.week) } });
       if(error){ banner(error.message); return; }
-      banner("Rescheduled to "+day.dataset.date+".",true); await load();
+      banner("Rescheduled to "+weekLabel(col.dataset.week)+".",true); await load();
     });
   });
 }
@@ -364,54 +415,118 @@ function drawCalendar(v){
 const SHEETCOLS=[
   ["odoo_so","Odoo SO","text"],["sap_so","SAP SO","text"],["customer","Client","text"],
   ["product_name","Product","text"],["c_ref","C.Ref","text"],["so_qty","SO Qty","number"],
-  ["model","Model","text"],["planned_qty","Plan Qty","number"],["planned_date","Plan date","date"],
+  ["model","Model","text"],["planned_qty","Plan Qty","number"],["planned_date","Plan week","week"],
+  ["needs_fabrication","Fab","select:false,true"],
   ["bom_stock_status","BOM stock","select:,In Stock,Partial Stock,Cargo/PO Item"],
   ["plan_indicator","Indicator","select:,On Time,Late"],
   ["estimated_ready_week","Ready week","text"],["plan_remarks","Remarks","text"]];
 function drawSheet(v){
   const rows=filtered();
-  const dirty={};
+  const dirty={}; const selected=new Set();
   const canEdit=may("planning","edit");
   v.innerHTML=`<div class="toolbar" style="margin-bottom:10px">
-      ${canEdit?`<button class="btn primary" id="shSave" disabled>Save changes (0)</button>`:""}
-      <span class="sub" style="margin:0">Type in the cells; changed cells highlight. Status changes still go through push/accept.</span>
+      ${canEdit?`<button class="btn primary" id="shSave" disabled>Save changes (0)</button>
+      <span style="border-left:1px solid var(--line);height:24px"></span>
+      <span class="sub" style="margin:0">Selected:</span>
+      <select id="shWeek" style="max-width:190px">${weekOptions("")}</select>
+      <button class="btn ghost" id="shSetWeek" disabled>Set week (0)</button>
+      <button class="btn orange" id="shPush" disabled>Push (0)</button>`:""}
     </div>
-    <div class="tbl-wrap"><table><thead><tr><th style="width:80px">Status</th>${SHEETCOLS.map(c=>`<th>${c[1]}</th>`).join("")}</tr></thead>
+    <div class="tbl-wrap"><table><thead><tr>
+      ${canEdit?'<th style="width:34px"><input type="checkbox" id="shAll"></th>':""}
+      <th style="width:80px">Status</th>${SHEETCOLS.map(c=>`<th>${c[1]}</th>`).join("")}</tr></thead>
     <tbody>${rows.map(p=>`<tr>
+      ${canEdit?`<td><input type="checkbox" class="shSel" data-sel="${p.id}"></td>`:""}
       <td><span class="chip" data-tone="${STONE[p.plan_status]}">${p.plan_status}</span></td>
       ${SHEETCOLS.map(([k,_,ty])=>{
-        const val=p[k]==null?"":p[k];
-        if(!canEdit) return `<td>${esc(val)}</td>`;
+        let val=p[k]==null?"":p[k];
+        if(k==="planned_date") val=p.planned_date?isoWeekStr(p.planned_date):"";
+        if(k==="needs_fabrication") val=String(!!p.needs_fabrication);
+        if(!canEdit) return `<td>${k==="planned_date"?esc(weekLabel(val)):esc(val)}</td>`;
+        if(ty==="week")
+          return `<td class="cell"><select data-id="${p.id}" data-col="${k}">${weekOptions(val)}</select></td>`;
         if(ty.startsWith("select:")){
           const opts=ty.slice(7).split(",");
-          return `<td class="cell"><select data-id="${p.id}" data-col="${k}">${opts.map(o=>`<option value="${esc(o)}" ${String(val)===o?"selected":""}>${esc(o||"\u2014")}</option>`).join("")}</select></td>`;
+          const lab=o=>k==="needs_fabrication"?(o==="true"?"Yes":"No"):(o||"\u2014");
+          return `<td class="cell"><select data-id="${p.id}" data-col="${k}">${opts.map(o=>`<option value="${esc(o)}" ${String(val)===o?"selected":""}>${esc(lab(o))}</option>`).join("")}</select></td>`;
         }
         return `<td class="cell"><input type="${ty}" data-id="${p.id}" data-col="${k}" value="${esc(val)}"></td>`;
       }).join("")}
     </tr>`).join("")}</tbody></table></div>
     ${rows.length?"":'<div class="empty">No plans match the filter.</div>'}`;
   if(!canEdit) return;
-  const orig={}; rows.forEach(p=>{ orig[p.id]={}; SHEETCOLS.forEach(([k])=>orig[p.id][k]=p[k]==null?"":String(p[k])); });
-  const btn=document.getElementById("shSave");
-  const upd=()=>{ const n=Object.keys(dirty).length; btn.disabled=!n; btn.textContent=`Save changes (${n})`; };
-  v.querySelectorAll("[data-id]").forEach(el=>el.addEventListener("input",()=>{
+
+  const orig={}; rows.forEach(p=>{ orig[p.id]={}; SHEETCOLS.forEach(([k])=>{
+    let v0=p[k]==null?"":String(p[k]);
+    if(k==="planned_date") v0=p.planned_date?isoWeekStr(p.planned_date):"";
+    if(k==="needs_fabrication") v0=String(!!p.needs_fabrication);
+    orig[p.id][k]=v0; }); });
+
+  const saveBtn=document.getElementById("shSave");
+  const setWeekBtn=document.getElementById("shSetWeek");
+  const pushBtn=document.getElementById("shPush");
+  const updBtns=()=>{
+    const nd=Object.keys(dirty).length, ns=selected.size;
+    saveBtn.disabled=!nd; saveBtn.textContent=`Save changes (${nd})`;
+    setWeekBtn.disabled=!ns; setWeekBtn.textContent=`Set week (${ns})`;
+    pushBtn.disabled=!ns; pushBtn.textContent=`Push (${ns})`;
+  };
+  v.querySelectorAll(".shSel").forEach(cb=>cb.onchange=()=>{
+    if(cb.checked) selected.add(cb.dataset.sel); else selected.delete(cb.dataset.sel); updBtns(); });
+  document.getElementById("shAll").onchange=e=>{
+    v.querySelectorAll(".shSel").forEach(cb=>{ cb.checked=e.target.checked;
+      if(cb.checked) selected.add(cb.dataset.sel); else selected.delete(cb.dataset.sel); });
+    updBtns(); };
+
+  v.querySelectorAll("[data-col]").forEach(el=>el.addEventListener("input",()=>{
     const id=el.dataset.id,k=el.dataset.col,val=el.value;
     dirty[id]=dirty[id]||{};
     if(val===orig[id][k]){ delete dirty[id][k]; if(!Object.keys(dirty[id]).length) delete dirty[id]; }
     else dirty[id][k]=val;
     el.closest("td").classList.toggle("changed", dirty[id]&&dirty[id][k]!==undefined);
-    upd();
+    updBtns();
   }));
-  btn.onclick=async()=>{
-    btn.disabled=true; btn.textContent="Saving\u2026";
+
+  const applyRows=async(entries)=>{
     let ok=0, fail=null;
-    for(const [id,ch] of Object.entries(dirty)){
+    for(const [id,ch] of entries){
       const p=PLANS.find(x=>x.id===id);
-      const { error }=await db.rpc("upsert_planned_record",{ p_id:id, p_fields:{ ...fieldsOf(p), ...ch } });
-      if(error){ fail=error.message; break; } ok++;
+      const f={ ...fieldsOf(p) };
+      for(const [k,v] of Object.entries(ch)){
+        if(k==="planned_date") f.planned_date=v?weekMonday(v):"";
+        else if(k==="needs_fabrication") f.needs_fabrication=(v==="true");
+        else f[k]=v;
+      }
+      const { error }=await db.rpc("upsert_planned_record",{ p_id:id, p_fields:f });
+      if(error){ fail=`${p.odoo_so||id}: ${error.message}`; break; } ok++;
     }
-    if(fail) banner(`Saved ${ok}, then failed: ${fail}`);
-    else banner(`Saved ${ok} plan${ok==1?"":"s"}.`,true);
+    return { ok, fail };
+  };
+
+  saveBtn.onclick=async()=>{
+    saveBtn.disabled=true; saveBtn.textContent="Saving\u2026";
+    const { ok, fail }=await applyRows(Object.entries(dirty));
+    if(fail) banner(`Saved ${ok}, then failed at ${fail}`); else banner(`Saved ${ok} plan${ok==1?"":"s"}.`,true);
+    await load();
+  };
+  setWeekBtn.onclick=async()=>{
+    const w=document.getElementById("shWeek").value;
+    if(!w){ banner("Choose a week first."); return; }
+    setWeekBtn.disabled=true;
+    const { ok, fail }=await applyRows([...selected].map(id=>[id,{planned_date:w}]));
+    if(fail) banner(`Updated ${ok}, then failed at ${fail}`); else banner(`Set ${weekLabel(w)} on ${ok} plan${ok==1?"":"s"}.`,true);
+    await load();
+  };
+  pushBtn.onclick=async()=>{
+    pushBtn.disabled=true; pushBtn.textContent="Pushing\u2026";
+    let ok=0; const errs=[];
+    for(const id of selected){
+      const { error }=await db.rpc("push_plan",{ p_id:id });
+      if(error){ const p=PLANS.find(x=>x.id===id); errs.push(`${p?.odoo_so||"plan"}: ${error.message}`); }
+      else ok++;
+    }
+    if(errs.length) banner(`Pushed ${ok}. Not pushed: ${errs.join(" | ")}`);
+    else banner(`Pushed ${ok} plan${ok==1?"":"s"} to the acceptance queue.`,true);
     await load();
   };
 }
@@ -485,7 +600,7 @@ function planModal(p){
         <div class="field"><label>SO quantity</label><input id="p-so_qty" type="number" min="0" value="${esc(g("so_qty"))}"></div>
         <div class="field"><label>Model</label><input id="p-model" value="${esc(g("model"))}" placeholder="SM-01-37W-4000K"></div>
         <div class="field"><label>Plan quantity</label><input id="p-planned_qty" type="number" min="0" value="${esc(g("planned_qty"))}"></div>
-        <div class="field"><label>Planned date</label><input id="p-planned_date" type="date" value="${esc(g("planned_date"))}"></div>
+        <div class="field"><label>Planned week</label><select id="p-planned_week">${weekOptions(g("planned_date")?isoWeekStr(g("planned_date")):"")}</select></div>
         <div class="field"><label>Light type</label><select id="p-light_type"><option value=""></option>${LIGHT_TYPES.map(x=>`<option ${x===g("light_type")?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
         <div class="field"><label>Voltage</label><input id="p-voltage" value="${esc(g("voltage"))}" placeholder="e.g. 220V"></div>
         <div class="field"><label>Fabrication needed</label><select id="p-needs_fabrication">
@@ -506,7 +621,19 @@ function planModal(p){
           <option ${g("plan_indicator")==="Late"?"selected":""}>Late</option></select></div>
         <div class="field"><label>Estimated ready week</label><input id="p-estimated_ready_week" value="${esc(g("estimated_ready_week"))}" placeholder="2026-W33"></div>
         <div class="field full"><label>Remarks (why late / notes)</label><input id="p-plan_remarks" value="${esc(g("plan_remarks"))}"></div>
+        <div class="field full"><label>BOM remarks (engineering notes)</label><input id="p-bom_remarks" value="${esc(g("bom_remarks"))}"></div>
       </div>
+      ${p&&p.needs_fabrication&&may("fabrication","view")?`
+      <div style="border-top:1px solid var(--line);margin:6px 0 12px;padding-top:12px">
+        <div class="row"><div class="field"><label>Fabrication stage</label>
+          <select id="p-fabstage" ${may("fabrication","edit")?"":"disabled"}>
+            <option value="">Not started</option>
+            ${["Fabrication","Painting Pending","Fabrication Complete"].map(x=>`<option ${x===g("fabrication_stage")?"selected":""}>${x}</option>`).join("")}
+          </select></div>
+        ${may("fabrication","edit")?`<div class="field"><label>&nbsp;</label><button class="btn ghost" id="p-fabsave" style="width:100%">Update fab stage</button></div>`:""}
+        </div>
+        <p class="sub" style="margin:0">Fabrication can start and progress regardless of plan status; pushing to assembly depends only on BOM stock.</p>
+      </div>`:""}
       ${canEdit?`<div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn primary" id="p-save">${p?"Save plan":"Create plan"}</button>
         ${p?`<button class="btn orange" id="p-push">Push to assembly</button>
@@ -524,21 +651,33 @@ function planModal(p){
     bg.querySelector("#cargoWrap").style.display=stockSel.value==="Cargo/PO Item"?"block":"none";
     bg.querySelector("#whWrap").style.display=(stockSel.value&&stockSel.value!=="In Stock")?"block":"none";
   };
-  if(!canEdit){ bg.querySelectorAll("input,select").forEach(el=>el.disabled=true); return; }
+  const pmsg=(t,ok)=>{ const m=bg.querySelector("#p-msg"); m.textContent=t; m.className="banner show "+(ok?"ok":"err"); };
+  const fabSave=bg.querySelector("#p-fabsave");
+  if(fabSave) fabSave.onclick=async()=>{
+    const { data, error }=await db.rpc("set_plan_fab_stage",{ p_id:p.id, p_stage:bg.querySelector("#p-fabstage").value||null });
+    if(error){ pmsg(error.message); return; }
+    p=data; banner("Fabrication stage updated.",true); close(); await load();
+  };
+  if(!canEdit){
+    bg.querySelectorAll("input,select").forEach(el=>el.disabled=true);
+    const fs=bg.querySelector("#p-fabstage");
+    if(fs && may("fabrication","edit")) fs.disabled=false;
+    return;
+  }
 
   const collect=()=>{
     const val=id=>bg.querySelector("#p-"+id).value.trim();
     return { odoo_so:val("odoo_so"), sap_so:val("sap_so"), customer:val("customer"), contact:val("contact"),
       sales_person:val("sales_person"), region:val("region"), product_name:val("product_name"),
       c_ref:val("c_ref"), so_qty:val("so_qty"), model:val("model"), planned_qty:val("planned_qty"),
-      planned_date:val("planned_date"), light_type:val("light_type"), voltage:val("voltage"),
+      planned_date:(bg.querySelector("#p-planned_week").value?weekMonday(bg.querySelector("#p-planned_week").value):""),
+      light_type:val("light_type"), voltage:val("voltage"), bom_remarks:val("bom_remarks"),
       needs_fabrication:bg.querySelector("#p-needs_fabrication").value==="true",
       bom_stock_status:val("bom_stock_status"), cargo_eta:val("cargo_eta"),
       plan_indicator:val("plan_indicator"), estimated_ready_week:val("estimated_ready_week"),
       plan_remarks:val("plan_remarks"),
       wh_no_stock:[...bg.querySelectorAll(".wh:checked")].map(x=>x.value) };
   };
-  const pmsg=(t,ok)=>{ const m=bg.querySelector("#p-msg"); m.textContent=t; m.className="banner show "+(ok?"ok":"err"); };
   bg.querySelector("#p-save").onclick=async()=>{
     const { data, error }=await db.rpc("upsert_planned_record",{ p_id:p?p.id:null, p_fields:collect() });
     if(error){ pmsg(error.message); return; }
