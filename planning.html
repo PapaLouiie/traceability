@@ -116,6 +116,15 @@
   .cal-card[data-status="Accepted"]{background:var(--ok-bg); border-color:#bfe6d0; color:var(--ok)}
   .cal-card[data-status="Returned"]{background:var(--hold-bg); border-color:#f2c6c1; color:var(--hold)}
 
+  .chipsearch{display:flex; flex-wrap:wrap; gap:6px; align-items:center; background:#fbfbfe;
+    border:1px solid var(--line); border-radius:9px; padding:5px 9px; cursor:text}
+  .chipsearch:focus-within{outline:2px solid var(--orange); outline-offset:1px}
+  .chipsearch input{border:none; background:none; outline:none; flex:1; min-width:110px; padding:5px 2px}
+  .chip-s{display:inline-flex; align-items:center; gap:5px; background:var(--orange-soft); color:#a55a12;
+    border:1px solid #f3d3ad; border-radius:999px; padding:3px 6px 3px 11px; font-size:12.5px; font-weight:700}
+  .chip-s b{cursor:pointer; color:#c0392b; font-weight:800; padding:0 3px; line-height:1; font-size:14px}
+  html[data-theme="dark"] .chipsearch{background:#23254a}
+  html[data-theme="dark"] .chip-s{background:#3a2a17; color:#f0b075; border-color:#5a4020}
   .cal-mini{background:var(--card); border:1px solid var(--line); border-radius:7px; font-size:12px;
     padding:5px 8px; margin-bottom:5px; cursor:pointer; color:var(--ink)}
   .cal-mini .l1,.cal-mini .l2{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
@@ -209,6 +218,33 @@ let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[],
 let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="";
 const COLLAPSED={};
 function busy(on){ const b=document.getElementById("busy"); if(b) b.style.display=on?"flex":"none"; }
+let SEARCHCTL=null;
+function chipSearch(boxId, inputId, onChange, live){
+  const box=document.getElementById(boxId), inp=document.getElementById(inputId);
+  let terms=[];
+  const all=()=>terms.concat(inp.value.trim()?[inp.value.trim()]:[]).join(" ");
+  const draw=()=>{
+    box.querySelectorAll(".chip-s").forEach(x=>x.remove());
+    terms.forEach((t,i)=>{
+      const sp=document.createElement("span"); sp.className="chip-s";
+      sp.innerHTML=`${esc(t)}<b data-i="${i}">\u00d7</b>`;
+      box.insertBefore(sp,inp);
+    });
+    box.querySelectorAll(".chip-s b").forEach(b=>b.onclick=()=>{ terms.splice(+b.dataset.i,1); draw(); onChange(all()); });
+  };
+  const commit=()=>{
+    const v=inp.value.trim(); if(!v) return false;
+    v.split(/[,\s]+/).forEach(t=>{ if(t&&!terms.includes(t)) terms.push(t); });
+    inp.value=""; draw(); onChange(all()); return true;
+  };
+  inp.addEventListener("keydown",e=>{
+    if(e.key==="Enter"||e.key===","){ e.preventDefault(); commit(); }
+    else if(e.key==="Backspace"&&!inp.value&&terms.length){ terms.pop(); draw(); onChange(all()); }
+  });
+  if(live) inp.addEventListener("input",()=>onChange(all()));
+  box.addEventListener("click",()=>inp.focus());
+  return { get:all, set:a=>{ terms=a.slice(); draw(); }, commit };
+}
 function isoWeekStr(d){
   const dt=(typeof d==="string")?new Date(d+"T00:00:00Z"):new Date(d);
   if(isNaN(dt)) return null;
@@ -295,7 +331,7 @@ function renderShell(){
           <button data-v="sheet">Spreadsheet</button>
           <button data-v="queue">Acceptance queue</button>
         </div>
-        <input id="q" placeholder="Filter by SO, product, client, sales" style="flex:1;min-width:150px">
+        <div class="chipsearch" id="qBox" style="flex:1;min-width:170px"><input id="q" placeholder="Search: type a term, press Enter to tag it"></div>
         <select id="fabFilter" style="max-width:130px">
           <option value="">Fab: all</option>
           <option value="fab">Fabrication only</option>
@@ -331,7 +367,7 @@ function renderShell(){
   document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
     document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); VIEW=b.dataset.v; draw(); });
-  document.getElementById("q").addEventListener("input",draw);
+  SEARCHCTL=chipSearch("qBox","q",()=>draw(),true);
   document.getElementById("fabFilter").onchange=e=>{ FABFILTER=e.target.value; draw(); };
   document.getElementById("stockFilter").onchange=e=>{ STOCKF=e.target.value; draw(); };
   document.getElementById("indFilter").onchange=e=>{ INDF=e.target.value; draw(); };
@@ -369,7 +405,7 @@ async function load(){
 }
 
 function filtered(){
-  const q=(document.getElementById("q")?.value||"").trim().toLowerCase();
+  const q=(SEARCHCTL?SEARCHCTL.get():(document.getElementById("q")?.value||"")).trim().toLowerCase();
   let rows=PLANS;
   if(FABFILTER==="fab") rows=rows.filter(p=>p.needs_fabrication);
   else if(FABFILTER==="nofab") rows=rows.filter(p=>!p.needs_fabrication);
