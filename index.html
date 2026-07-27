@@ -66,6 +66,8 @@
   .radio input{width:auto; margin:0; accent-color:var(--orange)}
   .qrbox img.kind-Production{border:5px solid var(--navy)}
   .qrbox img.kind-Sample{border:5px solid var(--orange)}
+  .wk-head{margin:14px 0 6px; padding:5px 10px; background:#eef0f7; border-radius:8px; font-size:11.5px;
+    font-weight:800; letter-spacing:1px; color:var(--navy)}
   .badge-sample{display:inline-block; font-size:10px; font-weight:800; letter-spacing:.5px; color:#fff;
     background:var(--orange); padding:1px 6px; border-radius:5px; vertical-align:middle}
   .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
@@ -311,6 +313,7 @@ async function renderHome(){
       </select>
       <select id="f-sort" style="max-width:180px">
         <option value="production_date|desc">Date, newest first</option>
+        <option value="week|desc">Week, newest first (grouped)</option>
         <option value="production_date|asc">Date, oldest first</option>
         <option value="serial|asc">Serial, A to Z</option>
         <option value="serial|desc">Serial, Z to A</option>
@@ -363,7 +366,8 @@ let listFilter={year:"",month:"",tag:"",kind:"",sort:"production_date|desc"};
 async function loadList(q){
   const list=document.getElementById("list");
   const rng=monthRange(listFilter.year,listFilter.month);
-  const [scol,sdir]=(listFilter.sort||"production_date|desc").split("|");
+  let [scol,sdir]=(listFilter.sort||"production_date|desc").split("|");
+  const weekGroup=(scol==="week"); if(weekGroup) scol="production_date";
 
   // issue filter -> matching record ids (or ids to exclude)
   let tagIds=null, excludeIds=null;
@@ -397,7 +401,14 @@ async function loadList(q){
   try{ const { data:fl }=await db.from("v_record_flags").select("record_id,open_types").in("record_id",data.map(r=>r.id));
     (fl||[]).forEach(f=>flags[f.record_id]=f.open_types||[]); }catch(e){}
 
-  list.innerHTML=data.map(r=>`<div class="rec" data-id="${r.id}">
+  const isoW=ds=>{ if(!ds) return null; const dt=new Date(ds+"T00:00:00Z");
+    const t=new Date(Date.UTC(dt.getUTCFullYear(),dt.getUTCMonth(),dt.getUTCDate()));
+    const day=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-day+3);
+    const wy=t.getUTCFullYear(); const jan4=new Date(Date.UTC(wy,0,4));
+    const wk=1+Math.round(((t-jan4)/86400000-3+((jan4.getUTCDay()+6)%7))/7);
+    return wy+"-W"+String(wk).padStart(2,"0"); };
+  let lastWeek=null;
+  list.innerHTML=data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
       <div>
         <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${tagsHTML(flags[r.id])}</div>
         <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
@@ -554,6 +565,7 @@ function renderEditor(rec){
         <div class="field"><label>LED</label><input id="f-bled" value="${esc(r.bom_led||"")}" placeholder="e.g. LED-2835-4000K"></div>
         <div class="field"><label>EM (optional)</label><input id="f-bem" value="${esc(r.bom_em||"")}" placeholder="Emergency module"></div>
         <div class="field"><label>Housing (optional)</label><input id="f-bhousing" value="${esc(r.bom_housing||"")}" placeholder="e.g. ALU-R100-WHT"></div>
+        <div class="field full"><label>BOM remarks</label><input id="f-bremarks" value="${esc(r.bom_remarks||"")}" placeholder="Engineering notes, substitutions, approvals"></div>
       </div>
     </div></div>
 
@@ -803,7 +815,7 @@ function applyGating(){
         "f-qty","f-voltage","f-line","f-foreman","f-qc","save","addLight"], may("records","edit"));
   if(!may("records","edit")) document.querySelectorAll('input[name="kind"]').forEach(el=>el.disabled=true);
   // engineering
-  lock(["f-bdriver","f-bled","f-bem","f-bhousing"], may("engineering","edit"));
+  lock(["f-bdriver","f-bled","f-bem","f-bhousing","f-bremarks"], may("engineering","edit"));
   // entries
   lock(["w-staff-in","w-conv","w-type","w-start","w-finish","w-qty","w-remarks","addWorker"], may("entries","edit"));
   // quality
@@ -822,18 +834,23 @@ function applyGating(){
 }
 
 /* ---------------- BOM bulk editor ---------------- */
+let BOMSRC="plans";  // BOM-first workflow: planning drafts are the default source
 async function renderBomEditor(){
   setHash("#/bom");
   document.body.classList.add("wide");
   root.innerHTML=shell(`
     <button class="btn link" id="back">&larr; All records</button>
     <h1>BOM editor</h1>
-    <p class="sub">Edit engineering fields for many records at once. Type in the cells, then save all changes together. Changed cells are highlighted.</p>
+    <p class="sub">Fill the BOM while orders are still in planning, so engineering data exists before production starts. Changed cells are highlighted; save writes everything together.</p>
     <div class="banner" id="banner"></div>
     <div class="toolbar">
-      <input id="bomSearch" placeholder="Filter by serial, SO, model, customer">
+      <div class="tabs" id="bomTabs">
+        <button data-src="plans" class="${BOMSRC==="plans"?"on":""}">Planning drafts</button>
+        <button data-src="records" class="${BOMSRC==="records"?"on":""}">Production records</button>
+      </div>
+      <input id="bomSearch" placeholder="Filter by SO, serial, model, customer">
       <select id="bomOnly" style="max-width:190px">
-        <option value="">All records</option>
+        <option value="">All rows</option>
         <option value="missing">Incomplete BOM only</option>
       </select>
       <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
@@ -841,38 +858,54 @@ async function renderBomEditor(){
     <div class="card"><div id="bomGrid"><div class="spinner"></div></div></div>`);
   wireShell();
   document.getElementById("back").onclick=renderHome;
+  document.querySelectorAll("#bomTabs button").forEach(b=>b.onclick=()=>{ BOMSRC=b.dataset.src; renderBomEditor(); });
 
-  const { data, error }=await db.from("production_records")
-    .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing")
-    .order("production_date",{ascending:false}).limit(1000);
+  const isPlans=BOMSRC==="plans";
+  let data, error;
+  if(isPlans){
+    ({ data, error }=await db.from("planned_records")
+      .select("id,odoo_so,sap_so,product_name,c_ref,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+      .in("plan_status",["Draft","Returned","Pushed"])
+      .order("created_at",{ascending:false}).limit(1000));
+  } else {
+    ({ data, error }=await db.from("production_records")
+      .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+      .order("production_date",{ascending:false}).limit(1000));
+  }
   const grid=document.getElementById("bomGrid");
   if(error){ grid.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ grid.innerHTML=`<div class="empty">No records yet.</div>`; return; }
+  if(!data.length){ grid.innerHTML=`<div class="empty">${isPlans?"No plans in Draft, Returned or Pushed.":"No production records yet."}</div>`; return; }
 
-  const dirty={};   // id -> {bom_driver,...}
-  const orig={}; data.forEach(r=>orig[r.id]={bom_driver:r.bom_driver||"",bom_led:r.bom_led||"",bom_em:r.bom_em||"",bom_housing:r.bom_housing||""});
-  const COLS=[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"]];
+  const dirty={};
+  const COLS=[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"]];
+  const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||""); });
 
   function rowVisible(r,q,only){
-    if(only==="missing" && r.bom_driver && r.bom_led && r.bom_em && r.bom_housing) {
-      const d=dirty[r.id]; if(!d) return false;
+    if(only==="missing" && r.bom_driver && r.bom_led && r.bom_em && r.bom_housing){
+      if(!dirty[r.id]) return false;
     }
     if(!q) return true;
     q=q.toLowerCase();
-    return [r.serial,r.so_number,r.model,r.customer].some(v=>(v||"").toLowerCase().includes(q));
+    const hay=isPlans?[r.odoo_so,r.sap_so,r.product_name,r.c_ref,r.model,r.customer]
+                     :[r.serial,r.so_number,r.model,r.customer];
+    return hay.some(v=>(v||"").toLowerCase().includes(q));
   }
   function draw(){
     const q=document.getElementById("bomSearch").value.trim();
     const only=document.getElementById("bomOnly").value;
     const rows=data.filter(r=>rowVisible(r,q,only));
     grid.innerHTML=`<div class="tbl-wrap"><table class="bom-table"><thead><tr>
-        <th style="min-width:150px">Serial</th><th>Model</th><th>SO</th>
-        ${COLS.map(c=>`<th style="min-width:150px">${c[1]}</th>`).join("")}
+        ${isPlans?`<th style="min-width:120px">SO</th><th>Product</th><th style="width:90px">Status</th>`
+                 :`<th style="min-width:150px">Serial</th><th>Model</th><th style="width:90px">SO</th>`}
+        ${COLS.map(c=>`<th style="min-width:140px">${c[1]}</th>`).join("")}
       </tr></thead><tbody>${
       rows.map(r=>`<tr>
-        <td><b>${esc(r.serial||"")}</b><div class="meta">${esc(r.production_date||"")}</div></td>
-        <td>${esc(r.model||"")}</td>
-        <td>${esc(r.so_number||"")}</td>
+        ${isPlans?`<td><b>${esc(r.odoo_so||r.sap_so||"")}</b><div class="meta">${esc(r.customer||"")}</div></td>
+                   <td>${esc(r.product_name||r.model||"")}</td>
+                   <td><span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Returned'?'hold':'')}">${esc(r.plan_status)}</span></td>`
+                 :`<td><b>${esc(r.serial||"")}</b><div class="meta">${esc(r.production_date||"")}</div></td>
+                   <td>${esc(r.model||"")}</td>
+                   <td>${esc(r.so_number||"")}</td>`}
         ${COLS.map(([k])=>{
           const cur=(dirty[r.id]&&dirty[r.id][k]!==undefined)?dirty[r.id][k]:orig[r.id][k];
           const changed=dirty[r.id]&&dirty[r.id][k]!==undefined&&dirty[r.id][k]!==orig[r.id][k];
@@ -900,20 +933,17 @@ async function renderBomEditor(){
   document.getElementById("bomOnly").addEventListener("change",draw);
   document.getElementById("bomSave").onclick=async()=>{
     const b=document.getElementById("bomSave");
-    const rows=Object.entries(dirty).map(([id,ch])=>({ id,
-      bom_driver:ch.bom_driver!==undefined?ch.bom_driver:orig[id].bom_driver,
-      bom_led:ch.bom_led!==undefined?ch.bom_led:orig[id].bom_led,
-      bom_em:ch.bom_em!==undefined?ch.bom_em:orig[id].bom_em,
-      bom_housing:ch.bom_housing!==undefined?ch.bom_housing:orig[id].bom_housing }));
+    const rows=Object.entries(dirty).map(([id,ch])=>{
+      const o={ id }; COLS.forEach(([k])=>o[k]=ch[k]!==undefined?ch[k]:orig[id][k]); return o; });
     b.disabled=true; b.textContent="Saving\u2026";
-    const { data:count, error }=await db.rpc("bulk_update_bom",{ p_rows:rows });
+    const { data:count, error }=await db.rpc(isPlans?"bulk_update_plan_bom":"bulk_update_bom",{ p_rows:rows });
     if(error){ banner(error.message); updateSaveBtn(); return; }
-    rows.forEach(r=>{ orig[r.id]={bom_driver:r.bom_driver||"",bom_led:r.bom_led||"",bom_em:r.bom_em||"",bom_housing:r.bom_housing||""};
+    rows.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||"");
       const rec=data.find(x=>x.id===r.id);
-      if(rec){ rec.bom_driver=r.bom_driver; rec.bom_led=r.bom_led; rec.bom_em=r.bom_em; rec.bom_housing=r.bom_housing; } });
+      if(rec) COLS.forEach(([k])=>rec[k]=r[k]); });
     Object.keys(dirty).forEach(k=>delete dirty[k]);
     updateSaveBtn(); draw();
-    banner(`Updated ${count} record${count==1?"":"s"}.`,true);
+    banner(`Updated ${count} ${isPlans?"plan":"record"}${count==1?"":"s"}.`,true);
   };
   draw();
 }
@@ -940,6 +970,7 @@ async function saveRecord(){
     bom_led:document.getElementById("f-bled").value.trim()||null,
     bom_em:document.getElementById("f-bem").value.trim()||null,
     bom_housing:document.getElementById("f-bhousing").value.trim()||null,
+    bom_remarks:document.getElementById("f-bremarks").value.trim()||null,
     line:document.getElementById("f-line").value.trim()||null,
     foreman:document.getElementById("f-foreman").value.trim()||null,
     qc_checker:document.getElementById("f-qc").value.trim()||null
