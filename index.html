@@ -1016,16 +1016,23 @@ async function renderBomEditor(){
   document.querySelectorAll("#bomTabs button").forEach(b=>b.onclick=()=>{ BOMSRC=b.dataset.src; renderBomEditor(); });
 
   const isPlans=BOMSRC==="plans";
-  let data, error;
-  if(isPlans){
-    ({ data, error }=await db.from("planned_records")
-      .select("id,odoo_so,sap_so,product_name,c_ref,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status")
-      .in("plan_status",["Draft","Returned","Pushed"])
-      .order("created_at",{ascending:false}).limit(1000));
-  } else {
-    ({ data, error }=await db.from("production_records")
-      .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
-      .order("production_date",{ascending:false}).limit(1000));
+  let data=[], error=null;
+  const B=1000;
+  for(let from=0; from<5000; from+=B){
+    let chunk;
+    if(isPlans){
+      ({ data:chunk, error }=await db.from("planned_records")
+        .select("id,odoo_so,sap_so,product_name,c_ref,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status")
+        .in("plan_status",["Draft","Returned","Pushed"])
+        .order("created_at",{ascending:false}).range(from,from+B-1));
+    } else {
+      ({ data:chunk, error }=await db.from("production_records")
+        .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+        .order("production_date",{ascending:false}).range(from,from+B-1));
+    }
+    if(error) break;
+    data=data.concat(chunk||[]);
+    if(!chunk || chunk.length<B) break;
   }
   const grid=document.getElementById("bomGrid");
   if(error){ grid.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
