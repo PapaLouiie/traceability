@@ -140,6 +140,7 @@
   .toolbar{display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap}
   .toolbar input{flex:1; min-width:180px}
 
+  .qr-sel{width:16px; height:16px; accent-color:var(--orange); margin-right:4px; flex:none; align-self:center}
   .rec{display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); cursor:pointer}
   .rec:last-child{border-bottom:none}
   .rec:hover{background:#fafbff}
@@ -161,6 +162,10 @@
   .bom-table td.bom-cell{padding:3px 4px}
   .bom-table td.bom-cell input{width:100%; min-width:130px; padding:8px 10px; border:1px solid transparent;
     border-radius:7px; background:transparent; font-size:13.5px; font-family:inherit}
+  .bom-table td.bom-cell select{width:100%; min-width:0; padding:8px 9px; border:1px solid transparent;
+    border-radius:7px; background:transparent; font-size:13px}
+  .bom-table td.bom-cell select:hover{border-color:var(--line); background:#fbfbfe}
+  .bom-table td.bom-cell.changed select{background:var(--orange-soft); border-color:#f3d3ad; font-weight:600}
   .bom-table td.bom-cell input:hover{border-color:var(--line); background:#fbfbfe}
   .bom-table td.bom-cell input:focus{outline:2px solid var(--orange); background:#fff}
   .bom-table td.bom-cell.changed input{background:var(--orange-soft); border-color:#f3d3ad; font-weight:600}
@@ -360,6 +365,7 @@ async function renderHome(){
       <button class="btn primary" id="newBtn">+ New record</button>
       <div class="chipsearch" id="searchBox" style="flex:1;min-width:180px"><input id="search" placeholder="Search: type, press Enter to tag; several tags find all"></div>
       <button class="btn ghost" id="searchBtn">Search</button>
+      <button class="btn orange" id="printSel" style="display:none">Print QRs (0)</button>
       <a class="btn ghost" href="dashboard.html">Dashboard</a>
       <a class="btn ghost" href="planning.html">Planning</a>
       <button class="btn ghost" id="linesBtn">Line load</button>
@@ -438,6 +444,7 @@ function monthRange(year,month){
 }
 
 let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
+let LAST_LIST=[]; const QRSEL=new Set();
 async function loadList(q){
   const list=document.getElementById("list");
   let rng=monthRange(listFilter.year,listFilter.month);
@@ -492,7 +499,9 @@ async function loadList(q){
     const wk=1+Math.round(((t-jan4)/86400000-3+((jan4.getUTCDay()+6)%7))/7);
     return wy+"-W"+String(wk).padStart(2,"0"); };
   let lastWeek=null;
+  LAST_LIST=data;
   list.innerHTML=data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
+      <input type="checkbox" class="qr-sel" data-qr="${r.id}" title="Select for QR printing" onclick="event.stopPropagation()">
       <div>
         <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${tagsHTML(flags[r.id])}</div>
         <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
@@ -503,6 +512,40 @@ async function loadList(q){
       </div>
     </div>`).join("");
   list.querySelectorAll(".rec").forEach(el=>el.onclick=()=>openRecord(el.dataset.id));
+  const pbtn=document.getElementById("printSel");
+  const updPrint=()=>{ if(!pbtn) return; pbtn.style.display=QRSEL.size?"inline-flex":"none"; pbtn.textContent=`Print QRs (${QRSEL.size})`; };
+  list.querySelectorAll(".qr-sel").forEach(cb=>{
+    cb.checked=QRSEL.has(cb.dataset.qr);
+    cb.onchange=()=>{ if(cb.checked) QRSEL.add(cb.dataset.qr); else QRSEL.delete(cb.dataset.qr); updPrint(); };
+  });
+  updPrint();
+  if(pbtn) pbtn.onclick=()=>{
+    const recs=[...QRSEL].map(id=>LAST_LIST.find(r=>r.id===id)||{id});
+    const missing=recs.filter(r=>!r.serial);
+    const tags=recs.filter(r=>r.serial).map(r=>{
+      const url=location.origin+location.pathname.replace(/index\.html?$/,"")+"mo.html?sn="+encodeURIComponent(r.serial);
+      const qr="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data="+encodeURIComponent(url);
+      const border=r.record_kind==="Sample"?"#F6851F":"#24275E";
+      return `<div class="tag" style="border-color:${border}">
+        <img src="${qr}" alt="QR">
+        <div class="sn">${esc(r.serial)}</div>
+        <div class="mt">${esc(r.model||"")}</div>
+        <div class="mt">${esc(r.so_number||"")}${r.planned_qty?" \u00b7 qty "+r.planned_qty:""}</div>
+        ${r.record_kind&&r.record_kind!=="Production"?`<div class="kd" style="background:${border}">${esc(r.record_kind)}</div>`:""}
+      </div>`; }).join("");
+    const w=window.open("","_blank");
+    w.document.write(`<!DOCTYPE html><html><head><title>NLC QR tags</title><style>
+      body{font-family:Arial,sans-serif;margin:14px;display:flex;flex-wrap:wrap;gap:10px}
+      .tag{border:3px solid #24275E;border-radius:10px;padding:12px;width:200px;text-align:center;page-break-inside:avoid}
+      .tag img{width:150px;height:150px}
+      .sn{font-weight:800;font-size:15px;margin-top:6px}
+      .mt{font-size:12px;color:#444;margin-top:2px}
+      .kd{display:inline-block;color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;padding:2px 8px;border-radius:5px;margin-top:6px}
+      @media print{ body{gap:8px} }
+    </style></head><body>${tags}<script>setTimeout(()=>print(),600)<\/script></body></html>`);
+    w.document.close();
+    if(missing.length) banner(missing.length+" selected record(s) had no serial and were skipped.");
+  };
 }
 
 async function openRecord(id, fromRoute){
@@ -976,7 +1019,7 @@ async function renderBomEditor(){
   let data, error;
   if(isPlans){
     ({ data, error }=await db.from("planned_records")
-      .select("id,odoo_so,sap_so,product_name,c_ref,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+      .select("id,odoo_so,sap_so,product_name,c_ref,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status")
       .in("plan_status",["Draft","Returned","Pushed"])
       .order("created_at",{ascending:false}).limit(1000));
   } else {
@@ -989,7 +1032,9 @@ async function renderBomEditor(){
   if(!data.length){ grid.innerHTML=`<div class="empty">${isPlans?"No plans in Draft, Returned or Pushed.":"No production records yet."}</div>`; return; }
 
   const dirty={};
-  const COLS=[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"]];
+  const COLS=isPlans
+    ?[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"],["bom_stock_status","Stock status"]]
+    :[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"]];
   const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||""); });
 
   function rowVisible(r,q,only){
@@ -1021,11 +1066,14 @@ async function renderBomEditor(){
         ${COLS.map(([k])=>{
           const cur=(dirty[r.id]&&dirty[r.id][k]!==undefined)?dirty[r.id][k]:orig[r.id][k];
           const changed=dirty[r.id]&&dirty[r.id][k]!==undefined&&dirty[r.id][k]!==orig[r.id][k];
+          if(k==="bom_stock_status")
+            return `<td class="bom-cell${changed?" changed":""}"><select data-id="${r.id}" data-col="${k}">
+              ${["","In Stock","Partial Stock","Cargo/PO Item"].map(o=>`<option value="${o}" ${cur===o?"selected":""}>${o||"\u2014"}</option>`).join("")}</select></td>`;
           return `<td class="bom-cell${changed?" changed":""}"><input data-id="${r.id}" data-col="${k}" value="${esc(cur)}"></td>`;
         }).join("")}
       </tr>`).join("")}</tbody></table></div>
       ${rows.length?"":'<div class="empty">Nothing matches the current filter.</div>'}`;
-    grid.querySelectorAll("input[data-id]").forEach(inp=>{
+    grid.querySelectorAll("input[data-id], select[data-id]").forEach(inp=>{
       inp.addEventListener("input",()=>{
         const id=inp.dataset.id, col=inp.dataset.col, v=inp.value;
         dirty[id]=dirty[id]||{};
