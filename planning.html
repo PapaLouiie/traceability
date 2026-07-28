@@ -215,7 +215,11 @@ const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
-let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="";
+let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="";
+let WEEKOPTS_CACHE=null;
+function weekOptionsBase(){ if(!WEEKOPTS_CACHE) WEEKOPTS_CACHE=weekOptions(""); return WEEKOPTS_CACHE; }
+let DRAWT=null;
+function drawSoon(){ clearTimeout(DRAWT); DRAWT=setTimeout(draw,180); }
 const COLLAPSED={};
 function busy(on){ const b=document.getElementById("busy"); if(b) b.style.display=on?"flex":"none"; }
 let SEARCHCTL=null;
@@ -344,6 +348,7 @@ function renderShell(){
         <select id="indFilter" style="max-width:120px">
           <option value="">Timing: all</option><option>On Time</option><option>Late</option>
         </select>
+        <select id="weekFilter" style="max-width:160px"><option value="">Week: all</option></select>
         <select id="statusFilter" style="max-width:130px">
           <option value="">Status: all</option><option>Draft</option><option>Pushed</option>
           <option>Accepted</option><option>Returned</option>
@@ -367,11 +372,14 @@ function renderShell(){
   document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
     document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); VIEW=b.dataset.v; draw(); });
-  SEARCHCTL=chipSearch("qBox","q",()=>draw(),true);
+  SEARCHCTL=chipSearch("qBox","q",()=>drawSoon(),true);
   document.getElementById("fabFilter").onchange=e=>{ FABFILTER=e.target.value; draw(); };
   document.getElementById("stockFilter").onchange=e=>{ STOCKF=e.target.value; draw(); };
   document.getElementById("indFilter").onchange=e=>{ INDF=e.target.value; draw(); };
   document.getElementById("statusFilter").onchange=e=>{ STATUSF=e.target.value; draw(); };
+  const wf=document.getElementById("weekFilter");
+  wf.insertAdjacentHTML("beforeend", weekOptionsBase().replace('<option value=""></option>',''));
+  wf.onchange=e=>{ WEEKF=e.target.value; draw(); };
   document.getElementById("sortSel").onchange=e=>{ SORTSEL=e.target.value; draw(); };
   const np=document.getElementById("newPlan");
   if(np) np.onclick=()=>planModal(null);
@@ -412,6 +420,7 @@ function filtered(){
   if(STOCKF) rows=rows.filter(p=>p.bom_stock_status===STOCKF);
   if(INDF) rows=rows.filter(p=>p.plan_indicator===INDF);
   if(STATUSF) rows=rows.filter(p=>p.plan_status===STATUSF);
+  if(WEEKF) rows=rows.filter(p=>p.planned_date && isoWeekStr(p.planned_date)===WEEKF);
   if(q){
     const terms=q.split(/[,\s]+/).filter(Boolean);   // several SO/model numbers at once: any term matches
     rows=rows.filter(p=>{
@@ -468,11 +477,15 @@ function drawKanban(v){
   ];
   v.innerHTML=`<div class="kb kb5">${cols.map(([key,label,tone,cards])=>{
     const mini=!!COLLAPSED[key];
+    const pcs=cards.reduce((a,p)=>a+(p.planned_qty||0),0);
+    const shown=key==="Accepted"?cards.slice(0,30):cards;
+    const hidden=cards.length-shown.length;
     return `<div class="kb-col${mini?" mini":""}" data-st="${key}">
-      <h3><span class="chip" data-tone="${tone}">${label}</span><span class="n">${cards.length}</span>
+      <h3><span class="chip" data-tone="${tone}">${label}</span><span class="n">${cards.length} \u00b7 ${pcs} pcs</span>
         <span class="fold" data-fold="${key}" title="${mini?"Expand":"Minimize"}">${mini?"+":"\u2212"}</span></h3>
       <div class="kb-body"${mini?' style="display:none"':""}>
-        ${cards.map(cardHTML).join("")||'<div class="empty" style="padding:14px">None</div>'}
+        ${shown.map(cardHTML).join("")||'<div class="empty" style="padding:14px">None</div>'}
+        ${hidden>0?`<div class="empty" style="padding:10px">+ ${hidden} older accepted. Use the filters to narrow.</div>`:""}
       </div>
     </div>`;}).join("")}</div>`;
   v.querySelectorAll("[data-fold]").forEach(f=>f.onclick=e=>{
@@ -536,7 +549,7 @@ function drawCalendar(v){
     </div>
     <div class="kb" style="grid-template-columns:repeat(${gridCols},minmax(0,1fr))">
       ${weeks.map(w=>`<div class="kb-col wk${w===thisWeek?" today":""}" data-week="${w}" ${w===thisWeek?'style="outline:2px solid var(--orange)"':""}>
-        <h3><span class="chip" data-tone="info">${esc(weekLabel(w))}</span><span class="n">${(byWeek[w]||[]).length}</span></h3>
+        <h3><span class="chip" data-tone="info">${esc(weekLabel(w))}</span><span class="n">${(byWeek[w]||[]).length} \u00b7 ${(byWeek[w]||[]).reduce((a,p)=>a+(p.planned_qty||0),0)} pcs</span></h3>
         ${(byWeek[w]||[]).map(cardFn).join("")||'<div class="empty" style="padding:10px">None</div>'}
       </div>`).join("")}
     </div>
@@ -574,12 +587,17 @@ const SHEETCOLS=[
   ["odoo_so","Odoo SO","text"],["sap_so","SAP SO","text"],["customer","Client","text"],
   ["product_name","Product","text"],["c_ref","C.Ref","text"],["so_qty","SO Qty","number"],
   ["model","Model","text"],["planned_qty","Plan Qty","number"],["planned_date","Plan week","week"],
+  ["record_kind","Type","select:Production,Sample,Sticker,Non-Production"],
   ["needs_fabrication","Fab","select:false,true"],
   ["bom_stock_status","BOM stock","select:,In Stock,Partial Stock,Cargo/PO Item"],
   ["plan_indicator","Indicator","select:,On Time,Late"],
   ["estimated_ready_week","Ready week","text"],["plan_remarks","Remarks","text"]];
+const SHEETCAP=300;
 function drawSheet(v){
-  const rows=filtered();
+  const allRows=filtered();
+  const rows=allRows.slice(0,SHEETCAP);
+  const totSO=allRows.reduce((a,p)=>a+(p.so_qty||0),0);
+  const totPlan=allRows.reduce((a,p)=>a+(p.planned_qty||0),0);
   const dirty={}; const selected=new Set();
   const canEdit=may("planning","edit");
   v.innerHTML=`<div class="toolbar" style="margin-bottom:10px">
@@ -590,6 +608,7 @@ function drawSheet(v){
       <button class="btn ghost" id="shSetWeek" disabled>Set week (0)</button>
       <button class="btn orange" id="shPush" disabled>Push (0)</button>`:""}
     </div>
+    ${rows.length>SHEETCAP?`<p class="sub" style="margin:0 0 8px">Showing the first ${SHEETCAP} of ${rows.length} plans (totals cover all ${rows.length}). Use the filters or week selector to narrow.</p>`:""}
     <div class="tbl-wrap"><table id="shTable"><thead><tr>
       ${canEdit?'<th style="width:34px"><input type="checkbox" id="shAll"></th>':""}
       <th style="width:80px">Status</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr></thead>
@@ -600,9 +619,10 @@ function drawSheet(v){
         let val=p[k]==null?"":p[k];
         if(k==="planned_date") val=p.planned_date?isoWeekStr(p.planned_date):"";
         if(k==="needs_fabrication") val=String(!!p.needs_fabrication);
+        if(k==="record_kind") val=p.record_kind||"Production";
         if(!canEdit) return `<td>${k==="planned_date"?esc(weekLabel(val)):esc(val)}</td>`;
         if(ty==="week")
-          return `<td class="cell"><select data-id="${p.id}" data-col="${k}">${weekOptions(val)}</select></td>`;
+          return `<td class="cell"><select data-id="${p.id}" data-col="${k}" data-wk="${esc(val)}">${weekOptionsBase()}</select></td>`;
         if(ty.startsWith("select:")){
           const opts=ty.slice(7).split(",");
           const lab=o=>k==="needs_fabrication"?(o==="true"?"Yes":"No"):(o||"\u2014");
@@ -610,14 +630,27 @@ function drawSheet(v){
         }
         return `<td class="cell"><input type="${ty}" data-id="${p.id}" data-col="${k}" value="${esc(val)}"></td>`;
       }).join("")}
-    </tr>`).join("")}</tbody></table></div>
+    </tr>`).join("")}</tbody>
+    <tfoot><tr style="font-weight:800;color:var(--navy);border-top:2px solid var(--navy)">
+      ${canEdit?"<td></td>":""}<td>Totals (${allRows.length})</td>
+      ${SHEETCOLS.map(([k])=>`<td>${k==="so_qty"?totSO:(k==="planned_qty"?totPlan:"")}</td>`).join("")}
+    </tr></tfoot></table></div>
     ${rows.length?"":'<div class="empty">No plans match the filter.</div>'}`;
+  // apply stored week values to the cached option lists
+  v.querySelectorAll('select[data-wk]').forEach(sel=>{
+    const w=sel.dataset.wk||"";
+    if(w && ![...sel.options].some(o=>o.value===w)){
+      const o=document.createElement("option"); o.value=w; o.textContent=weekLabel(w); sel.appendChild(o);
+    }
+    sel.value=w;
+  });
   if(!canEdit) return;
 
   const orig={}; rows.forEach(p=>{ orig[p.id]={}; SHEETCOLS.forEach(([k])=>{
     let v0=p[k]==null?"":String(p[k]);
     if(k==="planned_date") v0=p.planned_date?isoWeekStr(p.planned_date):"";
     if(k==="needs_fabrication") v0=String(!!p.needs_fabrication);
+    if(k==="record_kind") v0=p.record_kind||"Production";
     orig[p.id][k]=v0; }); });
 
   const saveBtn=document.getElementById("shSave");
@@ -731,12 +764,58 @@ function drawQueue(v){
     banner(`Accepted. Production record ${data.serial} created; open it in the console to print the tag.`,true);
     await load();
   });
-  v.querySelectorAll("[data-ret]").forEach(b=>b.onclick=async()=>{
-    const reason=prompt("Why is this plan being returned?"); if(reason===null) return;
-    const { error }=await db.rpc("return_plan",{ p_id:b.dataset.ret, p_reason:reason||null });
-    if(error){ banner(error.message); return; }
-    banner("Plan returned to the planner.",true); await load();
-  });
+  v.querySelectorAll("[data-ret]").forEach(b=>b.onclick=()=>returnModal(b.dataset.ret));
+}
+
+/* ---------------- return reason modal ---------------- */
+function returnModal(id){
+  const bg=document.createElement("div"); bg.className="modal-bg";
+  bg.innerHTML=`<div class="modal" style="max-width:440px"><div class="mh">Return plan to planner<span class="x">&times;</span></div>
+    <div class="mb">
+      <div class="field"><label>Reason</label>
+        <div class="checks" style="flex-direction:column;align-items:flex-start;gap:9px">
+          <label><input type="radio" name="rr" value="nostock" checked> No stock</label>
+          <div id="rr-parts" style="padding-left:24px">
+            <div class="checks">${["Driver","LED","EM","Housing"].map(x=>`<label><input type="checkbox" class="rr-part" value="${x}"> ${x}</label>`).join("")}</div>
+          </div>
+          <label><input type="radio" name="rr" value="other"> Other</label>
+          <input id="rr-text" placeholder="Describe the reason" style="width:100%;display:none">
+        </div></div>
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button class="btn primary" id="rr-go">Return plan</button>
+        <button class="btn ghost" id="rr-cancel">Cancel</button>
+      </div>
+      <div class="banner" id="rr-msg" style="margin-top:12px"></div>
+    </div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.querySelector("#rr-cancel").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  const sync=()=>{
+    const other=bg.querySelector('input[name="rr"][value="other"]').checked;
+    bg.querySelector("#rr-text").style.display=other?"block":"none";
+    bg.querySelector("#rr-parts").style.display=other?"none":"block";
+  };
+  bg.querySelectorAll('input[name="rr"]').forEach(r=>r.onchange=sync);
+  bg.querySelector("#rr-go").onclick=async()=>{
+    const other=bg.querySelector('input[name="rr"][value="other"]').checked;
+    let reason;
+    if(other){
+      reason=bg.querySelector("#rr-text").value.trim();
+      if(!reason){ const m=bg.querySelector("#rr-msg"); m.textContent="Describe the reason."; m.className="banner show err"; return; }
+      reason="Other: "+reason;
+    } else {
+      const parts=[...bg.querySelectorAll(".rr-part:checked")].map(x=>x.value);
+      if(!parts.length){ const m=bg.querySelector("#rr-msg"); m.textContent="Tick what has no stock."; m.className="banner show err"; return; }
+      reason="No stock: "+parts.join(", ");
+    }
+    busy(true);
+    const { error }=await db.rpc("return_plan",{ p_id:id, p_reason:reason });
+    busy(false);
+    if(error){ const m=bg.querySelector("#rr-msg"); m.textContent=error.message; m.className="banner show err"; return; }
+    close(); banner("Plan returned: "+reason,true); await load();
+  };
 }
 
 /* ---------------- plan editor modal ---------------- */
@@ -772,19 +851,29 @@ function planModal(p){
         <div class="field"><label>Planned week</label><select id="p-planned_week">${weekOptions(g("planned_date")?isoWeekStr(g("planned_date")):"")}</select></div>
         <div class="field"><label>Light type</label><select id="p-light_type"><option value=""></option>${LIGHT_TYPES.map(x=>`<option ${x===g("light_type")?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
         <div class="field"><label>Voltage</label><input id="p-voltage" value="${esc(g("voltage"))}" placeholder="e.g. 220V"></div>
+        <div class="field"><label>Piece type</label><select id="p-record_kind">
+          ${["Production","Sample","Sticker","Non-Production"].map(k=>`<option ${k===(g("record_kind")||"Production")?"selected":""}>${k}</option>`).join("")}</select></div>
         <div class="field"><label>Fabrication needed</label><select id="p-needs_fabrication">
           <option value="false" ${!p||!p.needs_fabrication?"selected":""}>No</option>
           <option value="true" ${p&&p.needs_fabrication?"selected":""}>Yes</option></select></div>
         <div class="field"><label>BOM stock</label><select id="p-bom_stock_status">
           <option value=""></option>
           ${["In Stock","Partial Stock","Cargo/PO Item"].map(o=>`<option ${o===g("bom_stock_status")?"selected":""}>${o}</option>`).join("")}</select></div>
-        <div class="field" id="cargoWrap" style="display:${g("bom_stock_status")==="Cargo/PO Item"?"block":"none"}">
+        <div class="field" id="cargoWrap" style="display:${(g("bom_stock_status")==="Cargo/PO Item"||g("cargo_eta")||g("cargo_received"))?"block":"none"}">
           <label>Cargo ETA</label><input id="p-cargo_eta" type="date" value="${esc(g("cargo_eta"))}"></div>
+        <div class="field" id="cargoWrap2" style="display:${(g("bom_stock_status")==="Cargo/PO Item"||g("cargo_eta")||g("cargo_received"))?"block":"none"}">
+          <label>Cargo received</label><input id="p-cargo_received" type="date" value="${esc(g("cargo_received"))}"></div>
+        <div class="field full" id="cargoWrap3" style="display:${(g("bom_stock_status")==="Cargo/PO Item"||g("cargo_eta")||g("cargo_remarks"))?"block":"none"}">
+          <label>Cargo remarks</label><input id="p-cargo_remarks" value="${esc(g("cargo_remarks"))}"></div>
         <div class="field full" id="whWrap" style="display:${(g("bom_stock_status")&&g("bom_stock_status")!=="In Stock")?"block":"none"}">
           <label>Warehouse: what has no stock?</label>
           <div class="checks">${["Driver","LED","EM","Housing"].map(x=>{
             const on=(p&&p.wh_no_stock||[]).includes(x);
             return `<label><input type="checkbox" class="wh" value="${x}" ${on?"checked":""}> ${x}</label>`;}).join("")}</div></div>
+        <div class="field full"><label>Stock allocation (lot, qty at lot, reserved from it)</label>
+          <div id="allocRows"></div>
+          <button class="btn ghost sm" id="allocAdd" type="button" style="margin-top:6px">+ Add lot</button>
+          <div class="hint" id="allocSum" style="margin-top:5px;color:var(--muted)"></div></div>
         <div class="field"><label>Plan indicator</label><select id="p-plan_indicator">
           <option value=""></option><option ${g("plan_indicator")==="On Time"?"selected":""}>On Time</option>
           <option ${g("plan_indicator")==="Late"?"selected":""}>Late</option></select></div>
@@ -809,7 +898,10 @@ function planModal(p){
       </div>`:""}
       ${canEdit?`<div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn primary" id="p-save">${p?"Save plan":"Create plan"}</button>
-        ${p?`<button class="btn orange" id="p-push">Push to assembly</button>
+        ${p?`${(p.record_kind==="Non-Production")
+              ?`<button class="btn orange" id="p-complete">Complete (no assembly)</button>`
+              :`<button class="btn orange" id="p-push">Push to assembly</button>`}
+        <button class="btn ghost" id="p-split">Split qty</button>
         <button class="btn danger" id="p-del" style="margin-left:auto">Delete plan</button>`:""}
       </div>`:""}
       ${p&&p.production_record_id?`<p class="sub" style="margin-top:12px">Accepted into production. Open the console to see the record.</p>`:""}
@@ -821,7 +913,9 @@ function planModal(p){
   bg.onclick=e=>{ if(e.target===bg) close(); };
   const stockSel=bg.querySelector("#p-bom_stock_status");
   stockSel.onchange=()=>{
-    bg.querySelector("#cargoWrap").style.display=stockSel.value==="Cargo/PO Item"?"block":"none";
+    const showCargo=stockSel.value==="Cargo/PO Item"
+      || bg.querySelector("#p-cargo_eta").value || bg.querySelector("#p-cargo_received").value;
+    ["cargoWrap","cargoWrap2","cargoWrap3"].forEach(id=>bg.querySelector("#"+id).style.display=showCargo?"block":"none");
     bg.querySelector("#whWrap").style.display=(stockSel.value&&stockSel.value!=="In Stock")?"block":"none";
   };
   const pmsg=(t,ok)=>{ const m=bg.querySelector("#p-msg"); m.textContent=t; m.className="banner show "+(ok?"ok":"err"); };
@@ -838,6 +932,35 @@ function planModal(p){
     return;
   }
 
+  // allocations editor
+  let ALLOC=Array.isArray(p&&p.stock_allocations)?p.stock_allocations.map(a=>({lot:a.lot||"",lot_qty:a.lot_qty??"",reserved:a.reserved??""})):[];
+  function drawAlloc(){
+    const box=bg.querySelector("#allocRows"); if(!box) return;
+    box.innerHTML=ALLOC.map((a,i)=>`<div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+      <input placeholder="Lot / location" data-al="lot" data-i="${i}" value="${esc(a.lot)}" style="flex:2">
+      <input type="number" min="0" placeholder="Qty at lot" data-al="lot_qty" data-i="${i}" value="${esc(a.lot_qty)}" style="flex:1">
+      <input type="number" min="0" placeholder="Reserve" data-al="reserved" data-i="${i}" value="${esc(a.reserved)}" style="flex:1">
+      <b data-alrm="${i}" style="cursor:pointer;color:var(--hold);font-size:16px;padding:0 4px">\u00d7</b></div>`).join("");
+    box.querySelectorAll("[data-al]").forEach(inp=>inp.addEventListener("input",()=>{
+      ALLOC[+inp.dataset.i][inp.dataset.al]=inp.dataset.al==="lot"?inp.value:inp.value;
+      sumAlloc();
+    }));
+    box.querySelectorAll("[data-alrm]").forEach(b=>b.onclick=()=>{ ALLOC.splice(+b.dataset.alrm,1); drawAlloc(); });
+    sumAlloc();
+  }
+  function sumAlloc(){
+    const el=bg.querySelector("#allocSum"); if(!el) return;
+    const res=ALLOC.reduce((a,x)=>a+(parseInt(x.reserved,10)||0),0);
+    const need=parseInt(bg.querySelector("#p-planned_qty").value,10)||0;
+    let bad=ALLOC.find(x=>(parseInt(x.reserved,10)||0)>(parseInt(x.lot_qty,10)||0));
+    el.innerHTML=`Reserved <b>${res}</b> of plan qty <b>${need}</b>`
+      +(bad?` <span style="color:var(--hold)">\u00b7 a reservation exceeds its lot quantity</span>`
+        :(need&&res>need?` <span style="color:var(--warn)">\u00b7 reserved more than the plan needs</span>`:""));
+  }
+  const aa=bg.querySelector("#allocAdd");
+  if(aa){ aa.onclick=()=>{ ALLOC.push({lot:"",lot_qty:"",reserved:""}); drawAlloc(); }; drawAlloc();
+    bg.querySelector("#p-planned_qty").addEventListener("input",sumAlloc); }
+
   const collect=()=>{
     const val=id=>bg.querySelector("#p-"+id).value.trim();
     return { odoo_so:val("odoo_so"), sap_so:val("sap_so"), customer:val("customer"), contact:val("contact"),
@@ -847,7 +970,11 @@ function planModal(p){
       light_type:val("light_type"), voltage:val("voltage"), bom_remarks:val("bom_remarks"),
       bom_driver:val("bom_driver"), bom_led:val("bom_led"), bom_em:val("bom_em"), bom_housing:val("bom_housing"),
       needs_fabrication:bg.querySelector("#p-needs_fabrication").value==="true",
+      record_kind:bg.querySelector("#p-record_kind").value,
       bom_stock_status:val("bom_stock_status"), cargo_eta:val("cargo_eta"),
+      cargo_received:val("cargo_received"), cargo_remarks:val("cargo_remarks"),
+      stock_allocations:ALLOC.filter(a=>a.lot||a.lot_qty||a.reserved)
+        .map(a=>({lot:a.lot,lot_qty:parseInt(a.lot_qty,10)||0,reserved:parseInt(a.reserved,10)||0})),
       plan_indicator:val("plan_indicator"), estimated_ready_week:val("estimated_ready_week"),
       plan_remarks:val("plan_remarks"),
       wh_no_stock:[...bg.querySelectorAll(".wh:checked")].map(x=>x.value) };
@@ -868,6 +995,30 @@ function planModal(p){
     busy(false);
     if(error){ pmsg(error.message); return; }
     banner("Plan pushed to the acceptance queue.",true); close(); await load();
+  };
+  const splitBtn=bg.querySelector("#p-split");
+  if(splitBtn) splitBtn.onclick=async()=>{
+    const q=prompt(`Split this plan. Quantity to KEEP on this plan (1 to ${(p.planned_qty||0)-1}); the rest becomes a new draft:`);
+    if(q===null) return;
+    const n=parseInt(q,10);
+    if(isNaN(n)){ pmsg("Enter a number."); return; }
+    busy(true);
+    const { error }=await db.rpc("split_plan",{ p_id:p.id, p_first_qty:n });
+    busy(false);
+    if(error){ pmsg(error.message); return; }
+    banner(`Split done: this plan keeps ${n}, a new draft holds the remainder.`,true);
+    close(); await load();
+  };
+  const compBtn=bg.querySelector("#p-complete");
+  if(compBtn) compBtn.onclick=async()=>{
+    busy(true);
+    const { error:e1 }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:collect() });
+    if(e1){ busy(false); pmsg(e1.message); return; }
+    const { error }=await db.rpc("complete_plan",{ p_id:p.id });
+    busy(false);
+    if(error){ pmsg(error.message); return; }
+    banner("Completed. This item never passes through assembly.",true);
+    close(); await load();
   };
   const delBtn=bg.querySelector("#p-del");
   if(delBtn) delBtn.onclick=async()=>{
