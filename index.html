@@ -521,6 +521,25 @@ async function loadList(q){
   updPrint();
   if(pbtn) pbtn.onclick=()=>{
     const recs=[...QRSEL].map(id=>LAST_LIST.find(r=>r.id===id)||{id});
+    const m=modal(`Print ${QRSEL.size} QR tag${QRSEL.size==1?"":"s"}`, `
+      <p class="hint" style="margin-top:0">Choose the output format.</p>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button class="btn primary" id="pr-sheet">Paper sheet (A4, browser print)</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn orange" id="pr-zebra" style="flex:1">Zebra labels (.zpl download)</button>
+          <select id="pr-size" style="max-width:150px">
+            <option value="4x2">4 x 2 in</option>
+            <option value="3x2">3 x 2 in</option>
+            <option value="2x1">2 x 1 in (QR + serial)</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:12px">The .zpl file goes straight to a Zebra printer: send it with Zebra Setup Utilities (Tools, Send file), drop it on a shared Zebra print queue, or use Zebra Browser Print. Sizes assume a 203 dpi printer.</p>`);
+    m.el.querySelector("#pr-sheet").onclick=()=>{ m.close(); printSheet(recs); };
+    m.el.querySelector("#pr-zebra").onclick=()=>{
+      const size=m.el.querySelector("#pr-size").value; m.close(); zplExport(recs, size); };
+  };
+  function printSheet(recs){
     const missing=recs.filter(r=>!r.serial);
     const tags=recs.filter(r=>r.serial).map(r=>{
       const url=location.origin+location.pathname.replace(/index\.html?$/,"")+"mo.html?sn="+encodeURIComponent(r.serial);
@@ -545,7 +564,53 @@ async function loadList(q){
     </style></head><body>${tags}<script>setTimeout(()=>print(),600)<\/script></body></html>`);
     w.document.close();
     if(missing.length) banner(missing.length+" selected record(s) had no serial and were skipped.");
-  };
+  }
+  function zplExport(recs, size){
+    const missing=recs.filter(r=>!r.serial);
+    const base=location.origin+location.pathname.replace(/index\.html?$/,"");
+    const zsan=t=>String(t==null?"":t).replace(/[\^~\\]/g," ");
+    const L=[];
+    recs.filter(r=>r.serial).forEach(r=>{
+      const url=base+"mo.html?sn="+encodeURIComponent(r.serial);
+      const kind=r.record_kind&&r.record_kind!=="Production"?r.record_kind.toUpperCase():"";
+      if(size==="2x1"){
+        L.push(`^XA^PW406^LL203^LH0,0
+^FO12,16^BQN,2,3^FDQA,${url}^FS
+^FO150,26^A0N,28,28^FD${zsan(r.serial)}^FS
+^FO150,64^A0N,22,22^FD${zsan((r.model||"").slice(0,18))}^FS
+^FO150,94^A0N,20,20^FD${zsan(r.so_number||"")}${r.planned_qty?"  x"+r.planned_qty:""}^FS
+${kind?`^FO150,124^A0N,20,20^FD${zsan(kind)}^FS`:""}
+^XZ`);
+      } else if(size==="3x2"){
+        L.push(`^XA^PW610^LL406^LH0,0
+^FO20,30^BQN,2,5^FDQA,${url}^FS
+^FO260,40^A0N,36,36^FD${zsan(r.serial)}^FS
+^FO260,92^A0N,26,26^FD${zsan((r.model||"").slice(0,24))}^FS
+^FO260,130^A0N,26,26^FD${zsan(r.so_number||"")}${r.planned_qty?"  Qty "+r.planned_qty:""}^FS
+^FO260,168^A0N,24,24^FD${zsan((r.customer||"").slice(0,24))}^FS
+${kind?`^FO260,210^A0N,24,24^FDType: ${zsan(kind)}^FS`:""}
+^XZ`);
+      } else {
+        L.push(`^XA^PW812^LL406^LH0,0
+^FO30,30^BQN,2,6^FDQA,${url}^FS
+^FO330,44^A0N,44,44^FD${zsan(r.serial)}^FS
+^FO330,108^A0N,30,30^FD${zsan((r.model||"").slice(0,28))}^FS
+^FO330,152^A0N,30,30^FD${zsan(r.so_number||"")}${r.planned_qty?"  Qty "+r.planned_qty:""}^FS
+^FO330,196^A0N,26,26^FD${zsan((r.customer||"").slice(0,30))}^FS
+${kind?`^FO330,240^A0N,26,26^FDType: ${zsan(kind)}^FS`:""}
+^FO330,300^A0N,20,20^FDNational Lighting Company^FS
+^XZ`);
+      }
+    });
+    if(!L.length){ banner("None of the selected records has a serial yet."); return; }
+    const blob=new Blob([L.join("\n")],{type:"text/plain"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="nlc-qr-labels-"+size+".zpl";
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    banner(`Downloaded ${L.length} Zebra label${L.length==1?"":"s"} (${size} in).`+(missing.length?` ${missing.length} without a serial were skipped.`:""),true);
+  }
 }
 
 async function openRecord(id, fromRoute){
