@@ -125,6 +125,16 @@
   .chip-s b{cursor:pointer; color:#c0392b; font-weight:800; padding:0 3px; line-height:1; font-size:14px}
   html[data-theme="dark"] .chipsearch{background:#23254a}
   html[data-theme="dark"] .chip-s{background:#3a2a17; color:#f0b075; border-color:#5a4020}
+  .so-group{background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:8px; overflow:hidden}
+  .so-head{display:flex; align-items:center; gap:8px; padding:9px 11px; cursor:pointer; font-size:13px}
+  .so-head:hover{background:var(--orange-soft)}
+  .so-head b{color:var(--navy)}
+  .so-head .so-meta{color:var(--muted); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .so-arrow{color:var(--muted); font-size:12px}
+  .so-body{padding:8px; background:#f2f3f9; border-top:1px solid var(--line)}
+  .so-body .pcard:last-child{margin-bottom:0}
+  html[data-theme="dark"] .so-body{background:#181a33}
+  html[data-theme="dark"] .so-head:hover{background:#2a2c52}
   .cal-mini{background:var(--card); border:1px solid var(--line); border-radius:7px; font-size:12px;
     padding:5px 8px; margin-bottom:5px; cursor:pointer; color:var(--ink)}
   .cal-mini .l1,.cal-mini .l2{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
@@ -215,7 +225,8 @@ const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
-let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="";
+let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false;
+const GEXP=new Set();
 let WEEKOPTS_CACHE=null;
 function weekOptionsBase(){ if(!WEEKOPTS_CACHE) WEEKOPTS_CACHE=weekOptions(""); return WEEKOPTS_CACHE; }
 let DRAWT=null;
@@ -483,20 +494,51 @@ function drawKanban(v){
     ["Returned","Returned","hold", rows.filter(p=>p.plan_status==="Returned")],
     ["Accepted","Accepted","ok", rows.filter(p=>p.plan_status==="Accepted")]
   ];
-  v.innerHTML=`<div class="kb kb5">${cols.map(([key,label,tone,cards])=>{
+  const colBody=(key,cards)=>{
+    const cap=key==="Accepted"?30:200;
+    if(!GROUPMODE){
+      const shown=cards.slice(0,cap);
+      const hidden=cards.length-shown.length;
+      return `${shown.map(cardHTML).join("")||'<div class="empty" style="padding:14px">None</div>'}
+        ${hidden>0?`<div class="empty" style="padding:10px">+ ${hidden} more not shown. Use the search or filters to narrow.</div>`:""}`;
+    }
+    // grouped by SO
+    const groups={}; const order=[];
+    cards.forEach(p=>{ const so=p.odoo_so||p.sap_so||"(no SO)";
+      if(!groups[so]){ groups[so]=[]; order.push(so); } groups[so].push(p); });
+    if(!order.length) return '<div class="empty" style="padding:14px">None</div>';
+    let shownGroups=order.slice(0, key==="Accepted"?15:80);
+    const hiddenG=order.length-shownGroups.length;
+    return shownGroups.map(so=>{
+      const g=groups[so]; const gk=key+"|"+so;
+      const open=GEXP.has(gk);
+      const pcs=g.reduce((a,p)=>a+(p.planned_qty||0),0);
+      const cust=g[0].customer||"";
+      return `<div class="so-group">
+        <div class="so-head" data-g="${esc(gk)}">
+          <span class="so-arrow">${open?"\u25be":"\u25b8"}</span>
+          <b>${esc(so)}</b><span class="so-meta">${esc(cust)}</span>
+          <span class="n" style="margin-left:auto">${g.length} \u00b7 ${pcs} pcs</span>
+        </div>
+        ${open?`<div class="so-body">${g.map(cardHTML).join("")}</div>`:""}
+      </div>`;
+    }).join("")+(hiddenG>0?`<div class="empty" style="padding:10px">+ ${hiddenG} more SOs. Narrow with search or filters.</div>`:"");
+  };
+  v.innerHTML=`<div class="toolbar" style="margin-bottom:10px">
+      <button class="btn ghost sm" id="grpToggle">${GROUPMODE?"Separate cards":"Group by SO"}</button>
+      ${GROUPMODE?'<span class="sub" style="margin:0">Click an SO row to open or close its cards.</span>':""}
+    </div>
+    <div class="kb kb5">${cols.map(([key,label,tone,cards])=>{
     const mini=!!COLLAPSED[key];
     const pcs=cards.reduce((a,p)=>a+(p.planned_qty||0),0);
-    const cap=key==="Accepted"?30:200;
-    const shown=cards.slice(0,cap);
-    const hidden=cards.length-shown.length;
     return `<div class="kb-col${mini?" mini":""}" data-st="${key}">
       <h3><span class="chip" data-tone="${tone}">${label}</span><span class="n">${cards.length} \u00b7 ${pcs} pcs</span>
         <span class="fold" data-fold="${key}" title="${mini?"Expand":"Minimize"}">${mini?"+":"\u2212"}</span></h3>
-      <div class="kb-body"${mini?' style="display:none"':""}>
-        ${shown.map(cardHTML).join("")||'<div class="empty" style="padding:14px">None</div>'}
-        ${hidden>0?`<div class="empty" style="padding:10px">+ ${hidden} more not shown. Use the search or filters to narrow.</div>`:""}
-      </div>
+      <div class="kb-body"${mini?' style="display:none"':""}>${colBody(key,cards)}</div>
     </div>`;}).join("")}</div>`;
+  document.getElementById("grpToggle").onclick=()=>{ GROUPMODE=!GROUPMODE; draw(); };
+  v.querySelectorAll(".so-head").forEach(h=>h.onclick=()=>{
+    const k=h.dataset.g; if(GEXP.has(k)) GEXP.delete(k); else GEXP.add(k); draw(); });
   v.querySelectorAll("[data-fold]").forEach(f=>f.onclick=e=>{
     e.stopPropagation(); COLLAPSED[f.dataset.fold]=!COLLAPSED[f.dataset.fold]; draw(); });
   v.querySelectorAll(".pcard").forEach(c=>{
