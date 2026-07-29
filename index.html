@@ -934,7 +934,7 @@ function banner(msg,ok){
 const SECTIONS=[["records","Production records"],["entries","Production entries"],
   ["engineering","Engineering / BOM"],["fabrication","Fabrication"],["quality","Quality & CCRs"],
   ["dashboard","Dashboard"],["admin","User administration"]];
-const ROLES=["admin","supervisor","foreman","sales","viewer"];
+let ROLES=["admin","supervisor","foreman","sales","viewer"];  // refreshed from the database on the admin screen
 
 async function renderAdmin(){
   setHash("#/admin");
@@ -954,6 +954,7 @@ async function renderAdmin(){
 
   const users=data.users||[], perms=data.perms||[];
   const pm={}; perms.forEach(p=>{ (pm[p.role]=pm[p.role]||{})[p.section]=p; });
+  ROLES=[...new Set(perms.map(p=>p.role))].sort((a,b)=>a==="admin"?-1:(b==="admin"?1:a.localeCompare(b)));
 
   body.innerHTML=`
     <div class="card"><h2>People</h2><div class="pad">
@@ -973,6 +974,20 @@ async function renderAdmin(){
       </tr>`).join(""):`<tr><td colspan="4" style="color:var(--muted)">No one assigned yet. While this list is empty everyone signing in is treated as an admin, so add yourself first.</td></tr>`}
     </tbody></table></div></div>
 
+    <div class="card"><h2>Roles</h2><div class="pad">
+      <p class="hint" style="margin:0 0 12px">Create a role here, then set what it can see and edit in the grid below. A role can only be deleted once no one holds it.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input id="nr-name" placeholder="e.g. warehouse" style="max-width:200px">
+        <button class="btn primary" id="nr-add">Create role</button>
+        <span style="border-left:1px solid var(--line);height:24px"></span>
+        ${ROLES.filter(r=>r!=="admin").map(r=>{
+          const inUse=users.some(u=>u.role===r);
+          return `<span class="chip" style="display:inline-flex;align-items:center;gap:6px">${esc(r)}
+            ${inUse?"":`<b data-del-role="${esc(r)}" title="Delete role" style="cursor:pointer;color:var(--hold)">\u00d7</b>`}</span>`;
+        }).join("")}
+      </div>
+    </div></div>
+
     <div class="card"><h2>What each role can do</h2><div class="pad">
       <p class="hint" style="margin:0 0 12px">View lets someone open a section. Edit lets them change it. Turning View off also turns Edit off.</p>
       <div class="tbl-wrap"><table><thead><tr><th>Section</th>${ROLES.map(r=>`<th style="text-align:center">${r}</th>`).join("")}</tr></thead><tbody>${
@@ -985,6 +1000,21 @@ async function renderAdmin(){
       }</tbody></table></div>
     </div></div>`;
 
+  document.getElementById("nr-add").onclick=async()=>{
+    const name=document.getElementById("nr-name").value.trim();
+    if(!name) return banner("Enter a role name.");
+    const { error }=await db.rpc("create_role",{ p_role:name });
+    if(error) return banner(error.message);
+    banner(`Role "${name.toLowerCase()}" created. Set its permissions in the grid below.`,true);
+    renderAdmin();
+  };
+  body.querySelectorAll("[data-del-role]").forEach(b=>b.onclick=async()=>{
+    const role=b.dataset.delRole;
+    if(!confirm(`Delete the role "${role}"? Its permission settings are removed.`)) return;
+    const { error }=await db.rpc("delete_role",{ p_role:role });
+    if(error) return banner(error.message);
+    banner(`Role "${role}" deleted.`,true); renderAdmin();
+  });
   document.getElementById("au-add").onclick=async()=>{
     const email=document.getElementById("au-email").value.trim().toLowerCase();
     const role=document.getElementById("au-role").value;
