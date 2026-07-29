@@ -931,9 +931,10 @@ function banner(msg,ok){
 }
 
 /* ---------------- admin: users and permissions ---------------- */
-const SECTIONS=[["records","Production records"],["entries","Production entries"],
-  ["engineering","Engineering / BOM"],["fabrication","Fabrication"],["quality","Quality & CCRs"],
-  ["dashboard","Dashboard"],["admin","User administration"]];
+const SECTION_LABELS={records:"Production records",entries:"Production entries",
+  engineering:"Engineering / BOM",fabrication:"Fabrication",quality:"Quality & CCRs",
+  planning:"Planning",dashboard:"Dashboard",admin:"User administration"};
+let SECTIONS=Object.entries(SECTION_LABELS);   // rebuilt from the database on the admin screen
 let ROLES=["admin","supervisor","foreman","sales","viewer"];  // refreshed from the database on the admin screen
 
 async function renderAdmin(){
@@ -955,6 +956,12 @@ async function renderAdmin(){
   const users=data.users||[], perms=data.perms||[];
   const pm={}; perms.forEach(p=>{ (pm[p.role]=pm[p.role]||{})[p.section]=p; });
   ROLES=[...new Set(perms.map(p=>p.role))].sort((a,b)=>a==="admin"?-1:(b==="admin"?1:a.localeCompare(b)));
+  const dbSections=[...new Set(perms.map(p=>p.section))];
+  SECTIONS=dbSections.sort((a,b)=>{
+    const order=Object.keys(SECTION_LABELS);
+    const ia=order.indexOf(a), ib=order.indexOf(b);
+    return (ia<0?99:ia)-(ib<0?99:ib);
+  }).map(sec=>[sec, SECTION_LABELS[sec]||sec.charAt(0).toUpperCase()+sec.slice(1)]);
 
   body.innerHTML=`
     <div class="card"><h2>People</h2><div class="pad">
