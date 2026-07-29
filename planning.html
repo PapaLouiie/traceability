@@ -1007,16 +1007,51 @@ function planModal(p){
   };
   const splitBtn=bg.querySelector("#p-split");
   if(splitBtn) splitBtn.onclick=async()=>{
-    const q=prompt(`Split this plan. Quantity to KEEP on this plan (1 to ${(p.planned_qty||0)-1}); the rest becomes a new draft:`);
-    if(q===null) return;
-    const n=parseInt(q,10);
-    if(isNaN(n)){ pmsg("Enter a number."); return; }
+    // read the quantity fresh from the database so the split always works
+    // on the real current number, never a stale or unsaved one
     busy(true);
-    const { error }=await db.rpc("split_plan",{ p_id:p.id, p_first_qty:n });
+    const { data:fresh, error:fe }=await db.from("planned_records")
+      .select("planned_qty,so_qty,plan_status").eq("id",p.id).single();
     busy(false);
-    if(error){ pmsg(error.message); return; }
-    banner(`Split done: this plan keeps ${n}, a new draft holds the remainder.`,true);
-    close(); await load();
+    if(fe){ pmsg(fe.message); return; }
+    const total=fresh.planned_qty||0;
+    if(total<2){ pmsg(`This plan's planned quantity is ${total}; it needs at least 2 pieces to split.`); return; }
+    if(!["Draft","Returned"].includes(fresh.plan_status)){ pmsg(`Only draft or returned plans can be split (this one is ${fresh.plan_status}).`); return; }
+    const sb=document.createElement("div"); sb.className="modal-bg";
+    sb.innerHTML=`<div class="modal" style="max-width:420px"><div class="mh">Split plan quantity<span class="x">&times;</span></div>
+      <div class="mb">
+        <p class="sub" style="margin-top:0">Planned quantity right now: <b>${total}</b>${fresh.so_qty?` (SO quantity: ${fresh.so_qty})`:""}.
+        The two parts below always add up to ${total}.</p>
+        <div class="row">
+          <div class="field"><label>This plan keeps</label><input id="sp-keep" type="number" min="1" max="${total-1}" value="${Math.floor(total/2)}"></div>
+          <div class="field"><label>New draft gets</label><input id="sp-new" type="number" min="1" max="${total-1}" value="${total-Math.floor(total/2)}"></div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:6px">
+          <button class="btn primary" id="sp-go">Split</button>
+          <button class="btn ghost" id="sp-cancel">Cancel</button>
+        </div>
+        <div class="banner" id="sp-msg" style="margin-top:12px"></div>
+      </div></div>`;
+    document.body.appendChild(sb);
+    const sclose=()=>sb.remove();
+    sb.querySelector(".x").onclick=sclose;
+    sb.querySelector("#sp-cancel").onclick=sclose;
+    sb.onclick=e=>{ if(e.target===sb) sclose(); };
+    const keep=sb.querySelector("#sp-keep"), nw=sb.querySelector("#sp-new");
+    const smsg=t=>{ const m=sb.querySelector("#sp-msg"); m.textContent=t; m.className="banner show err"; };
+    keep.addEventListener("input",()=>{ const k=parseInt(keep.value,10); if(!isNaN(k)) nw.value=total-k; });
+    nw.addEventListener("input",()=>{ const n=parseInt(nw.value,10); if(!isNaN(n)) keep.value=total-n; });
+    sb.querySelector("#sp-go").onclick=async()=>{
+      const k=parseInt(keep.value,10);
+      if(isNaN(k)||k<1||k>total-1){ smsg(`Keep must be between 1 and ${total-1}.`); return; }
+      busy(true);
+      const { data:sib, error }=await db.rpc("split_plan",{ p_id:p.id, p_first_qty:k });
+      busy(false);
+      if(error){ smsg(error.message); return; }
+      sclose();
+      banner(`Split done: this plan now has ${k} pieces, the new draft has ${sib.planned_qty}.`,true);
+      close(); await load();
+    };
   };
   const compBtn=bg.querySelector("#p-complete");
   if(compBtn) compBtn.onclick=async()=>{
