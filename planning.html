@@ -225,7 +225,7 @@ const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
-let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false;
+let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="show";
 const GEXP=new Set();
 let WEEKOPTS_CACHE=null;
 function weekOptionsBase(){ if(!WEEKOPTS_CACHE) WEEKOPTS_CACHE=weekOptions(""); return WEEKOPTS_CACHE; }
@@ -364,6 +364,11 @@ function renderShell(){
           <option value="">Status: all</option><option>Draft</option><option>Pushed</option>
           <option>Accepted</option><option>Returned</option>
         </select>
+        <select id="cancelFilter" style="max-width:150px">
+          <option value="show">Cancelled: show</option>
+          <option value="hide">Cancelled: hide</option>
+          <option value="only">Cancelled only</option>
+        </select>
         <select id="sortSel" style="max-width:150px">
           <option value="recent">Sort: recent</option>
           <option value="week_asc">Week, earliest</option>
@@ -388,6 +393,7 @@ function renderShell(){
   document.getElementById("stockFilter").onchange=e=>{ STOCKF=e.target.value; draw(); };
   document.getElementById("indFilter").onchange=e=>{ INDF=e.target.value; draw(); };
   document.getElementById("statusFilter").onchange=e=>{ STATUSF=e.target.value; draw(); };
+  document.getElementById("cancelFilter").onchange=e=>{ CANCELF=e.target.value; draw(); };
   const wf=document.getElementById("weekFilter");
   wf.insertAdjacentHTML("beforeend", weekOptionsBase().replace('<option value=""></option>',''));
   wf.onchange=e=>{ WEEKF=e.target.value; draw(); };
@@ -402,7 +408,7 @@ function renderShell(){
         headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" } });
       const j=await res.json();
       if(j.error) banner("Sync failed: "+j.error);
-      else { banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated.`+(j.note?` ${j.note}`:""),true); await load(); }
+      else { banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} newly cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); }
     }catch(e){ banner("Sync failed: "+e.message+". Is the odoo-sync function deployed?"); }
     busy(false);
     sb.disabled=false; sb.textContent="Sync from Odoo";
@@ -440,6 +446,8 @@ function filtered(){
   if(INDF) rows=rows.filter(p=>p.plan_indicator===INDF);
   if(STATUSF) rows=rows.filter(p=>p.plan_status===STATUSF);
   if(WEEKF) rows=rows.filter(p=>p.planned_date && isoWeekStr(p.planned_date)===WEEKF);
+  if(CANCELF==="hide") rows=rows.filter(p=>p.odoo_state!=="cancel");
+  else if(CANCELF==="only") rows=rows.filter(p=>p.odoo_state==="cancel");
   if(q){
     const terms=q.split(/[,\s]+/).filter(Boolean);   // several SO/model numbers at once: any term matches
     rows=rows.filter(p=>{
@@ -464,7 +472,8 @@ function cardHTML(p){
     <div class="t">${esc(p.odoo_so||p.sap_so||"(no SO)")}
       ${p.plan_indicator==="Late"?'<span class="late">LATE</span>':""}
       ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
-      ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED</span>':""}</div>
+      ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED</span>':""}
+      ${p.odoo_state==="cancel"?'<span class="late">CANCELLED</span>':""}</div>
     <div class="m">${esc(p.product_name||p.model||"")}${p.planned_qty?` &middot; qty ${p.planned_qty}`:""}</div>
     <div class="m">${esc(p.customer||"")}${p.sales_person?" &middot; "+esc(p.sales_person):""}</div>
     <div class="foot">
@@ -572,7 +581,7 @@ function miniCardHTML(p){
     data-id="${p.id}" data-status="${p.plan_status}" title="${esc(p.product_name||p.model||"")} \u00b7 ${esc(p.customer||"")} \u00b7 ${esc(p.bom_stock_status||"no stock status")}">
     <div class="l1"><b>${esc(p.odoo_so||p.model||"plan")}</b>${p.planned_qty?" \u00b7 "+p.planned_qty:""}
       ${stock?`<span class="mstock" data-s="${esc(p.bom_stock_status)}">${stock}</span>`:""}
-      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}</div>
+      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}</div>
     <div class="l2">${esc(prod)}${cust?` \u00b7 <i>${esc(cust)}</i>`:""}</div></div>`;
 }
 function drawCalendar(v){
@@ -886,6 +895,7 @@ function planModal(p){
       ${p?`<span class="chip" data-tone="${STONE[p.plan_status]}" style="margin-left:10px">${p.plan_status}</span>`:""}
       <span class="x">&times;</span></div>
     <div class="mb">
+      ${p&&p.odoo_state==="cancel"?`<div class="banner show err" style="display:block">This delivery was CANCELLED in Odoo. It cannot be pushed or accepted; delete it or keep it for reference.</div>`:""}
       ${p&&p.plan_status==="Returned"&&p.return_reason?`<div class="banner show err" style="display:block">Returned by assembly: ${esc(p.return_reason)}</div>`:""}
       <div class="row">
         <div class="field"><label>Odoo SO</label><input id="p-odoo_so" value="${esc(g("odoo_so"))}"></div>
