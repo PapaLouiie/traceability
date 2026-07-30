@@ -217,6 +217,20 @@ const root = document.getElementById("root");
 const STATUSES = ["Open","In Progress","QC","Completed","Hold"];
 const CONVEYORS = Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dataset.theme="dark"; }catch(e){}
+// keep the login token fresh: refresh when the tab wakes, and recover
+// once automatically if a query hits an expired token
+window.addEventListener("focus",()=>db.auth.getSession());
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) db.auth.getSession(); });
+const isJwtErr=e=>!!e&&/jwt|token|expired|401/i.test(e.message||String(e));
+async function recoverSession(){
+  try{
+    const { data, error }=await db.auth.refreshSession();
+    if(!error&&data&&data.session){ if(typeof SESSION!=="undefined") SESSION=data.session; return true; }
+  }catch(_){}
+  try{ await db.auth.signOut(); }catch(_){}
+  location.reload(); return false;
+}
+
 function toggleTheme(){
   const el=document.documentElement;
   const dark=el.dataset.theme==="dark";
@@ -484,7 +498,9 @@ async function loadList(q){
     query=query.or(pats);
   }
   const { data, error }=await query;
-  if(error){ list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
+  if(error){
+    if(isJwtErr(error)&&await recoverSession()) return loadList(q);
+    list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
   if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng||listFilter.week||listFilter.tag||listFilter.kind)?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
 
   // open issue types per listed record, for badges
@@ -574,8 +590,9 @@ async function loadList(q){
       const url=base+"mo.html?sn="+encodeURIComponent(r.serial);
       const kind=r.record_kind&&r.record_kind!=="Production"?r.record_kind.toUpperCase():"";
       const title=`Label ${li+1} \u00b7 SO ${r.so_number||"?"} \u00b7 ${r.serial}${r.model?" \u00b7 "+r.model:""}${r.planned_qty?" \u00b7 qty "+r.planned_qty:""}`;
+      const meta={ url, serial:r.serial, so:r.so_number||"", model:r.model||"", qty:r.planned_qty??"", customer:r.customer||"", kind:r.record_kind||"Production" };
       if(size==="2x1"){
-        L.push({title, zpl:`^XA^PW406^LL203^LH0,0
+        L.push({title, meta, zpl:`^XA^PW406^LL203^LH0,0
 ^FO12,16^BQN,2,3^FDQA,${url}^FS
 ^FO150,26^A0N,28,28^FD${zsan(r.serial)}^FS
 ^FO150,64^A0N,22,22^FD${zsan((r.model||"").slice(0,18))}^FS
@@ -583,7 +600,7 @@ async function loadList(q){
 ${kind?`^FO150,124^A0N,20,20^FD${zsan(kind)}^FS`:""}
 ^XZ`});
       } else if(size==="3x2"){
-        L.push({title, zpl:`^XA^PW610^LL406^LH0,0
+        L.push({title, meta, zpl:`^XA^PW610^LL406^LH0,0
 ^FO20,30^BQN,2,5^FDQA,${url}^FS
 ^FO260,40^A0N,36,36^FD${zsan(r.serial)}^FS
 ^FO260,92^A0N,26,26^FD${zsan((r.model||"").slice(0,24))}^FS
@@ -592,7 +609,7 @@ ${kind?`^FO150,124^A0N,20,20^FD${zsan(kind)}^FS`:""}
 ${kind?`^FO260,210^A0N,24,24^FDType: ${zsan(kind)}^FS`:""}
 ^XZ`});
       } else {
-        L.push({title, zpl:`^XA^PW812^LL406^LH0,0
+        L.push({title, meta, zpl:`^XA^PW812^LL406^LH0,0
 ^FO30,30^BQN,2,6^FDQA,${url}^FS
 ^FO330,44^A0N,44,44^FD${zsan(r.serial)}^FS
 ^FO330,108^A0N,30,30^FD${zsan((r.model||"").slice(0,28))}^FS
@@ -612,17 +629,21 @@ ${kind?`^FO330,240^A0N,26,26^FDType: ${zsan(kind)}^FS`:""}
       const old=btn.textContent; btn.textContent="Copied"; setTimeout(()=>btn.textContent=old,1600);
     };
     const m=modal(`ZPL for ${L.length} label${L.length==1?"":"s"} (${size} in)`, `
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-        <button class="btn primary" id="zpl-copy">Copy ALL (${L.length})</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+        <button class="btn primary" id="zpl-copy">Copy ALL ZPL (${L.length})</button>
         <button class="btn ghost" id="zpl-dl">Download .zpl file</button>
-        <span class="hint" style="margin:0">Paste into Zebra Designer Essentials or any ZPL tool. Each block below is one label.</span>
+        <button class="btn orange" id="zpl-csv">Download CSV for Designer merge</button>
       </div>
+      <p class="hint" style="margin:0 0 10px">ZPL is for sending directly to the printer (Zebra Setup Utilities, Browser Print, or a print queue).
+      Zebra Designer Essentials rebuilds labels from its own objects, so pasting ZPL there corrupts the QR:
+      in Designer, put ONLY the URL (Copy URL below) into the QR object's data, or use the CSV with print-from-file for the whole batch.</p>
       <div style="max-height:60vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px">
       ${L.map((x,i)=>`
         <div style="flex:0 0 auto;border:1px solid var(--line);border-radius:10px;overflow:hidden">
           <div style="display:flex;align-items:center;gap:10px;padding:8px 11px;background:var(--orange-soft)">
             <b style="font-size:12.5px;color:var(--navy);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.title)}">${esc(x.title)}</b>
-            <button class="btn ghost sm" data-zc="${i}" style="margin-left:auto;flex:none;white-space:nowrap">Copy</button>
+            <button class="btn ghost sm" data-zu="${i}" style="margin-left:auto;flex:none;white-space:nowrap">Copy URL</button>
+            <button class="btn ghost sm" data-zc="${i}" style="flex:none;white-space:nowrap">Copy ZPL</button>
             <button class="btn ghost sm" data-zx="${i}" style="flex:none;white-space:nowrap">Show code</button>
           </div>
           <textarea readonly data-zt="${i}" style="width:100%;height:130px;border:none;border-radius:0;font-family:ui-monospace,Consolas,monospace;font-size:11px;white-space:pre;resize:vertical;display:none"></textarea>
@@ -631,6 +652,18 @@ ${kind?`^FO330,240^A0N,26,26^FDType: ${zsan(kind)}^FS`:""}
       ${missing.length?`<p class="hint" style="margin-top:10px;color:var(--warn)">${missing.length} selected record(s) without a serial were skipped.</p>`:""}`);
     L.forEach((x,i)=>{ m.el.querySelector(`[data-zt="${i}"]`).value=x.zpl; });
     m.el.querySelectorAll("[data-zc]").forEach(b=>b.onclick=()=>copyText(L[+b.dataset.zc].zpl,b));
+    m.el.querySelectorAll("[data-zu]").forEach(b=>b.onclick=()=>copyText(L[+b.dataset.zu].meta.url,b));
+    m.el.querySelector("#zpl-csv").onclick=()=>{
+      const q=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
+      const csv=["url,serial,so,model,qty,customer,kind",
+        ...L.map(x=>[x.meta.url,x.meta.serial,x.meta.so,x.meta.model,x.meta.qty,x.meta.customer,x.meta.kind].map(q).join(","))].join("\r\n");
+      const blob=new Blob(["\ufeff"+csv],{type:"text/csv"});
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      a.download="nlc-qr-labels.csv";
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    };
     m.el.querySelectorAll("[data-zx]").forEach(b=>b.onclick=()=>{
       const ta=m.el.querySelector(`[data-zt="${b.dataset.zx}"]`);
       const open=ta.style.display!=="none";
@@ -651,6 +684,7 @@ ${kind?`^FO330,240^A0N,26,26^FDType: ${zsan(kind)}^FS`:""}
 
 async function openRecord(id, fromRoute){
   const { data, error }=await db.from("production_records").select("*").eq("id",id).maybeSingle();
+  if(error&&isJwtErr(error)&&await recoverSession()) return openRecord(id, fromRoute);
   if(error || !data){
     if(fromRoute){ setHash("#/"); renderHome(); }
     return;
