@@ -1476,8 +1476,10 @@ async function saveRecord(){
     foreman:document.getElementById("f-foreman").value.trim()||null,
     qc_checker:document.getElementById("f-qc").value.trim()||null
   };
-  if(!payload.production_date||!payload.so_number||!payload.model)
-    return banner("Production date, SO and model are required.");
+  if(!payload.production_date||!payload.so_number)
+    return banner("Production date and SO are required.");
+  if(payload.status==="Completed"&&!payload.model)
+    return banner("A record cannot be set to Completed without a model. Fill in the model first.");
   if(!payload.planned_qty)
     return banner("Quantity is required so entries can be checked against it.");
 
