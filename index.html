@@ -775,6 +775,7 @@ function renderEditor(rec){
       <datalist id="convlist">${CONVEYORS.map(c=>`<option value="${c}">`).join("")}</datalist>
       <datalist id="namelist">${nameList}</datalist>
       <button class="btn primary" id="save">${isNew?"Create record":"Save changes"}</button>
+      ${(!isNew && r.plan_id)?`<button class="btn danger" id="retPlan" style="margin-left:auto">Return to planning</button>`:""}
       <div class="hint" id="auditLine" style="margin-top:10px"></div>
     </div></div>
 
@@ -878,6 +879,32 @@ function renderEditor(rec){
   modelInput.addEventListener("input",showParse); showParse();
 
   document.getElementById("save").onclick=saveRecord;
+  const rp=document.getElementById("retPlan");
+  if(rp) rp.onclick=()=>{
+    if(!may("records","edit")){ banner("Your role cannot return records."); return; }
+    const m=modal("Return "+ (current.serial||"this record") +" to planning", `
+      <p class="hint" style="margin-top:0">The production record is removed and its serial retires. The plan reopens
+      as Returned for the planning team with your reason. Blocked automatically if worker entries, fabrication entries
+      or CCRs already exist on this record.</p>
+      <div class="field"><label>Reason for returning</label><input id="rp-reason" placeholder="e.g. wrong line, quantity change, order on hold"></div>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="btn primary" id="rp-go">Return to planning</button>
+        <button class="btn ghost" id="rp-cancel">Cancel</button>
+      </div>
+      <div class="banner" id="rp-msg" style="margin-top:12px"></div>`);
+    m.el.querySelector("#rp-cancel").onclick=m.close;
+    m.el.querySelector("#rp-go").onclick=async()=>{
+      const reason=m.el.querySelector("#rp-reason").value.trim();
+      const btn=m.el.querySelector("#rp-go"); btn.disabled=true; btn.textContent="Returning\u2026";
+      const { error }=await db.rpc("return_production_to_planning",{ p_record_id:current.id, p_reason:reason||null });
+      if(error){
+        const msg=m.el.querySelector("#rp-msg"); msg.textContent=error.message; msg.className="banner show err";
+        btn.disabled=false; btn.textContent="Return to planning"; return;
+      }
+      m.close(); banner("Returned to planning. The plan is back with the planners as Returned.",true);
+      renderHome();
+    };
+  };
   document.getElementById("addLight").onclick=addLightType;
   ["f-bdriver","f-bled","f-bem","f-bhousing"].forEach(id=>
     document.getElementById(id).addEventListener("input",updateBomChip));
