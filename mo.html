@@ -180,6 +180,20 @@ const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dataset.theme="dark"; }catch(e){}
+// keep the login token fresh: refresh when the tab wakes, and recover
+// once automatically if a query hits an expired token
+window.addEventListener("focus",()=>db.auth.getSession());
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) db.auth.getSession(); });
+const isJwtErr=e=>!!e&&/jwt|token|expired|401/i.test(e.message||String(e));
+async function recoverSession(){
+  try{
+    const { data, error }=await db.auth.refreshSession();
+    if(!error&&data&&data.session){ if(typeof SESSION!=="undefined") SESSION=data.session; return true; }
+  }catch(_){}
+  try{ await db.auth.signOut(); }catch(_){}
+  location.reload(); return false;
+}
+
 let ROLE="";
 const app = document.getElementById("app");
 const whoEl = document.getElementById("who");
@@ -227,6 +241,7 @@ function orderCard(r){
   return `<section class="card"><h2>Order</h2><div class="grid">
     ${cell("Sales order", dash(r.so_number))}
     ${cell("MO number", dash(r.mo_number))}
+    ${cell("Order quantity", r.planned_qty!=null?String(r.planned_qty):"\u2013")}
     ${cell("Customer", dash(r.customer), true)}
     ${cell("Production date", dash(r.production_date))}
     ${cell("Line", dash(r.line))}
@@ -242,6 +257,7 @@ async function renderPublic(){
   app.innerHTML =
     hero(r) + productCard(r) + orderCard(r) +
     `<div class="stats">
+      ${r.planned_qty!=null?`<div class="stat"><b>${r.planned_qty}</b><span>Order qty</span></div>`:""}
       <div class="stat"><b>${r.total_units??0}</b><span>Units</span></div>
       <div class="stat"><b>${r.worker_count??0}</b><span>Workers</span></div>
       <div class="stat"><b>${esc((r.status||"Open").split(" ")[0])}</b><span>Status</span></div>
@@ -253,6 +269,7 @@ async function renderPublic(){
 /* ---------------- FULL (foreman session) ------------------------------ */
 async function renderFull(email){
   const { data:r, error } = await db.from("production_records").select("*").eq("serial", sn).maybeSingle();
+  if(error&&isJwtErr(error)&&await recoverSession()) return location.reload(sn);
   if(error) return fail("Could not load record", "Your session may have expired. Sign in again.");
   if(!r) return notFound(true);
 
