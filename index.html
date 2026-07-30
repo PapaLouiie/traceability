@@ -573,11 +573,9 @@ async function loadList(q){
     recs.filter(r=>r.serial).forEach((r,li)=>{
       const url=base+"mo.html?sn="+encodeURIComponent(r.serial);
       const kind=r.record_kind&&r.record_kind!=="Production"?r.record_kind.toUpperCase():"";
-      const head=`^FX ===== Label ${li+1} | SO ${zsan(r.so_number||"?")} | ${zsan(r.serial)} | ${zsan((r.model||"").slice(0,24))} =====^FS`;
       const title=`Label ${li+1} \u00b7 SO ${r.so_number||"?"} \u00b7 ${r.serial}${r.model?" \u00b7 "+r.model:""}${r.planned_qty?" \u00b7 qty "+r.planned_qty:""}`;
       if(size==="2x1"){
         L.push({title, zpl:`^XA^PW406^LL203^LH0,0
-${head}
 ^FO12,16^BQN,2,3^FDQA,${url}^FS
 ^FO150,26^A0N,28,28^FD${zsan(r.serial)}^FS
 ^FO150,64^A0N,22,22^FD${zsan((r.model||"").slice(0,18))}^FS
@@ -586,7 +584,6 @@ ${kind?`^FO150,124^A0N,20,20^FD${zsan(kind)}^FS`:""}
 ^XZ`});
       } else if(size==="3x2"){
         L.push({title, zpl:`^XA^PW610^LL406^LH0,0
-${head}
 ^FO20,30^BQN,2,5^FDQA,${url}^FS
 ^FO260,40^A0N,36,36^FD${zsan(r.serial)}^FS
 ^FO260,92^A0N,26,26^FD${zsan((r.model||"").slice(0,24))}^FS
@@ -596,7 +593,6 @@ ${kind?`^FO260,210^A0N,24,24^FDType: ${zsan(kind)}^FS`:""}
 ^XZ`});
       } else {
         L.push({title, zpl:`^XA^PW812^LL406^LH0,0
-${head}
 ^FO30,30^BQN,2,6^FDQA,${url}^FS
 ^FO330,44^A0N,44,44^FD${zsan(r.serial)}^FS
 ^FO330,108^A0N,30,30^FD${zsan((r.model||"").slice(0,28))}^FS
