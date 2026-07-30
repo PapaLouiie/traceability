@@ -526,7 +526,7 @@ async function loadList(q){
       <div style="display:flex;flex-direction:column;gap:10px">
         <button class="btn primary" id="pr-sheet">Paper sheet (A4, browser print)</button>
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn orange" id="pr-zebra" style="flex:1">Zebra labels (.zpl download)</button>
+          <button class="btn orange" id="pr-zebra" style="flex:1">Zebra labels (ZPL text)</button>
           <select id="pr-size" style="max-width:150px">
             <option value="4x2">4 x 2 in</option>
             <option value="3x2">3 x 2 in</option>
@@ -603,13 +603,30 @@ ${kind?`^FO330,240^A0N,26,26^FDType: ${zsan(kind)}^FS`:""}
       }
     });
     if(!L.length){ banner("None of the selected records has a serial yet."); return; }
-    const blob=new Blob([L.join("\n")],{type:"text/plain"});
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);
-    a.download="nlc-qr-labels-"+size+".zpl";
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-    banner(`Downloaded ${L.length} Zebra label${L.length==1?"":"s"} (${size} in).`+(missing.length?` ${missing.length} without a serial were skipped.`:""),true);
+    const zpl=L.join("\n");
+    const m=modal(`ZPL for ${L.length} label${L.length==1?"":"s"} (${size} in)`, `
+      <p class="hint" style="margin-top:0">Copy this and paste it into Zebra Designer Essentials (or any ZPL tool), or download it as a file. One ^XA...^XZ block per label.</p>
+      <textarea id="zpl-out" readonly style="width:100%;height:260px;font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre;resize:vertical"></textarea>
+      <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn primary" id="zpl-copy">Copy to clipboard</button>
+        <button class="btn ghost" id="zpl-dl">Download .zpl file</button>
+      </div>
+      ${missing.length?`<p class="hint" style="margin-top:10px;color:var(--warn)">${missing.length} selected record(s) without a serial were skipped.</p>`:""}`);
+    m.el.querySelector("#zpl-out").value=zpl;
+    m.el.querySelector("#zpl-copy").onclick=async()=>{
+      const btn=m.el.querySelector("#zpl-copy");
+      try{ await navigator.clipboard.writeText(zpl); }
+      catch(e){ const ta=m.el.querySelector("#zpl-out"); ta.select(); document.execCommand("copy"); }
+      btn.textContent="Copied"; setTimeout(()=>btn.textContent="Copy to clipboard",1800);
+    };
+    m.el.querySelector("#zpl-dl").onclick=()=>{
+      const blob=new Blob([zpl],{type:"text/plain"});
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      a.download="nlc-qr-labels-"+size+".zpl";
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    };
   }
 }
 
