@@ -799,7 +799,7 @@ function drawSheet(v){
       <th style="width:80px">Status</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr></thead>
     <tbody>${rows.map(p=>`<tr>
       ${canEdit?`<td><input type="checkbox" class="shSel" data-sel="${p.id}"></td>`:""}
-      <td><span class="chip" data-tone="${STONE[p.plan_status]}">${p.plan_status}</span></td>
+      <td><span class="chip" data-tone="${STONE[p.plan_status]}">${p.plan_status}</span>${p.odoo_state==="cancel"?'<br><span class="late" style="display:inline-block;margin-top:3px">CANCELLED</span>':""}</td>
       ${SHEETCOLS.map(([k,_,ty])=>{
         let val=p[k]==null?"":p[k];
         if(k==="planned_date") val=p.planned_date?isoWeekStr(p.planned_date):"";
