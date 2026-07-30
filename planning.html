@@ -125,6 +125,23 @@
   .chip-s b{cursor:pointer; color:#c0392b; font-weight:800; padding:0 3px; line-height:1; font-size:14px}
   html[data-theme="dark"] .chipsearch{background:#23254a}
   html[data-theme="dark"] .chip-s{background:#3a2a17; color:#f0b075; border-color:#5a4020}
+  :root{--navy2:#4c50a2}
+  .st-tiles{display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:12px; margin-bottom:16px}
+  .st-tile{background:var(--card); border:1px solid var(--line); border-top:3px solid var(--navy); border-radius:12px;
+    box-shadow:var(--shadow); padding:13px 15px}
+  .st-big{font-size:26px; font-weight:800; color:var(--navy)}
+  html[data-theme="dark"] .st-big{color:#aeb3ff}
+  .st-label{font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); margin-top:2px}
+  .st-sub{font-size:12.5px; color:var(--muted); margin-top:3px}
+  .st-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:14px}
+  .st-card{background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); padding:14px 16px}
+  .st-card h2{margin:0 0 12px; font-size:13px; letter-spacing:.8px; text-transform:uppercase; color:var(--navy)}
+  html[data-theme="dark"] .st-card h2{color:#aeb3ff}
+  .bar-row{display:flex; align-items:center; gap:9px; margin-bottom:7px}
+  .bar-lab{flex:0 0 130px; font-size:12px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .bar-tr{flex:1; height:14px; background:var(--line); border-radius:7px; overflow:hidden}
+  .bar-tr i{display:block; height:100%; border-radius:7px}
+  .bar-val{flex:0 0 78px; text-align:right; font-size:12px; font-weight:700; color:var(--muted)}
   .so-group{background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:8px; overflow:hidden}
   .so-head{display:flex; align-items:center; gap:8px; padding:9px 11px; cursor:pointer; font-size:13px}
   .so-head:hover{background:var(--orange-soft)}
@@ -232,6 +249,7 @@ function weekOptionsBase(){ if(!WEEKOPTS_CACHE) WEEKOPTS_CACHE=weekOptions(""); 
 let DRAWT=null;
 function drawSoon(){ clearTimeout(DRAWT); DRAWT=setTimeout(draw,180); }
 const COLLAPSED={};
+const fmt=n=>(n==null||isNaN(n))?"0":Number(n).toLocaleString("en-US");
 function busy(on){ const b=document.getElementById("busy"); if(b) b.style.display=on?"flex":"none"; }
 let SEARCHCTL=null;
 function chipSearch(boxId, inputId, onChange, live){
@@ -345,6 +363,7 @@ function renderShell(){
           <button data-v="calendar">Calendar</button>
           <button data-v="sheet">Spreadsheet</button>
           <button data-v="queue">Acceptance queue</button>
+          <button data-v="stats">Analytics</button>
         </div>
         <div class="chipsearch" id="qBox" style="flex:1;min-width:170px"><input id="q" placeholder="Search: type a term, press Enter to tag it"></div>
         <select id="fabFilter" style="max-width:130px">
@@ -489,7 +508,79 @@ function draw(){
   if(VIEW==="kanban") drawKanban(v);
   else if(VIEW==="calendar") drawCalendar(v);
   else if(VIEW==="sheet") drawSheet(v);
+  else if(VIEW==="stats") drawStats(v);
   else drawQueue(v);
+}
+
+/* ---------------- planning analytics ---------------- */
+function drawStats(v){
+  const rows=filtered();
+  const pcs=a=>a.reduce((s,p)=>s+(p.planned_qty||0),0);
+  const isNewSync=p=>p.created_by==="odoo-sync"&&!p.updated_by;
+  const live=rows.filter(p=>p.odoo_state!=="cancel");
+  const groups={
+    "New from Odoo":live.filter(p=>p.plan_status==="Draft"&&isNewSync(p)),
+    "In planning":live.filter(p=>p.plan_status==="Draft"&&!isNewSync(p)),
+    "Pushed":live.filter(p=>p.plan_status==="Pushed"),
+    "Returned":live.filter(p=>p.plan_status==="Returned"),
+    "Accepted":live.filter(p=>p.plan_status==="Accepted")
+  };
+  const cancelled=rows.filter(p=>p.odoo_state==="cancel");
+  const backlog=live.filter(p=>p.plan_status!=="Accepted");
+  const fab=backlog.filter(p=>p.needs_fabrication);
+  const late=backlog.filter(p=>p.plan_indicator==="Late");
+  const tile=(label,big,sub,toneVar)=>`<div class="st-tile"${toneVar?` style="border-top-color:var(${toneVar})"`:""}>
+      <div class="st-big">${big}</div><div class="st-label">${esc(label)}</div>${sub?`<div class="st-sub">${sub}</div>`:""}</div>`;
+  const barRows=(pairs,unit)=>{ 
+    const max=Math.max(1,...pairs.map(x=>x[1]));
+    return pairs.map(([lab,val,tone])=>`<div class="bar-row">
+      <div class="bar-lab" title="${esc(lab)}">${esc(lab)}</div>
+      <div class="bar-tr"><i style="width:${Math.max(2,Math.round(val/max*100))}%;background:${tone||"var(--navy)"}"></i></div>
+      <div class="bar-val">${fmt(val)}${unit||""}</div>
+    </div>`).join(""); };
+  // pieces by week (next horizon based on planned_date)
+  const byWeek={};
+  backlog.forEach(p=>{ const w=p.planned_date?isoWeekStr(p.planned_date):"Unscheduled";
+    byWeek[w]=(byWeek[w]||0)+(p.planned_qty||0); });
+  const weekPairs=Object.entries(byWeek).sort((a,b)=>a[0]==="Unscheduled"?1:(b[0]==="Unscheduled"?-1:a[0].localeCompare(b[0])))
+    .slice(0,14).map(([w,n])=>[w==="Unscheduled"?w:weekLabel(w),n,w==="Unscheduled"?"var(--warn)":"var(--info)"]);
+  // stock status over backlog
+  const stockPairs=[["In Stock","var(--ok)"],["Partial Stock","var(--warn)"],["Cargo/PO Item","var(--info)"],["Not set","var(--muted)"]]
+    .map(([lab,tone])=>[lab, pcs(backlog.filter(p=>(p.bom_stock_status||"Not set")===lab)), tone]);
+  // top customers / regions by pieces (backlog)
+  const agg=key=>{ const m={}; backlog.forEach(p=>{ const k=p[key]||"(none)"; m[k]=(m[k]||0)+(p.planned_qty||0); });
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,8); };
+  const custPairs=agg("customer"), regionPairs=agg("region"), salesPairs=agg("sales_person");
+  // fab stages
+  const fabPairs=[["Not started",fab.filter(p=>!p.fabrication_stage).length],
+    ["Fabrication",fab.filter(p=>p.fabrication_stage==="Fabrication").length],
+    ["Painting Pending",fab.filter(p=>p.fabrication_stage==="Painting Pending").length],
+    ["Fabrication Complete",fab.filter(p=>p.fabrication_stage==="Fabrication Complete").length]];
+  const kinds=[["Production"],["Sample"],["Sticker"],["Non-Production"]]
+    .map(([k])=>[k, backlog.filter(p=>(p.record_kind||"Production")===k).length]);
+  v.innerHTML=`
+    <p class="sub" style="margin-top:0">Live view of the plans matching the current search and filters. Backlog means everything not yet accepted.</p>
+    <div class="st-tiles">
+      ${tile("Backlog plans", fmt(backlog.length), fmt(pcs(backlog))+" pieces","--navy2")}
+      ${tile("New from Odoo", fmt(groups["New from Odoo"].length), fmt(pcs(groups["New from Odoo"]))+" pcs")}
+      ${tile("In planning", fmt(groups["In planning"].length), fmt(pcs(groups["In planning"]))+" pcs")}
+      ${tile("Pushed, awaiting assembly", fmt(groups["Pushed"].length), fmt(pcs(groups["Pushed"]))+" pcs","--info")}
+      ${tile("Returned to fix", fmt(groups["Returned"].length), fmt(pcs(groups["Returned"]))+" pcs","--hold")}
+      ${tile("Accepted", fmt(groups["Accepted"].length), fmt(pcs(groups["Accepted"]))+" pcs","--ok")}
+      ${tile("Fabrication items", fmt(fab.length), fmt(pcs(fab))+" pcs","--info")}
+      ${tile("Late", fmt(late.length), fmt(pcs(late))+" pcs","--hold")}
+      ${tile("Cancelled", fmt(cancelled.length), fmt(pcs(cancelled))+" pcs","--hold")}
+    </div>
+    <div class="st-grid">
+      <div class="st-card"><h2>Pieces by planned week</h2>${barRows(weekPairs," pcs")||'<div class="empty">No data</div>'}</div>
+      <div class="st-card"><h2>Backlog by stock status (pieces)</h2>${barRows(stockPairs," pcs")}</div>
+      <div class="st-card"><h2>Top customers (backlog pieces)</h2>${barRows(custPairs.map(x=>[x[0],x[1]])," pcs")||'<div class="empty">No data</div>'}</div>
+      <div class="st-card"><h2>By region (backlog pieces)</h2>${barRows(regionPairs.map(x=>[x[0],x[1]])," pcs")||'<div class="empty">No data</div>'}</div>
+      <div class="st-card"><h2>By salesperson (backlog pieces)</h2>${barRows(salesPairs.map(x=>[x[0],x[1]])," pcs")||'<div class="empty">No data</div>'}</div>
+      <div class="st-card"><h2>Fabrication stages (items)</h2>${barRows(fabPairs)}</div>
+      <div class="st-card"><h2>Piece types (backlog items)</h2>${barRows(kinds)}</div>
+      <div class="st-card"><h2>Status mix (pieces)</h2>${barRows(Object.entries(groups).map(([k,a])=>[k,pcs(a)])," pcs")}</div>
+    </div>`;
 }
 
 /* ---------------- kanban (columns = plan status) ---------------- */
@@ -527,7 +618,7 @@ function drawKanban(v){
         <div class="so-head" data-g="${esc(gk)}">
           <span class="so-arrow">${open?"\u25be":"\u25b8"}</span>
           <b>${esc(so)}</b><span class="so-meta">${esc(cust)}</span>
-          <span class="n" style="margin-left:auto">${g.length} \u00b7 ${pcs} pcs</span>
+          <span class="n" style="margin-left:auto">${fmt(g.length)} \u00b7 ${fmt(pcs)} pcs</span>
         </div>
         ${open?`<div class="so-body">${g.map(cardHTML).join("")}</div>`:""}
       </div>`;
@@ -541,7 +632,7 @@ function drawKanban(v){
     const mini=!!COLLAPSED[key];
     const pcs=cards.reduce((a,p)=>a+(p.planned_qty||0),0);
     return `<div class="kb-col${mini?" mini":""}" data-st="${key}">
-      <h3><span class="chip" data-tone="${tone}">${label}</span><span class="n">${cards.length} \u00b7 ${pcs} pcs</span>
+      <h3><span class="chip" data-tone="${tone}">${label}</span><span class="n">${fmt(cards.length)} \u00b7 ${fmt(pcs)} pcs</span>
         <span class="fold" data-fold="${key}" title="${mini?"Expand":"Minimize"}">${mini?"+":"\u2212"}</span></h3>
       <div class="kb-body"${mini?' style="display:none"':""}>${colBody(key,cards)}</div>
     </div>`;}).join("")}</div>`;
@@ -609,7 +700,7 @@ function drawCalendar(v){
     </div>
     <div class="kb" style="grid-template-columns:repeat(${gridCols},minmax(0,1fr))">
       ${weeks.map(w=>`<div class="kb-col wk${w===thisWeek?" today":""}" data-week="${w}" ${w===thisWeek?'style="outline:2px solid var(--orange)"':""}>
-        <h3><span class="chip" data-tone="info">${esc(weekLabel(w))}</span><span class="n">${(byWeek[w]||[]).length} \u00b7 ${(byWeek[w]||[]).reduce((a,p)=>a+(p.planned_qty||0),0)} pcs</span></h3>
+        <h3><span class="chip" data-tone="info">${esc(weekLabel(w))}</span><span class="n">${fmt((byWeek[w]||[]).length)} \u00b7 ${fmt((byWeek[w]||[]).reduce((a,p)=>a+(p.planned_qty||0),0))} pcs</span></h3>
         ${(byWeek[w]||[]).map(cardFn).join("")||'<div class="empty" style="padding:10px">None</div>'}
       </div>`).join("")}
     </div>
@@ -692,8 +783,8 @@ function drawSheet(v){
       }).join("")}
     </tr>`).join("")}</tbody>
     <tfoot><tr style="font-weight:800;color:var(--navy);border-top:2px solid var(--navy)">
-      ${canEdit?"<td></td>":""}<td>Totals (${allRows.length})</td>
-      ${SHEETCOLS.map(([k])=>`<td>${k==="so_qty"?totSO:(k==="planned_qty"?totPlan:"")}</td>`).join("")}
+      ${canEdit?"<td></td>":""}<td>Totals (${fmt(allRows.length)})</td>
+      ${SHEETCOLS.map(([k])=>`<td>${k==="so_qty"?fmt(totSO):(k==="planned_qty"?fmt(totPlan):"")}</td>`).join("")}
     </tr></tfoot></table></div>
     ${rows.length?"":'<div class="empty">No plans match the filter.</div>'}`;
   // apply stored week values to the cached option lists
