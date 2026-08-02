@@ -140,6 +140,12 @@
   .toolbar{display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap}
   .toolbar input{flex:1; min-width:180px}
 
+  .banner.show{position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:997;
+    max-width:min(760px,92vw); box-shadow:0 8px 30px rgba(0,0,0,.25)}
+  #toTop{display:none; position:fixed; right:18px; bottom:18px; z-index:996; width:44px; height:44px;
+    border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
+    box-shadow:0 6px 20px rgba(0,0,0,.3)}
+  #toTop:hover{background:var(--orange)}
   .qr-sel{width:16px; height:16px; accent-color:var(--orange); margin-right:4px; flex:none; align-self:center}
   .rec{display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); cursor:pointer}
   .rec:last-child{border-bottom:none}
@@ -232,6 +238,10 @@ try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dat
   if(document.body) document.body.appendChild(el);
   let n=0;
   window.gbusy=on=>{ n=Math.max(0,n+(on?1:-1)); el.style.display=n?"flex":"none"; };
+  const tt=document.createElement("button"); tt.id="toTop"; tt.title="Back to top"; tt.textContent="\u2191";
+  (document.body||document.documentElement).appendChild(tt);
+  window.addEventListener("scroll",()=>{ tt.style.display=window.scrollY>600?"block":"none"; },{passive:true});
+  tt.onclick=()=>window.scrollTo({top:0,behavior:"smooth"});
   const _rpc=db.rpc.bind(db);
   db.rpc=(fn,args)=>{
     const b=_rpc(fn,args);
@@ -317,6 +327,9 @@ function renderChips(){
   try{ const { data:pm } = await db.rpc("my_permissions");
     (pm||[]).forEach(p=>PERMS[p.section]={view:p.can_view, edit:p.can_edit}); }catch(e){}
   try{ const { data:r0 } = await db.rpc("my_role"); ROLE=r0||""; }catch(e){}
+  if(ROLE==="foreman" && "Notification" in window && Notification.permission==="default"){
+    try{ Notification.requestPermission(); }catch(e){}
+  }
   route();
 })();
 
@@ -370,6 +383,10 @@ function shell(inner){
       <a id="homeLink" title="Home" style="display:flex;align-items:center;text-decoration:none"><img class="brand-logo" src="${LOGO}" alt="NLC"></a>
       <span class="brand-tag">Console</span>
       <a id="homeBtn" class="brand-home">Home</a>
+      <a class="brand-home" href="planning.html">Planning<span id="qBadge" style="display:none;margin-left:6px;background:var(--orange);color:#fff;border-radius:99px;padding:0 7px;font-size:11px;font-weight:800"></span></a>
+      <a class="brand-home" href="dashboard.html">Dashboard</a>
+      ${may("engineering","edit")?'<a id="navBom" class="brand-home">BOM editor</a>':''}
+      <a id="navLines" class="brand-home"><svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><rect x="0" y="6" width="3" height="6" rx="1"/><rect x="4.5" y="3" width="3" height="9" rx="1"/><rect x="9" y="0" width="3" height="12" rx="1"/></svg>Line load</a>
       ${may("admin","view")?'<a id="adminBtn" class="brand-home">Admin</a>':''}
       <a class="brand-home" id="themeBtn" title="Light / dark">${document.documentElement.dataset.theme==="dark"?"\u2600":"\u263E"}</a>
       <div class="who">${esc(SESSION.user.email)}<br>${ROLE?`<span class="role-tag">${esc(ROLE)}</span> \u00b7 `:""}<a id="signout">Sign out</a></div>
@@ -385,6 +402,9 @@ function wireShell(){
   if(ab) ab.onclick=renderAdmin;
   const tb=document.getElementById("themeBtn");
   if(tb) tb.onclick=toggleTheme;
+  const nb=document.getElementById("navBom"); if(nb) nb.onclick=e=>{ e.preventDefault(); renderBomEditor(); };
+  const nl=document.getElementById("navLines"); if(nl) nl.onclick=e=>{ e.preventDefault(); renderLines(); };
+  updateQueueBadge();
 }
 
 /* ---------------- home: new + search + filter + recent ---------------- */
@@ -403,10 +423,8 @@ async function renderHome(){
       <div class="chipsearch" id="searchBox" style="flex:1;min-width:180px"><input id="search" placeholder="Search: type, press Enter to tag; several tags find all"></div>
       <button class="btn ghost" id="searchBtn">Search</button>
       <button class="btn orange" id="printSel" style="display:none">Print QRs (0)</button>
-      <a class="btn ghost" href="dashboard.html">Dashboard</a>
-      <a class="btn ghost" href="planning.html">Planning</a>
-      <button class="btn ghost" id="linesBtn">Line load</button>
-      ${may("engineering","edit")?'<button class="btn ghost" id="bomBtn">BOM editor</button>':''}
+
+      ${may("engineering","edit")?'':''}
     </div>
     <div class="toolbar">
       <select id="f-month" style="max-width:140px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
@@ -447,10 +465,8 @@ async function renderHome(){
   `);
   wireShell();
   document.getElementById("newBtn").onclick=()=>renderEditor(null);
-  const bb=document.getElementById("bomBtn");
-  if(bb) bb.onclick=renderBomEditor;
-  const lb=document.getElementById("linesBtn");
-  if(lb) lb.onclick=renderLines;
+
+
   const searchCtl=chipSearch("searchBox","search",q=>{ HOME_TERMS=searchCtl.terms(); loadList(q.trim()); },false);
   searchCtl.set(HOME_TERMS);
   window.__homeSearch=searchCtl;
@@ -482,6 +498,28 @@ function monthRange(year,month){
 
 let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
 let LAST_LIST=[]; const QRSEL=new Set();
+let QPREV=null;
+async function updateQueueBadge(){
+  const badge=document.getElementById("qBadge"); if(!badge) return;
+  try{
+    const { count }=await db.from("planned_records")
+      .select("id",{count:"exact",head:true}).eq("plan_status","Pushed");
+    badge.style.display=count?"inline-block":"none";
+    badge.textContent=count||"";
+    if(ROLE==="foreman"){
+      if(QPREV!=null && count>QPREV){
+        banner((count-QPREV)+" new order(s) in the acceptance queue.",true);
+        if("Notification" in window && Notification.permission==="granted"){
+          const n=new Notification("NLC: new order in acceptance queue",
+            { body:(count-QPREV)+" new pushed plan(s) waiting for assembly." });
+          n.onclick=()=>{ window.open("planning.html#queue","_blank"); };
+        }
+      }
+      QPREV=count;
+    }
+  }catch(e){}
+}
+setInterval(updateQueueBadge, 90000);
 async function loadList(q){
   const list=document.getElementById("list");
   let rng=monthRange(listFilter.year,listFilter.month);
@@ -840,8 +878,9 @@ function renderEditor(rec){
         <div class="field"><label>Status</label><select id="f-status">${opt(STATUSES,r.status||"Open")}</select></div>
         <div class="field"><label>Sales order (SO) *</label><input id="f-so" value="${esc(r.so_number||"")}" placeholder="S00311"></div>
         <div class="field"><label>MO number</label><input id="f-mo" value="${esc(r.mo_number||"")}"></div>
-        <div class="field full"><label>Model *</label><input id="f-model" value="${esc(r.model||"")}" placeholder="SM-01-37W-4000K">
-          <div class="hint" id="parse"></div></div>
+        <div class="field full"><label>Model</label>
+          <div style="display:flex;gap:6px"><input id="f-model" value="${esc(r.model||"")}" placeholder="WP-44W-4000K" style="flex:1;min-width:0">
+          <button class="btn ghost sm" id="f-ai" type="button" title="Read the customer reference and suggest the model" style="flex:none">AI</button></div></div>
         <div class="field full"><label>Customer</label><input id="f-customer" value="${esc(r.customer||"")}"></div>
         <div class="field full"><label>Customer reference (item name on customer PO)</label><input id="f-cref" value="${esc(r.customer_reference||"")}" placeholder="e.g. DL DOWNLIGHT 25W ROUND WHITE"></div>
         <div class="field"><label>Light type <a id="addLight" style="color:var(--orange);cursor:pointer;font-weight:700;text-transform:none;letter-spacing:0"> + add</a></label>
@@ -965,12 +1004,21 @@ function renderEditor(rec){
   wireShell();
   document.getElementById("back").onclick=renderHome;
 
-  const modelInput=document.getElementById("f-model");
-  const parse=document.getElementById("parse");
-  const showParse=()=>{ const p=(modelInput.value||"").split("-");
-    parse.innerHTML=p[0]?`Series <b>${esc(p[0]||"-")}</b> &middot; Type <b>${esc(p[1]||"-")}</b> &middot; Watt <b>${esc(p[2]||"-")}</b> &middot; Kelvin/rating <b>${esc(p[3]||"-")}</b>`:""; };
-  modelInput.addEventListener("input",showParse); showParse();
 
+  const fai=document.getElementById("f-ai");
+  if(fai) fai.onclick=async()=>{
+    fai.disabled=true; fai.textContent="\u2026";
+    try{
+      const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
+        headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" },
+        body:JSON.stringify({ c_ref:document.getElementById("f-cref").value, product_name:"" }) });
+      const j=await res.json();
+      if(j.error) banner(j.error);
+      else if(!j.model) banner(j.note||"No model could be derived from the customer reference.");
+      else { document.getElementById("f-model").value=j.model; banner("Suggested: "+j.model+". Review before saving.",true); }
+    }catch(e){ banner("Suggestion failed: "+e.message); }
+    fai.disabled=false; fai.textContent="AI";
+  };
   document.getElementById("save").onclick=saveRecord;
   const rp=document.getElementById("retPlan");
   if(rp) rp.onclick=()=>{
@@ -1045,9 +1093,10 @@ function renderEditor(rec){
 }
 
 function banner(msg,ok){
-  const b=document.getElementById("banner");
+  const b=document.getElementById("banner"); if(!b) return;
   b.textContent=msg; b.className="banner show "+(ok?"ok":"err");
-  if(ok) setTimeout(()=>b.classList.remove("show"),2500);
+  clearTimeout(b._t);
+  b._t=setTimeout(()=>b.classList.remove("show"), ok?3500:8000);
 }
 
 /* ---------------- admin: users and permissions ---------------- */
