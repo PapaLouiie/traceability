@@ -219,6 +219,29 @@ const CONVEYORS = Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStar
 try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dataset.theme="dark"; }catch(e){}
 // keep the login token fresh: refresh when the tab wakes, and recover
 // once automatically if a query hits an expired token
+
+// Global activity indicator: every server call (any db.rpc) automatically
+// shows a dimmed overlay with a spinner until it settles, so no button is
+// ever silent. Self-contained so it works identically on every page.
+(function(){
+  const st=document.createElement("style");
+  st.textContent="@keyframes gspin{to{transform:rotate(360deg)}} #gbusy{display:none;position:fixed;inset:0;background:rgba(20,21,40,.28);z-index:999;align-items:center;justify-content:center} #gbusy i{width:34px;height:34px;border:3px solid rgba(255,255,255,.4);border-top-color:#F6851F;border-radius:50%;animation:gspin .8s linear infinite;display:block}";
+  document.head.appendChild(st);
+  const el=document.createElement("div"); el.id="gbusy"; el.innerHTML="<i></i>";
+  document.addEventListener("DOMContentLoaded",()=>document.body.appendChild(el));
+  if(document.body) document.body.appendChild(el);
+  let n=0;
+  window.gbusy=on=>{ n=Math.max(0,n+(on?1:-1)); el.style.display=n?"flex":"none"; };
+  const _rpc=db.rpc.bind(db);
+  db.rpc=(fn,args)=>{
+    const b=_rpc(fn,args);
+    const t=b.then.bind(b);
+    b.then=(res,rej)=>{ gbusy(true);
+      return t(r=>{ gbusy(false); return res?res(r):r; },
+               e=>{ gbusy(false); if(rej) return rej(e); throw e; }); };
+    return b;
+  };
+})();
 window.addEventListener("focus",()=>db.auth.getSession());
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden) db.auth.getSession(); });
 const isJwtErr=e=>!!e&&/jwt|token|expired|401/i.test(e.message||String(e));
@@ -1865,7 +1888,9 @@ async function raiseCcr(){
   let uploadErr=null;
   for(const f of files){
     const path=`${current.id}/${ccr.id}/${Date.now()}_${f.name.replace(/[^\w.\-]/g,"_")}`;
+    gbusy(true);
     const { error:upErr }=await db.storage.from("ccr-docs").upload(path,f);
+    gbusy(false);
     if(upErr){ uploadErr=upErr.message; continue; }
     await db.from("ccr_documents").insert({ccr_id:ccr.id, file_name:f.name, storage_path:path, uploaded_by:SESSION.user.email});
   }
