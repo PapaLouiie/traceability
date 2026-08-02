@@ -93,7 +93,14 @@
   .kb-col h3 .n{margin-left:auto; font-size:11px; background:#fff; border-radius:99px; padding:2px 8px; color:var(--muted)}
   .kb-col.dragover{outline:2px dashed var(--orange); outline-offset:-4px}
   .pcard{background:var(--card); border:1px solid var(--line); border-radius:11px; box-shadow:var(--shadow);
-    padding:11px 12px; margin-bottom:10px; cursor:pointer}
+    padding:11px 12px; margin-bottom:10px; cursor:pointer; position:relative; overflow:hidden}
+  .pcard.has-rib{padding-left:28px}
+  .rib{position:absolute; left:0; top:0; bottom:0; width:18px; display:flex; align-items:center; justify-content:center;
+    font-size:8.5px; font-weight:800; letter-spacing:1px; color:#fff;
+    writing-mode:vertical-rl; transform:rotate(180deg)}
+  .rib.afp{background:var(--ok)} .rib.noafp{background:var(--hold)}
+  .cal-mini.has-rib{padding-left:24px; position:relative; overflow:hidden}
+  .cal-mini .rib{width:15px; font-size:7.5px}
   .pcard.dragging{opacity:.5}
   .pcard .t{font-weight:700; color:var(--navy); font-size:13.5px; display:flex; gap:6px; align-items:center; flex-wrap:wrap}
   .pcard .m{font-size:12px; color:var(--muted); margin-top:3px}
@@ -116,6 +123,15 @@
   .cal-card[data-status="Accepted"]{background:var(--ok-bg); border-color:#bfe6d0; color:var(--ok)}
   .cal-card[data-status="Returned"]{background:var(--hold-bg); border-color:#f2c6c1; color:var(--hold)}
 
+  .banner.show{position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:997;
+    max-width:min(760px,92vw); box-shadow:0 8px 30px rgba(0,0,0,.25)}
+  #toTop{display:none; position:fixed; right:18px; bottom:18px; z-index:996; width:44px; height:44px;
+    border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
+    box-shadow:0 6px 20px rgba(0,0,0,.3)}
+  #toTop:hover{background:var(--orange)}
+  .sync-remind{background:var(--warn-bg); color:var(--warn); border:1px solid #f0dcae; border-radius:10px;
+    padding:10px 14px; margin:0 0 12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; font-size:13.5px}
+  html[data-theme="dark"] .sync-remind{border-color:#5a4a1a}
   .chipsearch{display:flex; flex-wrap:wrap; gap:6px; align-items:center; background:#fbfbfe;
     border:1px solid var(--line); border-radius:9px; padding:5px 9px; cursor:text}
   .chipsearch:focus-within{outline:2px solid var(--orange); outline-offset:1px}
@@ -279,7 +295,7 @@ const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
-let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone";
+let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone", AFPF="";
 const DNLABEL={assigned:"Ready",confirmed:"Waiting",waiting:"Waiting (other op)",done:"Done",draft:"Draft"};
 const GEXP=new Set();
 let WEEKOPTS_CACHE=null;
@@ -362,6 +378,28 @@ const may=(s,w)=>{ const p=PERMS[s]; if(!p) return true; return w==="edit"?!!p.e
   LIGHT_TYPES=(lt||[]).map(x=>x.name);
   try{ const { data:r0 }=await db.rpc("my_role"); ROLE=r0||""; }catch(e){}
   renderShell(); await load();
+  // remind planners when the sync has not run for a while on this device
+  if(may("planning","edit")){
+    try{
+      const last=+localStorage.getItem("nlc-last-sync")||0;
+      const snooze=+localStorage.getItem("nlc-sync-snooze")||0;
+      const STALE=6*60*60*1000;
+      if(Date.now()-last>STALE && Date.now()>snooze){
+        const bar=document.createElement("div");
+        bar.className="sync-remind"; bar.id="syncRemind";
+        bar.innerHTML=`<b>Odoo sync has not run for a while on this device.</b>
+          New AFP deliveries may be missing from the board.
+          <button class="btn orange sm" id="sr-go">Sync now</button>
+          <button class="btn ghost sm" id="sr-later">Remind me later</button>`;
+        const tb=document.querySelector(".toolbar");
+        tb.parentNode.insertBefore(bar, tb);
+        bar.querySelector("#sr-go").onclick=()=>{ document.getElementById("syncBtn")?.click(); };
+        bar.querySelector("#sr-later").onclick=()=>{
+          try{ localStorage.setItem("nlc-sync-snooze", String(Date.now()+2*60*60*1000)); }catch(e){}
+          bar.remove(); };
+      }
+    }catch(e){}
+  }
 })();
 
 function renderLogin(msg){
@@ -421,6 +459,11 @@ function renderShell(){
           <option value="">Status: all</option><option>Draft</option><option>Pushed</option>
           <option>Accepted</option><option>Returned</option>
         </select>
+        <select id="afpFilter" style="max-width:130px">
+          <option value="">AFP: all</option>
+          <option value="afp">AFP only</option>
+          <option value="notafp">Not AFP only</option>
+        </select>
         <select id="dnFilter" style="max-width:150px">
           <option value="hidedone" selected>DN: hide Done</option>
           <option value="all">DN: all</option>
@@ -444,12 +487,20 @@ function renderShell(){
       </div>
       <div id="view"><div class="spinner"></div></div>
     </div>
-    <div id="busy" style="display:none;position:fixed;inset:0;background:rgba(20,21,40,.35);z-index:99;align-items:center;justify-content:center"><div class="spinner" style="margin:0"></div></div>`;
+    <div id="busy" style="display:none;position:fixed;inset:0;background:rgba(20,21,40,.35);z-index:99;align-items:center;justify-content:center"><div class="spinner" style="margin:0"></div></div>
+    <button id="toTop" title="Back to top">\u2191</button>`;
+  const tt=document.getElementById("toTop");
+  window.addEventListener("scroll",()=>{ tt.style.display=window.scrollY>600?"block":"none"; },{passive:true});
+  tt.onclick=()=>window.scrollTo({top:0,behavior:"smooth"});
   document.getElementById("signout").onclick=async()=>{ await db.auth.signOut(); location.reload(); };
   document.getElementById("themeBtn").onclick=toggleTheme;
   document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
     document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); VIEW=b.dataset.v; draw(); });
+  if(location.hash==="#queue"){
+    VIEW="queue";
+    document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x.dataset.v==="queue"));
+  }
   SEARCHCTL=chipSearch("qBox","q",()=>drawSoon(),true);
   document.getElementById("fabFilter").onchange=e=>{ FABFILTER=e.target.value; draw(); };
   document.getElementById("stockFilter").onchange=e=>{ STOCKF=e.target.value; draw(); };
@@ -461,6 +512,7 @@ function renderShell(){
   document.getElementById("sortSel").onchange=e=>{ SORTSEL=e.target.value; draw(); };
   document.getElementById("cancelFilter").onchange=e=>{ CANCELF=e.target.value; draw(); };
   document.getElementById("dnFilter").onchange=e=>{ DNF=e.target.value; draw(); };
+  document.getElementById("afpFilter").onchange=e=>{ AFPF=e.target.value; draw(); };
   const np=document.getElementById("newPlan");
   if(np) np.onclick=()=>planModal(null);
   const sb=document.getElementById("syncBtn");
@@ -471,7 +523,9 @@ function renderShell(){
         headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" } });
       const j=await res.json();
       if(j.error) banner("Sync failed: "+j.error);
-      else { banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); }
+      else { try{ localStorage.setItem("nlc-last-sync", String(Date.now())); }catch(e){}
+        const rm=document.getElementById("syncRemind"); if(rm) rm.remove();
+        banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); }
     }catch(e){ banner("Sync failed: "+e.message+". Is the odoo-sync function deployed?"); }
     busy(false);
     sb.disabled=false; sb.textContent="Sync from Odoo";
@@ -481,8 +535,7 @@ function renderShell(){
 function banner(msg,ok){
   const b=document.getElementById("banner"); if(!b) return;
   b.textContent=msg; b.className="banner show "+(ok?"ok":"err");
-  if(ok) setTimeout(()=>b.classList.remove("show"),3500);
-  window.scrollTo({top:0,behavior:"smooth"});
+  setTimeout(()=>b.classList.remove("show"), ok?3500:8000);
 }
 
 // list views need only these columns; the full row (BOM, cargo, allocations,
@@ -490,7 +543,7 @@ function banner(msg,ok){
 // touches fields it is sent, so lean rows are safe to edit from.
 const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_person,region,model,"+
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
-  "needs_fabrication,fabrication_stage,record_kind,odoo_state,line,return_reason,production_record_id,"+
+  "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,"+
   "sort_order,created_by,updated_by,updated_at,created_at";
 async function fetchPlans(statuses){
   const B=1000; let all=[], from=0;
@@ -514,6 +567,9 @@ async function load(){
     PLANS=active; draw();
     const accepted=await fetchPlans(["Accepted"]);
     PLANS=active.concat(accepted); draw();
+    const qt=document.querySelector('#tabs button[data-v="queue"]');
+    if(qt){ const n=PLANS.filter(p=>p.plan_status==="Pushed").length;
+      qt.textContent="Acceptance queue"+(n?` (${n})`:""); }
   }catch(error){
     if(isJwtErr(error)&&await recoverSession()) return load();
     document.getElementById("view").innerHTML=`<div class="empty">Could not load plans: ${esc(error.message)}</div>`;
@@ -533,6 +589,8 @@ function filtered(){
   else if(CANCELF==="only") rows=rows.filter(p=>p.odoo_state==="cancel");
   if(DNF==="hidedone") rows=rows.filter(p=>p.odoo_state!=="done");
   else if(DNF==="doneonly") rows=rows.filter(p=>p.odoo_state==="done");
+  if(AFPF==="afp") rows=rows.filter(p=>p.afp===true);
+  else if(AFPF==="notafp") rows=rows.filter(p=>p.afp===false);
   if(q){
     const terms=q.split(/[,\s]+/).filter(Boolean);   // several SO/model numbers at once: any term matches
     rows=rows.filter(p=>{
@@ -553,7 +611,9 @@ function filtered(){
 }
 
 function cardHTML(p){
-  return `<div class="pcard" draggable="${may("planning","edit")&&(p.plan_status==="Draft"||p.plan_status==="Returned")?"true":"false"}" data-id="${p.id}">
+  const rib=p.afp===true?'<span class="rib afp">AFP</span>':(p.afp===false?'<span class="rib noafp">NOT AFP</span>':"");
+  return `<div class="pcard${rib?" has-rib":""}" draggable="${may("planning","edit")&&(p.plan_status==="Draft"||p.plan_status==="Returned")?"true":"false"}" data-id="${p.id}">
+    ${rib}
     <div class="t">${esc(p.odoo_so||p.sap_so||"(no SO)")}
       ${p.plan_indicator==="Late"?'<span class="late">LATE</span>':""}
       ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
@@ -637,6 +697,8 @@ function drawStats(v){
       ${tile("Fabrication items", fmt(fab.length), fmt(pcs(fab))+" pcs","--info")}
       ${tile("Late", fmt(late.length), fmt(pcs(late))+" pcs","--hold")}
       ${tile("Cancelled (label only)", fmt(cancelled.length), fmt(pcs(cancelled))+" pcs","--hold")}
+      ${tile("AFP backlog", fmt(backlog.filter(p=>p.afp===true).length), fmt(pcs(backlog.filter(p=>p.afp===true)))+" pcs","--ok")}
+      ${tile("Not AFP backlog", fmt(backlog.filter(p=>p.afp===false).length), fmt(pcs(backlog.filter(p=>p.afp===false)))+" pcs","--hold")}
     </div>
     <div class="st-grid">
       <div class="st-card"><h2>Pieces by planned week</h2>${barRows(weekPairs," pcs")||'<div class="empty">No data</div>'}</div>
@@ -735,8 +797,10 @@ function miniCardHTML(p){
   const prod=(p.product_name||p.model||"").slice(0,46);
   const cust=(p.customer||"").slice(0,26);
   const stock=p.bom_stock_status?p.bom_stock_status.replace("In Stock","IS").replace("Partial Stock","PS").replace("Cargo/PO Item","CG"):"";
-  return `<div class="cal-mini pcard" draggable="${may("planning","edit")&&(p.plan_status==="Draft"||p.plan_status==="Returned")?"true":"false"}"
+  const mrib=p.afp===true?'<span class="rib afp">AFP</span>':(p.afp===false?'<span class="rib noafp">NOT</span>':"");
+  return `<div class="cal-mini pcard${mrib?" has-rib":""}" draggable="${may("planning","edit")&&(p.plan_status==="Draft"||p.plan_status==="Returned")?"true":"false"}"
     data-id="${p.id}" data-status="${p.plan_status}" title="${esc(p.product_name||p.model||"")} \u00b7 ${esc(p.customer||"")} \u00b7 ${esc(p.bom_stock_status||"no stock status")}${p.odoo_state?" \u00b7 DN "+esc(DNLABEL[p.odoo_state]||p.odoo_state):""}">
+    ${mrib}
     <div class="l1"><b>${esc(p.odoo_so||p.model||"plan")}</b>${p.planned_qty?" \u00b7 "+p.planned_qty:""}
       ${stock?`<span class="mstock" data-s="${esc(p.bom_stock_status)}">${stock}</span>`:""}
       ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}</div>
@@ -829,10 +893,11 @@ function drawSheet(v){
     ${rows.length>SHEETCAP?`<p class="sub" style="margin:0 0 8px">Showing the first ${SHEETCAP} of ${rows.length} plans (totals cover all ${rows.length}). Use the filters or week selector to narrow.</p>`:""}
     <div class="tbl-wrap"><table id="shTable"><thead><tr>
       ${canEdit?'<th style="width:34px"><input type="checkbox" id="shAll"></th>':""}
-      <th style="width:80px">Status</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr></thead>
+      <th style="width:80px">Status</th><th style="width:64px">AFP</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr></thead>
     <tbody>${rows.map(p=>`<tr>
       ${canEdit?`<td><input type="checkbox" class="shSel" data-sel="${p.id}"></td>`:""}
       <td><span class="chip" data-tone="${STONE[p.plan_status]}">${p.plan_status}</span>${p.odoo_state==="cancel"?'<br><span class="late" style="display:inline-block;margin-top:3px">CANCELLED</span>':(p.odoo_state?`<div style="font-size:10.5px;color:var(--muted);margin-top:3px">DN: ${esc(DNLABEL[p.odoo_state]||p.odoo_state)}</div>`:"")}</td>
+      <td>${p.afp===true?'<span class="chip" data-tone="ok">AFP</span>':(p.afp===false?'<span class="chip" data-tone="hold">Not AFP</span>':"")}</td>
       ${SHEETCOLS.map(([k,_,ty])=>{
         let val=p[k]==null?"":p[k];
         if(k==="planned_date") val=p.planned_date?isoWeekStr(p.planned_date):"";
@@ -850,7 +915,7 @@ function drawSheet(v){
       }).join("")}
     </tr>`).join("")}</tbody>
     <tfoot><tr style="font-weight:800;color:var(--navy);border-top:2px solid var(--navy)">
-      ${canEdit?"<td></td>":""}<td>Totals (${fmt(allRows.length)})</td>
+      ${canEdit?"<td></td>":""}<td>Totals (${fmt(allRows.length)})</td><td></td>
       ${SHEETCOLS.map(([k])=>`<td>${k==="so_qty"?fmt(totSO):(k==="planned_qty"?fmt(totPlan):"")}</td>`).join("")}
     </tr></tfoot></table></div>
     ${rows.length?"":'<div class="empty">No plans match the filter.</div>'}`;
@@ -958,7 +1023,7 @@ function drawQueue(v){
   v.innerHTML=rows.length?rows.map(p=>`
     <div class="qrow">
       <div class="info">
-        <div class="t">${esc(p.odoo_so||p.sap_so||"(no SO)")} &middot; ${esc(p.model||p.product_name||"")}
+        <div class="t">${p.afp===true?'<span class="chip" data-tone="ok" style="margin-right:6px">AFP</span>':(p.afp===false?'<span class="chip" data-tone="hold" style="margin-right:6px">Not AFP</span>':"")}${esc(p.odoo_so||p.sap_so||"(no SO)")} &middot; ${esc(p.model||p.product_name||"")}
           ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}</div>
         <div class="m">Qty ${p.planned_qty??"?"} &middot; ${esc(p.customer||"")}${p.planned_date?" \u00b7 planned "+esc(p.planned_date):""}${p.voltage?" \u00b7 "+esc(p.voltage):""}</div>
         ${p.plan_remarks?`<div class="m">${esc(p.plan_remarks)}</div>`:""}
@@ -1072,6 +1137,7 @@ async function planModal(pLite){
   bg.innerHTML=`<div class="modal"><div class="mh">${p?esc(g("odoo_so")||"Plan"):"New plan"}
       ${p?`<span class="chip" data-tone="${STONE[p.plan_status]}" style="margin-left:10px">${p.plan_status}</span>`:""}
       ${p&&p.odoo_state&&p.odoo_state!=="cancel"?`<span class="chip" data-tone="${p.odoo_state==='done'?'':'info'}" style="margin-left:6px">DN: ${esc(DNLABEL[p.odoo_state]||p.odoo_state)}</span>`:""}
+      ${p&&p.afp===true?'<span class="chip" data-tone="ok" style="margin-left:6px">AFP</span>':(p&&p.afp===false?'<span class="chip" data-tone="hold" style="margin-left:6px">Not AFP</span>':"")}
       <span class="x">&times;</span></div>
     <div class="mb">
       ${SIB?`<div class="banner show" style="display:block;background:var(--info-bg);color:var(--info)">
@@ -1090,7 +1156,9 @@ async function planModal(pLite){
         <div class="field full"><label>Product name</label><input id="p-product_name" value="${esc(g("product_name"))}"></div>
         <div class="field"><label>C.Ref</label><input id="p-c_ref" value="${esc(g("c_ref"))}"></div>
         <div class="field"><label>SO quantity</label><input id="p-so_qty" type="number" min="0" value="${esc(g("so_qty"))}"></div>
-        <div class="field"><label>Model</label><input id="p-model" value="${esc(g("model"))}" placeholder="SM-01-37W-4000K"></div>
+        <div class="field"><label>Model</label>
+          <div style="display:flex;gap:6px"><input id="p-model" value="${esc(g("model"))}" placeholder="WP-44W-4000K" style="flex:1;min-width:0">
+          <button class="btn ghost sm" id="p-ai" type="button" title="Read the C.Ref and suggest the model" style="flex:none">AI</button></div></div>
         <div class="field"><label>Plan quantity</label><input id="p-planned_qty" type="number" min="0" value="${esc(g("planned_qty"))}"></div>
         <div class="field"><label>Planned week</label><select id="p-planned_week">${weekOptions(g("planned_date")?isoWeekStr(g("planned_date")):"")}</select></div>
         <div class="field"><label>Light type</label><select id="p-light_type"><option value=""></option>${LIGHT_TYPES.map(x=>`<option ${x===g("light_type")?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
@@ -1239,6 +1307,20 @@ async function planModal(pLite){
     busy(false);
     if(error){ pmsg(error.message); return; }
     banner("Plan pushed to the acceptance queue.",true); close(); await load();
+  };
+  const aiBtn=bg.querySelector("#p-ai");
+  if(aiBtn) aiBtn.onclick=async()=>{
+    aiBtn.disabled=true; aiBtn.textContent="\u2026"; busy(true);
+    try{
+      const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
+        headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" },
+        body:JSON.stringify({ c_ref:bg.querySelector("#p-c_ref").value, product_name:bg.querySelector("#p-product_name").value }) });
+      const j=await res.json();
+      if(j.error) pmsg(j.error);
+      else if(!j.model) pmsg(j.note||"No model could be derived from the C.Ref.");
+      else { bg.querySelector("#p-model").value=j.model; pmsg("Suggested: "+j.model+". Review before saving.",true); }
+    }catch(e){ pmsg("Suggestion failed: "+e.message+". Is the model-suggest function deployed?"); }
+    busy(false); aiBtn.disabled=false; aiBtn.textContent="AI";
   };
   const copyBtn=bg.querySelector("#p-copysib");
   if(copyBtn) copyBtn.onclick=async()=>{
