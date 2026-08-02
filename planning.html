@@ -256,7 +256,7 @@ const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
-let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="show", DNF="hidedone";
+let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone";
 const DNLABEL={assigned:"Ready",confirmed:"Waiting",waiting:"Waiting (other op)",done:"Done",draft:"Draft"};
 const GEXP=new Set();
 let WEEKOPTS_CACHE=null;
@@ -404,8 +404,8 @@ function renderShell(){
           <option value="doneonly">DN: Done only</option>
         </select>
         <select id="cancelFilter" style="max-width:150px">
+          <option value="hide" selected>Cancelled: hide</option>
           <option value="show">Cancelled: show</option>
-          <option value="hide">Cancelled: hide</option>
           <option value="only">Cancelled only</option>
         </select>
         <select id="sortSel" style="max-width:150px">
@@ -1032,6 +1032,18 @@ async function planModal(pLite){
     p=full;
   }
   const canEdit=may("planning","edit") && (!p || p.plan_status==="Draft" || p.plan_status==="Returned");
+  // a cancelled sibling = same SO + same product from a previous DN generation;
+  // its planning work can be copied across on request
+  let SIB=null;
+  if(canEdit && p && p.odoo_state!=="cancel" && p.odoo_so){
+    const { data:sibs }=await db.from("planned_records").select("*")
+      .eq("odoo_so",p.odoo_so).eq("odoo_state","cancel").neq("id",p.id)
+      .order("updated_at",{ascending:false}).limit(10);
+    SIB=(sibs||[]).find(x=>
+      (p.odoo_variant_id && x.odoo_variant_id===p.odoo_variant_id) ||
+      (p.product_name && x.product_name===p.product_name) ||
+      (p.model && x.model===p.model))||null;
+  }
   const g=k=>p&&p[k]!=null?p[k]:"";
   const bg=document.createElement("div"); bg.className="modal-bg";
   bg.innerHTML=`<div class="modal"><div class="mh">${p?esc(g("odoo_so")||"Plan"):"New plan"}
@@ -1039,6 +1051,10 @@ async function planModal(pLite){
       ${p&&p.odoo_state&&p.odoo_state!=="cancel"?`<span class="chip" data-tone="${p.odoo_state==='done'?'':'info'}" style="margin-left:6px">DN: ${esc(DNLABEL[p.odoo_state]||p.odoo_state)}</span>`:""}
       <span class="x">&times;</span></div>
     <div class="mb">
+      ${SIB?`<div class="banner show" style="display:block;background:var(--info-bg);color:var(--info)">
+        A cancelled earlier version of this item exists (same SO, last edited ${esc((SIB.updated_at||"").slice(0,10))}).
+        <button class="btn ghost sm" id="p-copysib" style="margin-left:8px">Copy its planning into this card</button>
+        <span style="display:block;font-size:11.5px;margin-top:4px">Copies BOM, stock status, allocations, cargo dates, week, type and remarks. Review against the revision sales announced before pushing.</span></div>`:""}
       ${p&&p.odoo_state==="cancel"?`<div class="banner show err" style="display:block">This delivery is marked CANCELLED in Odoo. Nothing is blocked: confirm with sales, then delete this card or keep working it if the order is coming back.</div>`:""}
       ${p&&p.plan_status==="Returned"&&p.return_reason?`<div class="banner show err" style="display:block">Returned by assembly: ${esc(p.return_reason)}</div>`:""}
       <div class="row">
@@ -1200,6 +1216,21 @@ async function planModal(pLite){
     busy(false);
     if(error){ pmsg(error.message); return; }
     banner("Plan pushed to the acceptance queue.",true); close(); await load();
+  };
+  const copyBtn=bg.querySelector("#p-copysib");
+  if(copyBtn) copyBtn.onclick=async()=>{
+    const f={};
+    ["model","light_type","voltage","planned_qty","planned_date","record_kind","needs_fabrication",
+     "bom_driver","bom_led","bom_em","bom_housing","bom_remarks","bom_stock_status",
+     "cargo_eta","cargo_received","cargo_remarks","plan_indicator","plan_remarks",
+     "estimated_ready_week","wh_no_stock","stock_allocations"]
+      .forEach(k=>{ if(SIB[k]!=null) f[k]=SIB[k]; });
+    busy(true);
+    const { error }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:f });
+    busy(false);
+    if(error){ pmsg(error.message); return; }
+    banner("Planning copied from the cancelled version. Review it against the announced revision.",true);
+    close(); planModal({id:p.id});
   };
   const splitBtn=bg.querySelector("#p-split");
   if(splitBtn) splitBtn.onclick=async()=>{
