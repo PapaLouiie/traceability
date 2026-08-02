@@ -126,6 +126,11 @@ try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dat
   if(document.body) document.body.appendChild(el);
   let n=0;
   window.gbusy=on=>{ n=Math.max(0,n+(on?1:-1)); el.style.display=n?"flex":"none"; };
+  const tt=document.createElement("button"); tt.id="toTop"; tt.title="Back to top"; tt.textContent="\u2191";
+  tt.style.cssText="display:none;position:fixed;right:18px;bottom:18px;z-index:996;width:44px;height:44px;border-radius:50%;border:none;background:#24275E;color:#fff;font-size:20px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.3)";
+  (document.body||document.documentElement).appendChild(tt);
+  window.addEventListener("scroll",()=>{ tt.style.display=window.scrollY>600?"block":"none"; },{passive:true});
+  tt.onclick=()=>window.scrollTo({top:0,behavior:"smooth"});
   const _rpc=db.rpc.bind(db);
   db.rpc=(fn,args)=>{
     const b=_rpc(fn,args);
