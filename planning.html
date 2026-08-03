@@ -491,6 +491,7 @@ function renderShell(){
         </select>
         ${may("planning","edit")?`<button class="btn ghost" id="syncBtn">Sync from Odoo</button>
         <button class="btn ghost" id="aiFillBtn" style="display:none">AI models</button>
+        <button class="btn ghost" id="aiFillCxBtn" style="display:none">AI cancelled</button>
         <button class="btn primary" id="newPlan">+ New plan</button>`:""}
       </div>
       <div id="view"><div class="spinner"></div></div>
@@ -540,11 +541,15 @@ function renderShell(){
     }
     el.querySelector("#aiProgTxt").textContent=txt;
   }
-  async function aiFillMissing(manual){
+  function aiTargets(mode){
+    return PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name)
+      &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
+  }
+  async function aiFillMissing(manual, mode){
     if(!may("planning","edit")) return;
     if(manual){ try{ sessionStorage.removeItem("nlc-ai-off"); }catch(e){} }
     else if(sessionStorage.getItem("nlc-ai-off")) return;
-    const targets=PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name));
+    const targets=aiTargets(mode);
     if(!targets.length) return;
     AICANCEL=false;
     let filled=0, blank=0, failed=null;
@@ -581,7 +586,9 @@ function renderShell(){
     if(filled) await load();
   }
   const afb=document.getElementById("aiFillBtn");
-  if(afb) afb.onclick=()=>aiFillMissing(true);
+  if(afb) afb.onclick=()=>aiFillMissing(true,"live");
+  const afc=document.getElementById("aiFillCxBtn");
+  if(afc) afc.onclick=()=>aiFillMissing(true,"cancelled");
   const sb=document.getElementById("syncBtn");
   if(sb) sb.onclick=async()=>{
     sb.disabled=true; sb.textContent="Syncing\u2026"; busy(true);
@@ -627,7 +634,7 @@ async function fetchPlans(statuses, excludeStatuses){
     const { data, error }=await q;
     if(error) throw error;
     all=all.concat(data||[]);
-    if(!data || data.length<B || from>=19000) break;
+    if(!data || data.length<B || from>=99000) break;
     from+=B;
   }
   return all;
@@ -641,11 +648,15 @@ async function load(){
     const activeIds=new Set(active.map(p=>p.id));
     const accepted=everything.filter(p=>!activeIds.has(p.id));
     PLANS=active.concat(accepted); draw();
-    const _ab=document.getElementById("aiFillBtn");
-    if(_ab && may("planning","edit")){
-      const _t=PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name));
-      _ab.style.display=_t.length?"inline-flex":"none";
-      _ab.textContent=`AI: fill ${fmt(_t.length)} missing model${_t.length==1?"":"s"}`;
+    if(may("planning","edit")){
+      const _ab=document.getElementById("aiFillBtn");
+      if(_ab){ const _t=aiTargets("live");
+        _ab.style.display=_t.length?"inline-flex":"none";
+        _ab.textContent=`AI: fill ${fmt(_t.length)} missing model${_t.length==1?"":"s"}`; }
+      const _ac=document.getElementById("aiFillCxBtn");
+      if(_ac){ const _c=aiTargets("cancelled");
+        _ac.style.display=_c.length?"inline-flex":"none";
+        _ac.textContent=`AI: ${fmt(_c.length)} cancelled`; }
     }
     const qt=document.querySelector('#tabs button[data-v="queue"]');
     if(qt){ const n=PLANS.filter(p=>p.plan_status==="Pushed").length;
