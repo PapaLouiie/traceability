@@ -293,7 +293,7 @@ function toggleTheme(){
 const root=document.getElementById("root");
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const STATUSES=["Draft","Pushed","Accepted","Returned"];
-const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold"};
+const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold",Completed:"ok"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
 let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone", AFPF="";
@@ -635,7 +635,7 @@ async function load(){
     // working statuses paint first; accepted history arrives behind them
     const active=await fetchPlans(["Draft","Pushed","Returned"]);
     PLANS=active; draw();
-    const accepted=await fetchPlans(["Accepted"]);
+    const accepted=await fetchPlans(["Accepted","Completed"]);
     PLANS=active.concat(accepted); draw();
     const _ab=document.getElementById("aiFillBtn");
     if(_ab && may("planning","edit")){
@@ -797,7 +797,7 @@ function drawKanban(v){
     ["draft","In planning","", rows.filter(p=>p.plan_status==="Draft"&&!isNewSync(p))],
     ["Pushed","Pushed","info", rows.filter(p=>p.plan_status==="Pushed")],
     ["Returned","Returned","hold", rows.filter(p=>p.plan_status==="Returned")],
-    ["Accepted","Accepted","ok", rows.filter(p=>p.plan_status==="Accepted")]
+    ["Accepted","Accepted / Completed","ok", rows.filter(p=>p.plan_status==="Accepted"||p.plan_status==="Completed")]
   ];
   const colBody=(key,cards)=>{
     const cap=key==="Accepted"?30:200;
@@ -999,7 +999,7 @@ function drawSheet(v){
       <th style="width:80px">Status</th><th style="width:64px">AFP</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr>
     <tr class="colf">
       ${canEdit?"<th></th>":""}
-      <th><select class="shf" data-f="plan_status"><option value="">all</option>${["Draft","Pushed","Accepted","Returned"].map(x=>`<option${SHF.plan_status===x?" selected":""}>${x}</option>`).join("")}</select></th>
+      <th><select class="shf" data-f="plan_status"><option value="">all</option>${["Draft","Pushed","Accepted","Returned","Completed"].map(x=>`<option${SHF.plan_status===x?" selected":""}>${x}</option>`).join("")}</select></th>
       <th><select class="shf" data-f="__afp"><option value="">all</option><option value="afp"${SHF.__afp==="afp"?" selected":""}>AFP</option><option value="notafp"${SHF.__afp==="notafp"?" selected":""}>Not AFP</option></select></th>
       ${SHEETCOLS.map(([k,_,ty])=>{
         if(ty&&ty.startsWith("select:")){
