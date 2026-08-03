@@ -518,36 +518,55 @@ function renderShell(){
   if(np) np.onclick=()=>planModal(null);
   // runs by itself after every successful sync: reads the C.Ref of every
   // plan without a model and fills it in. No button, no clicking.
+  let AICANCEL=false;
+  function aiProgress(show,txt){
+    let el=document.getElementById("aiProg");
+    if(!show){ if(el) el.remove(); return; }
+    if(!el){
+      el=document.createElement("div"); el.id="aiProg";
+      el.style.cssText="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:1001;"+
+        "background:var(--navy);color:#fff;border-radius:12px;padding:10px 16px;display:flex;gap:12px;"+
+        "align-items:center;box-shadow:0 8px 30px rgba(0,0,0,.35);font-size:13.5px";
+      el.innerHTML='<span id="aiProgTxt"></span><button id="aiSkip" class="btn sm" style="background:var(--orange);color:#fff;border:none">Skip AI</button>';
+      document.body.appendChild(el);
+      el.querySelector("#aiSkip").onclick=()=>{ AICANCEL=true; el.querySelector("#aiProgTxt").textContent="Stopping\u2026"; };
+    }
+    el.querySelector("#aiProgTxt").textContent=txt;
+  }
   async function aiFillMissing(){
     if(!may("planning","edit")) return;
     if(sessionStorage.getItem("nlc-ai-off")) return;
     const targets=PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name));
     if(!targets.length) return;
-    banner(`AI is filling ${fmt(targets.length)} missing model${targets.length==1?"":"s"} from the C.Refs\u2026`,true);
-    busy(true);
+    AICANCEL=false;
     let filled=0, blank=0, failed=null;
     try{
-      for(let i=0;i<targets.length;i+=40){
+      for(let i=0;i<targets.length && !AICANCEL;i+=40){
         const chunk=targets.slice(i,i+40);
+        aiProgress(true,`AI filling models\u2026 ${Math.min(i+chunk.length,targets.length)}/${targets.length}`);
         const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
           headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" },
           body:JSON.stringify({ items:chunk.map(p=>({ id:p.id, c_ref:p.c_ref||"", product_name:p.product_name||"" })) }) });
-        const j=await res.json();
-        if(j.error){ failed=j.error; break; }
+        let j={}; try{ j=await res.json(); }catch(e){ j={}; }
+        if(!res.ok||j.error){ failed=j.error||j.msg||("HTTP "+res.status); break; }
         for(const r of (j.results||[])){
+          if(AICANCEL) break;
           if(!r.model){ blank++; continue; }
           const { error }=await db.rpc("upsert_planned_record",{ p_id:r.id, p_fields:{ model:r.model } });
           if(error){ failed=error.message; break; }
           filled++;
         }
+        if(failed) break;
       }
     }catch(e){ failed=e.message; }
-    busy(false);
+    aiProgress(false);
     if(failed){
-      if(/ANTHROPIC_API_KEY|not configured/i.test(failed)){
+      if(/ANTHROPIC_API_KEY|not configured|not found|Failed to fetch|404/i.test(failed)){
         try{ sessionStorage.setItem("nlc-ai-off","1"); }catch(e){}
-        banner("AI model fill is not set up yet (missing API key), so models stay manual for now.");
+        banner("AI model fill is not set up yet, so models stay manual for now. It will switch on automatically once the model-suggest function and API key are deployed.");
       } else banner(`AI fill stopped after ${filled} model${filled==1?"":"s"}: ${failed}`);
+    } else if(AICANCEL){
+      banner(`AI fill skipped${filled?` after ${filled} model${filled==1?"":"s"}`:""}.`,true);
     } else if(filled||blank){
       banner(`AI filled ${filled} model${filled==1?"":"s"}${blank?`; ${blank} had too little in the C.Ref to derive one`:""}. Review before pushing.`,true);
     }
