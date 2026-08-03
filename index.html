@@ -828,7 +828,7 @@ async function fetchRecordsRange(from,to){
   while(true){
     const { data, error }=await db.from("v_record_summary")
       .select("*").gte("production_date",from).lte("production_date",to)
-      .order("production_date",{ascending:true}).range(start,start+size-1);
+      .order("production_date",{ascending:true}).order("id",{ascending:true}).range(start,start+size-1);
     if(error) throw error;
     out.push(...(data||[]));
     if(!data || data.length<size) break;
@@ -1301,11 +1301,11 @@ async function renderBomEditor(){
       ({ data:chunk, error }=await db.from("planned_records")
         .select("id,odoo_so,sap_so,product_name,c_ref,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status")
         .in("plan_status",["Draft","Returned","Pushed"])
-        .order("created_at",{ascending:false}).range(from,from+B-1));
+        .order("created_at",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     } else {
       ({ data:chunk, error }=await db.from("production_records")
         .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
-        .order("production_date",{ascending:false}).range(from,from+B-1));
+        .order("production_date",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     }
     if(error) break;
     data=data.concat(chunk||[]);
