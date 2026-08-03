@@ -123,12 +123,13 @@
   .cal-card[data-status="Accepted"]{background:var(--ok-bg); border-color:#bfe6d0; color:var(--ok)}
   .cal-card[data-status="Returned"]{background:var(--hold-bg); border-color:#f2c6c1; color:var(--hold)}
 
-  .banner.show{position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:997;
-    max-width:min(760px,92vw); box-shadow:0 8px 30px rgba(0,0,0,.25)}
   #toTop{display:none; position:fixed; right:18px; bottom:18px; z-index:996; width:44px; height:44px;
     border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
     box-shadow:0 6px 20px rgba(0,0,0,.3)}
   #toTop:hover{background:var(--orange)}
+  .colf th{padding:4px 6px}
+  .colf .shf{width:100%; min-width:56px; font-size:12px; padding:4px 6px; border:1px solid var(--line);
+    border-radius:7px; background:var(--card); color:var(--ink)}
   .sync-remind{background:var(--warn-bg); color:var(--warn); border:1px solid #f0dcae; border-radius:10px;
     padding:10px 14px; margin:0 0 12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; font-size:13.5px}
   html[data-theme="dark"] .sync-remind{border-color:#5a4a1a}
@@ -515,6 +516,43 @@ function renderShell(){
   document.getElementById("afpFilter").onchange=e=>{ AFPF=e.target.value; draw(); };
   const np=document.getElementById("newPlan");
   if(np) np.onclick=()=>planModal(null);
+  // runs by itself after every successful sync: reads the C.Ref of every
+  // plan without a model and fills it in. No button, no clicking.
+  async function aiFillMissing(){
+    if(!may("planning","edit")) return;
+    if(sessionStorage.getItem("nlc-ai-off")) return;
+    const targets=PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name));
+    if(!targets.length) return;
+    banner(`AI is filling ${fmt(targets.length)} missing model${targets.length==1?"":"s"} from the C.Refs\u2026`,true);
+    busy(true);
+    let filled=0, blank=0, failed=null;
+    try{
+      for(let i=0;i<targets.length;i+=40){
+        const chunk=targets.slice(i,i+40);
+        const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
+          headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" },
+          body:JSON.stringify({ items:chunk.map(p=>({ id:p.id, c_ref:p.c_ref||"", product_name:p.product_name||"" })) }) });
+        const j=await res.json();
+        if(j.error){ failed=j.error; break; }
+        for(const r of (j.results||[])){
+          if(!r.model){ blank++; continue; }
+          const { error }=await db.rpc("upsert_planned_record",{ p_id:r.id, p_fields:{ model:r.model } });
+          if(error){ failed=error.message; break; }
+          filled++;
+        }
+      }
+    }catch(e){ failed=e.message; }
+    busy(false);
+    if(failed){
+      if(/ANTHROPIC_API_KEY|not configured/i.test(failed)){
+        try{ sessionStorage.setItem("nlc-ai-off","1"); }catch(e){}
+        banner("AI model fill is not set up yet (missing API key), so models stay manual for now.");
+      } else banner(`AI fill stopped after ${filled} model${filled==1?"":"s"}: ${failed}`);
+    } else if(filled||blank){
+      banner(`AI filled ${filled} model${filled==1?"":"s"}${blank?`; ${blank} had too little in the C.Ref to derive one`:""}. Review before pushing.`,true);
+    }
+    if(filled) await load();
+  }
   const sb=document.getElementById("syncBtn");
   if(sb) sb.onclick=async()=>{
     sb.disabled=true; sb.textContent="Syncing\u2026"; busy(true);
@@ -525,7 +563,7 @@ function renderShell(){
       if(j.error) banner("Sync failed: "+j.error);
       else { try{ localStorage.setItem("nlc-last-sync", String(Date.now())); }catch(e){}
         const rm=document.getElementById("syncRemind"); if(rm) rm.remove();
-        banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); }
+        banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); await aiFillMissing(); }
     }catch(e){ banner("Sync failed: "+e.message+". Is the odoo-sync function deployed?"); }
     busy(false);
     sb.disabled=false; sb.textContent="Sync from Odoo";
@@ -535,7 +573,10 @@ function renderShell(){
 function banner(msg,ok){
   const b=document.getElementById("banner"); if(!b) return;
   b.textContent=msg; b.className="banner show "+(ok?"ok":"err");
-  setTimeout(()=>b.classList.remove("show"), ok?3500:8000);
+  b.style.cssText="position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:997;"+
+    "max-width:min(760px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.25)";
+  clearTimeout(b._t);
+  b._t=setTimeout(()=>{ b.classList.remove("show"); b.style.cssText=""; }, ok?3500:8000);
 }
 
 // list views need only these columns; the full row (BOM, cargo, allocations,
@@ -865,6 +906,8 @@ function drawCalendar(v){
 }
 
 /* ---------------- spreadsheet ---------------- */
+const SHF={};   // spreadsheet per-column filters: key -> text
+let SHFOCUS=null; // which filter input to refocus after redraw
 const SHEETCOLS=[
   ["odoo_so","Odoo SO","text"],["sap_so","SAP SO","text"],["customer","Client","text"],
   ["product_name","Product","text"],["c_ref","C.Ref","text"],["so_qty","SO Qty","number"],
@@ -876,7 +919,28 @@ const SHEETCOLS=[
   ["estimated_ready_week","Ready week","text"],["plan_remarks","Remarks","text"]];
 const SHEETCAP=300;
 function drawSheet(v){
-  const allRows=filtered();
+  let allRows=filtered();
+  // per-column filters: every active filter must match (AND across columns);
+  // inside a text filter, comma separates OR terms
+  const shfVal=(p,k)=>{
+    if(k==="planned_date") return p.planned_date?isoWeekStr(p.planned_date):"";
+    if(k==="needs_fabrication") return String(!!p.needs_fabrication);
+    if(k==="record_kind") return p.record_kind||"Production";
+    return p[k]==null?"":String(p[k]);
+  };
+  allRows=allRows.filter(p=>{
+    for(const [k,raw] of Object.entries(SHF)){
+      if(!raw) continue;
+      if(k==="plan_status"){ if(p.plan_status!==raw) return false; continue; }
+      if(k==="__afp"){ if(raw==="afp"&&p.afp!==true) return false; if(raw==="notafp"&&p.afp!==false) return false; continue; }
+      const col=SHEETCOLS.find(c=>c[0]===k);
+      if(col&&col[2]&&col[2].startsWith("select:")){ if(shfVal(p,k)!==raw) return false; continue; }
+      const hay=shfVal(p,k).toLowerCase();
+      const terms=raw.toLowerCase().split(",").map(t=>t.trim()).filter(Boolean);
+      if(terms.length&&!terms.some(t=>hay.includes(t))) return false;
+    }
+    return true;
+  });
   const rows=allRows.slice(0,SHEETCAP);
   const totSO=allRows.reduce((a,p)=>a+(p.so_qty||0),0);
   const totPlan=allRows.reduce((a,p)=>a+(p.planned_qty||0),0);
@@ -888,12 +952,28 @@ function drawSheet(v){
       <span class="sub" style="margin:0">Selected:</span>
       <select id="shWeek" style="max-width:190px">${weekOptions("")}</select>
       <button class="btn ghost" id="shSetWeek" disabled>Set week (0)</button>
-      <button class="btn orange" id="shPush" disabled>Push (0)</button>`:""}
+      <button class="btn orange" id="shPush" disabled>Push (0)</button>
+      <span style="border-left:1px solid var(--line);height:24px"></span>
+      <select id="shFabSel" style="max-width:120px"><option value="">Fab: keep</option><option value="true">Fab: Yes</option><option value="false">Fab: No</option></select>
+      <select id="shStockSel" style="max-width:170px"><option value="">Stock: keep</option><option>In Stock</option><option>Partial Stock</option><option>Cargo/PO Item</option></select>
+      <button class="btn ghost" id="shApply" disabled>Apply to (0)</button>`:""}
     </div>
     ${rows.length>SHEETCAP?`<p class="sub" style="margin:0 0 8px">Showing the first ${SHEETCAP} of ${rows.length} plans (totals cover all ${rows.length}). Use the filters or week selector to narrow.</p>`:""}
     <div class="tbl-wrap"><table id="shTable"><thead><tr>
       ${canEdit?'<th style="width:34px"><input type="checkbox" id="shAll"></th>':""}
-      <th style="width:80px">Status</th><th style="width:64px">AFP</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr></thead>
+      <th style="width:80px">Status</th><th style="width:64px">AFP</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr>
+    <tr class="colf">
+      ${canEdit?"<th></th>":""}
+      <th><select class="shf" data-f="plan_status"><option value="">all</option>${["Draft","Pushed","Accepted","Returned"].map(x=>`<option${SHF.plan_status===x?" selected":""}>${x}</option>`).join("")}</select></th>
+      <th><select class="shf" data-f="__afp"><option value="">all</option><option value="afp"${SHF.__afp==="afp"?" selected":""}>AFP</option><option value="notafp"${SHF.__afp==="notafp"?" selected":""}>Not AFP</option></select></th>
+      ${SHEETCOLS.map(([k,_,ty])=>{
+        if(ty&&ty.startsWith("select:")){
+          const opts=ty.slice(7).split(",");
+          return `<th><select class="shf" data-f="${k}"><option value="">all</option>${opts.filter(o=>o!=="").map(o=>`<option value="${o}"${SHF[k]===o?" selected":""}>${k==="needs_fabrication"?(o==="true"?"Fab":"Not fab"):o}</option>`).join("")}</select></th>`;
+        }
+        return `<th><input class="shf" data-f="${k}" placeholder="filter" value="${esc(SHF[k]||"")}"></th>`;
+      }).join("")}
+    </tr></thead>
     <tbody>${rows.map(p=>`<tr>
       ${canEdit?`<td><input type="checkbox" class="shSel" data-sel="${p.id}"></td>`:""}
       <td><span class="chip" data-tone="${STONE[p.plan_status]}">${p.plan_status}</span>${p.odoo_state==="cancel"?'<br><span class="late" style="display:inline-block;margin-top:3px">CANCELLED</span>':(p.odoo_state?`<div style="font-size:10.5px;color:var(--muted);margin-top:3px">DN: ${esc(DNLABEL[p.odoo_state]||p.odoo_state)}</div>`:"")}</td>
@@ -939,11 +1019,31 @@ function drawSheet(v){
   const saveBtn=document.getElementById("shSave");
   const setWeekBtn=document.getElementById("shSetWeek");
   const pushBtn=document.getElementById("shPush");
+  const applyBtn=document.getElementById("shApply");
   const updBtns=()=>{
     const nd=Object.keys(dirty).length, ns=selected.size;
     saveBtn.disabled=!nd; saveBtn.textContent=`Save changes (${nd})`;
     setWeekBtn.disabled=!ns; setWeekBtn.textContent=`Set week (${ns})`;
     pushBtn.disabled=!ns; pushBtn.textContent=`Push (${ns})`;
+    if(applyBtn){ applyBtn.disabled=!ns; applyBtn.textContent=`Apply to (${ns})`; }
+  };
+  if(applyBtn) applyBtn.onclick=async()=>{
+    const fab=document.getElementById("shFabSel").value;
+    const stock=document.getElementById("shStockSel").value;
+    if(!fab&&!stock) return banner("Choose a Fab and/or Stock value to apply first.");
+    const f={};
+    if(fab) f.needs_fabrication=(fab==="true");
+    if(stock) f.bom_stock_status=stock;
+    let ok=0, skip=0, firstErr=null;
+    busy(true);
+    for(const id of selected){
+      const { error }=await db.rpc("upsert_planned_record",{ p_id:id, p_fields:f });
+      if(error){ skip++; if(!firstErr) firstErr=error.message; }
+      else ok++;
+    }
+    busy(false);
+    banner(`Applied to ${ok} plan${ok==1?"":"s"}${skip?`; ${skip} skipped (${firstErr})`:""}.`, !skip||ok>0);
+    await load();
   };
   // draggable column resize
   v.querySelectorAll("#shTable th .rz").forEach(rz=>{
@@ -955,6 +1055,22 @@ function drawSheet(v){
       document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
     });
   });
+  let _shfT=null;
+  v.querySelectorAll(".shf").forEach(el=>{
+    const apply=()=>{ 
+      const k=el.dataset.f, val=el.value.trim?el.value.trim():el.value;
+      if(val) SHF[k]=val; else delete SHF[k];
+      SHFOCUS=el.tagName==="INPUT"?k:null;
+      drawSheet(v);
+    };
+    if(el.tagName==="SELECT") el.onchange=apply;
+    else el.oninput=()=>{ clearTimeout(_shfT); _shfT=setTimeout(apply,350); };
+  });
+  if(SHFOCUS){
+    const f=v.querySelector(`.shf[data-f="${SHFOCUS}"]`);
+    if(f){ f.focus(); const L=f.value.length; try{ f.setSelectionRange(L,L); }catch(e){} }
+    SHFOCUS=null;
+  }
   v.querySelectorAll(".shSel").forEach(cb=>cb.onchange=()=>{
     if(cb.checked) selected.add(cb.dataset.sel); else selected.delete(cb.dataset.sel); updBtns(); });
   document.getElementById("shAll").onchange=e=>{
