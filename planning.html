@@ -615,13 +615,14 @@ const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_per
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
   "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,"+
   "sort_order,created_by,updated_by,updated_at,created_at";
-async function fetchPlans(statuses){
+async function fetchPlans(statuses, excludeStatuses){
   const B=1000; let all=[], from=0;
   while(true){
     let q=db.from("planned_records").select(LIST_COLS)
       .order("sort_order",{ascending:true}).order("created_at",{ascending:true})
       .range(from, from+B-1);
     if(statuses) q=q.in("plan_status",statuses);
+    else if(excludeStatuses) q=q.not("plan_status","in","("+excludeStatuses.map(x=>'"'+x+'"').join(",")+")");
     const { data, error }=await q;
     if(error) throw error;
     all=all.concat(data||[]);
@@ -635,7 +636,9 @@ async function load(){
     // working statuses paint first; accepted history arrives behind them
     const active=await fetchPlans(["Draft","Pushed","Returned"]);
     PLANS=active; draw();
-    const accepted=await fetchPlans(["Accepted","Completed"]);
+    const everything=await fetchPlans(null);
+    const activeIds=new Set(active.map(p=>p.id));
+    const accepted=everything.filter(p=>!activeIds.has(p.id));
     PLANS=active.concat(accepted); draw();
     const _ab=document.getElementById("aiFillBtn");
     if(_ab && may("planning","edit")){
@@ -797,7 +800,7 @@ function drawKanban(v){
     ["draft","In planning","", rows.filter(p=>p.plan_status==="Draft"&&!isNewSync(p))],
     ["Pushed","Pushed","info", rows.filter(p=>p.plan_status==="Pushed")],
     ["Returned","Returned","hold", rows.filter(p=>p.plan_status==="Returned")],
-    ["Accepted","Accepted / Completed","ok", rows.filter(p=>p.plan_status==="Accepted"||p.plan_status==="Completed")]
+    ["Accepted","Accepted / other","ok", rows.filter(p=>!["Draft","Pushed","Returned"].includes(p.plan_status))]
   ];
   const colBody=(key,cards)=>{
     const cap=key==="Accepted"?30:200;
@@ -999,7 +1002,7 @@ function drawSheet(v){
       <th style="width:80px">Status</th><th style="width:64px">AFP</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr>
     <tr class="colf">
       ${canEdit?"<th></th>":""}
-      <th><select class="shf" data-f="plan_status"><option value="">all</option>${["Draft","Pushed","Accepted","Returned","Completed"].map(x=>`<option${SHF.plan_status===x?" selected":""}>${x}</option>`).join("")}</select></th>
+      <th><select class="shf" data-f="plan_status"><option value="">all</option>${[...new Set(["Draft","Pushed","Accepted","Returned"].concat(PLANS.map(p=>p.plan_status)))].filter(Boolean).map(x=>`<option${SHF.plan_status===x?" selected":""}>${x}</option>`).join("")}</select></th>
       <th><select class="shf" data-f="__afp"><option value="">all</option><option value="afp"${SHF.__afp==="afp"?" selected":""}>AFP</option><option value="notafp"${SHF.__afp==="notafp"?" selected":""}>Not AFP</option></select></th>
       ${SHEETCOLS.map(([k,_,ty])=>{
         if(ty&&ty.startsWith("select:")){
