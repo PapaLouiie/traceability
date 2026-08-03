@@ -305,6 +305,12 @@ let DRAWT=null;
 function drawSoon(){ clearTimeout(DRAWT); DRAWT=setTimeout(draw,180); }
 const COLLAPSED={};
 const fmt=n=>(n==null||isNaN(n))?"0":Number(n).toLocaleString("en-US");
+async function fnToken(){
+  try{ const { data }=await db.auth.getSession();
+    if(data&&data.session&&data.session.access_token){ SESSION=data.session; return data.session.access_token; }
+  }catch(e){}
+  return SESSION&&SESSION.access_token;
+}
 function busy(on){ const b=document.getElementById("busy"); if(b) b.style.display=on?"flex":"none"; }
 let SEARCHCTL=null;
 function chipSearch(boxId, inputId, onChange, live){
@@ -484,6 +490,7 @@ function renderShell(){
           <option value="qty_desc">Qty, high to low</option>
         </select>
         ${may("planning","edit")?`<button class="btn ghost" id="syncBtn">Sync from Odoo</button>
+        <button class="btn ghost" id="aiFillBtn" style="display:none">AI models</button>
         <button class="btn primary" id="newPlan">+ New plan</button>`:""}
       </div>
       <div id="view"><div class="spinner"></div></div>
@@ -533,9 +540,10 @@ function renderShell(){
     }
     el.querySelector("#aiProgTxt").textContent=txt;
   }
-  async function aiFillMissing(){
+  async function aiFillMissing(manual){
     if(!may("planning","edit")) return;
-    if(sessionStorage.getItem("nlc-ai-off")) return;
+    if(manual){ try{ sessionStorage.removeItem("nlc-ai-off"); }catch(e){} }
+    else if(sessionStorage.getItem("nlc-ai-off")) return;
     const targets=PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name));
     if(!targets.length) return;
     AICANCEL=false;
@@ -545,10 +553,10 @@ function renderShell(){
         const chunk=targets.slice(i,i+40);
         aiProgress(true,`AI filling models\u2026 ${Math.min(i+chunk.length,targets.length)}/${targets.length}`);
         const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
-          headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" },
+          headers:{ Authorization:"Bearer "+await fnToken(), "Content-Type":"application/json" },
           body:JSON.stringify({ items:chunk.map(p=>({ id:p.id, c_ref:p.c_ref||"", product_name:p.product_name||"" })) }) });
         let j={}; try{ j=await res.json(); }catch(e){ j={}; }
-        if(!res.ok||j.error){ failed=j.error||j.msg||("HTTP "+res.status); break; }
+        if(!res.ok||j.error){ failed=j.error||j.msg||j.message||("HTTP "+res.status); break; }
         for(const r of (j.results||[])){
           if(AICANCEL) break;
           if(!r.model){ blank++; continue; }
@@ -572,17 +580,19 @@ function renderShell(){
     }
     if(filled) await load();
   }
+  const afb=document.getElementById("aiFillBtn");
+  if(afb) afb.onclick=()=>aiFillMissing(true);
   const sb=document.getElementById("syncBtn");
   if(sb) sb.onclick=async()=>{
     sb.disabled=true; sb.textContent="Syncing\u2026"; busy(true);
     try{
       const res=await fetch(SUPABASE_URL+"/functions/v1/odoo-sync",{ method:"POST",
-        headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" } });
+        headers:{ Authorization:"Bearer "+await fnToken(), "Content-Type":"application/json" } });
       const j=await res.json();
       if(j.error) banner("Sync failed: "+j.error);
       else { try{ localStorage.setItem("nlc-last-sync", String(Date.now())); }catch(e){}
         const rm=document.getElementById("syncRemind"); if(rm) rm.remove();
-        banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); await aiFillMissing(); }
+        banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); }
     }catch(e){ banner("Sync failed: "+e.message+". Is the odoo-sync function deployed?"); }
     busy(false);
     sb.disabled=false; sb.textContent="Sync from Odoo";
@@ -627,6 +637,12 @@ async function load(){
     PLANS=active; draw();
     const accepted=await fetchPlans(["Accepted"]);
     PLANS=active.concat(accepted); draw();
+    const _ab=document.getElementById("aiFillBtn");
+    if(_ab && may("planning","edit")){
+      const _t=PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name));
+      _ab.style.display=_t.length?"inline-flex":"none";
+      _ab.textContent=`AI: fill ${fmt(_t.length)} missing model${_t.length==1?"":"s"}`;
+    }
     const qt=document.querySelector('#tabs button[data-v="queue"]');
     if(qt){ const n=PLANS.filter(p=>p.plan_status==="Pushed").length;
       qt.textContent="Acceptance queue"+(n?` (${n})`:""); }
@@ -1448,7 +1464,7 @@ async function planModal(pLite){
     aiBtn.disabled=true; aiBtn.textContent="\u2026"; busy(true);
     try{
       const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
-        headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" },
+        headers:{ Authorization:"Bearer "+await fnToken(), "Content-Type":"application/json" },
         body:JSON.stringify({ c_ref:bg.querySelector("#p-c_ref").value, product_name:bg.querySelector("#p-product_name").value }) });
       const j=await res.json();
       if(j.error) pmsg(j.error);
