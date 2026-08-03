@@ -620,6 +620,7 @@ async function fetchPlans(statuses, excludeStatuses){
   while(true){
     let q=db.from("planned_records").select(LIST_COLS)
       .order("sort_order",{ascending:true}).order("created_at",{ascending:true})
+      .order("id",{ascending:true})
       .range(from, from+B-1);
     if(statuses) q=q.in("plan_status",statuses);
     else if(excludeStatuses) q=q.not("plan_status","in","("+excludeStatuses.map(x=>'"'+x+'"').join(",")+")");
