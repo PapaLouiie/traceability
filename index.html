@@ -140,8 +140,6 @@
   .toolbar{display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap}
   .toolbar input{flex:1; min-width:180px}
 
-  .banner.show{position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:997;
-    max-width:min(760px,92vw); box-shadow:0 8px 30px rgba(0,0,0,.25)}
   #toTop{display:none; position:fixed; right:18px; bottom:18px; z-index:996; width:44px; height:44px;
     border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
     box-shadow:0 6px 20px rgba(0,0,0,.3)}
@@ -384,9 +382,7 @@ function shell(inner){
       <span class="brand-tag">Console</span>
       <a id="homeBtn" class="brand-home">Home</a>
       <a class="brand-home" href="planning.html">Planning<span id="qBadge" style="display:none;margin-left:6px;background:var(--orange);color:#fff;border-radius:99px;padding:0 7px;font-size:11px;font-weight:800"></span></a>
-      <a class="brand-home" href="dashboard.html">Dashboard</a>
       ${may("engineering","edit")?'<a id="navBom" class="brand-home">BOM editor</a>':''}
-      <a id="navLines" class="brand-home"><svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><rect x="0" y="6" width="3" height="6" rx="1"/><rect x="4.5" y="3" width="3" height="9" rx="1"/><rect x="9" y="0" width="3" height="12" rx="1"/></svg>Line load</a>
       ${may("admin","view")?'<a id="adminBtn" class="brand-home">Admin</a>':''}
       <a class="brand-home" id="themeBtn" title="Light / dark">${document.documentElement.dataset.theme==="dark"?"\u2600":"\u263E"}</a>
       <div class="who">${esc(SESSION.user.email)}<br>${ROLE?`<span class="role-tag">${esc(ROLE)}</span> \u00b7 `:""}<a id="signout">Sign out</a></div>
@@ -403,7 +399,6 @@ function wireShell(){
   const tb=document.getElementById("themeBtn");
   if(tb) tb.onclick=toggleTheme;
   const nb=document.getElementById("navBom"); if(nb) nb.onclick=e=>{ e.preventDefault(); renderBomEditor(); };
-  const nl=document.getElementById("navLines"); if(nl) nl.onclick=e=>{ e.preventDefault(); renderLines(); };
   updateQueueBadge();
 }
 
@@ -420,6 +415,8 @@ async function renderHome(){
     <p class="sub">Create a record to generate its serial and QR, then fill details as assembly progresses.</p>
     <div class="toolbar">
       <button class="btn primary" id="newBtn">+ New record</button>
+      <a class="btn ghost" href="dashboard.html">Dashboard</a>
+      <button class="btn ghost" id="linesBtn"><svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style="vertical-align:-1px;margin-right:5px"><rect x="0" y="6" width="3" height="6" rx="1"/><rect x="4.5" y="3" width="3" height="9" rx="1"/><rect x="9" y="0" width="3" height="12" rx="1"/></svg>Line load</button>
       <div class="chipsearch" id="searchBox" style="flex:1;min-width:180px"><input id="search" placeholder="Search: type, press Enter to tag; several tags find all"></div>
       <button class="btn ghost" id="searchBtn">Search</button>
       <button class="btn orange" id="printSel" style="display:none">Print QRs (0)</button>
@@ -465,6 +462,7 @@ async function renderHome(){
   `);
   wireShell();
   document.getElementById("newBtn").onclick=()=>renderEditor(null);
+  const lb=document.getElementById("linesBtn"); if(lb) lb.onclick=renderLines;
 
 
   const searchCtl=chipSearch("searchBox","search",q=>{ HOME_TERMS=searchCtl.terms(); loadList(q.trim()); },false);
@@ -1010,7 +1008,7 @@ function renderEditor(rec){
     fai.disabled=true; fai.textContent="\u2026";
     try{
       const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
-        headers:{ Authorization:"Bearer "+SESSION.access_token, "Content-Type":"application/json" },
+        headers:{ Authorization:"Bearer "+await fnToken(), "Content-Type":"application/json" },
         body:JSON.stringify({ c_ref:document.getElementById("f-cref").value, product_name:"" }) });
       const j=await res.json();
       if(j.error) banner(j.error);
@@ -1092,11 +1090,19 @@ function renderEditor(rec){
   }
 }
 
+async function fnToken(){
+  try{ const { data }=await db.auth.getSession();
+    if(data&&data.session&&data.session.access_token){ SESSION=data.session; return data.session.access_token; }
+  }catch(e){}
+  return SESSION&&SESSION.access_token;
+}
 function banner(msg,ok){
   const b=document.getElementById("banner"); if(!b) return;
   b.textContent=msg; b.className="banner show "+(ok?"ok":"err");
+  b.style.cssText="position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:997;"+
+    "max-width:min(760px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.25)";
   clearTimeout(b._t);
-  b._t=setTimeout(()=>b.classList.remove("show"), ok?3500:8000);
+  b._t=setTimeout(()=>{ b.classList.remove("show"); b.style.cssText=""; }, ok?3500:8000);
 }
 
 /* ---------------- admin: users and permissions ---------------- */
