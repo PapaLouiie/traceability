@@ -561,7 +561,7 @@ function renderShell(){
         for(const r of (j.results||[])){
           if(AICANCEL) break;
           if(!r.model){ blank++; continue; }
-          const { error }=await db.rpc("upsert_planned_record",{ p_id:r.id, p_fields:{ model:r.model } });
+          const { error }=await db.rpc("set_plan_model",{ p_id:r.id, p_model:r.model });
           if(error){ failed=error.message; break; }
           filled++;
         }
