@@ -541,10 +541,6 @@ function renderShell(){
     }
     el.querySelector("#aiProgTxt").textContent=txt;
   }
-  function aiTargets(mode){
-    return PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name)
-      &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
-  }
   async function aiFillMissing(manual, mode){
     if(!may("planning","edit")) return;
     if(manual){ try{ sessionStorage.removeItem("nlc-ai-off"); }catch(e){} }
@@ -622,6 +618,11 @@ const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_per
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
   "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,"+
   "sort_order,created_by,updated_by,updated_at,created_at";
+function aiTargets(mode){
+  return PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name)
+    &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
+}
+
 async function fetchPlans(statuses, excludeStatuses){
   const B=1000; let all=[], from=0;
   while(true){
