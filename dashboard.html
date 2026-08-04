@@ -405,9 +405,25 @@ function insights(){
 }
 
 /* ---------- report export: narrative + crisp images ---------- */
-function exportReport(){
+async function exportReport(){
   if(!DATA||!DATA.stats.records){ alert("No data to report for this range."); return; }
   const s=DATA.stats;
+  // AI insights: compact numbers to the model, brief lines back
+  let AILINES=[];
+  try{
+    gbusy(true);
+    const grab=id=>cfgs[id]?{labels:cfgs[id].data.labels,values:cfgs[id].data.datasets[0].data}:null;
+    const { data:{ session } }=await db.auth.getSession();
+    const res=await fetch(SUPABASE_URL+"/functions/v1/model-suggest",{ method:"POST",
+      headers:{ Authorization:"Bearer "+(session?.access_token||""), "Content-Type":"application/json" },
+      body:JSON.stringify({ report:{ stats:s,
+        units_by_month:grab("month"), cycle_by_month:grab("cycle_month"),
+        output_by_line:grab("line"), output_by_foreman:grab("foreman"),
+        clients:grab("client") } }) });
+    const j=await res.json();
+    if(Array.isArray(j.insights)) AILINES=j.insights;
+  }catch(e){}
+  gbusy(false);
   const rangeTxt=(RANGE.from||RANGE.to)?`${RANGE.from||"start"} to ${RANGE.to||"today"}`:"All time";
   const wide=[["month",1160,430],["cycle_month",1160,430],["line",1160,430],["foreman",1160,430],["client",1160,460],["model",1160,520]];
   const narr=insights().map(p=>`<p>${esc(p)}</p>`).join("");
@@ -445,6 +461,7 @@ function exportReport(){
       <div class="s"><b>${fmt(s.lines)}</b><span>Lines</span></div>
     </div>
     <h2>Summary</h2><div class="summary">${narr}</div>
+    ${AILINES.length?`<h2>AI insights</h2><div class="summary">${AILINES.map(l=>`<p>\u25aa ${esc(l)}</p>`).join("")}</div>`:""}
     <h2>Charts</h2>
     ${chartBlocks}${statImg}
     <div class="foot">NLC Traceability. Figures reflect data entered in the console for the selected period.</div>
