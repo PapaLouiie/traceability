@@ -127,6 +127,8 @@
     border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
     box-shadow:0 6px 20px rgba(0,0,0,.3)}
   #toTop:hover{background:var(--orange)}
+  .attbtn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:3px 7px;cursor:pointer;font-size:12px}
+  .attbtn:hover{border-color:var(--orange)}
   .colf th{padding:4px 6px}
   .colf .shf{width:100%; min-width:56px; font-size:12px; padding:4px 6px; border:1px solid var(--line);
     border-radius:7px; background:var(--card); color:var(--ink)}
@@ -618,6 +620,84 @@ const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_per
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
   "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,"+
   "sort_order,created_by,updated_by,updated_at,created_at";
+let ATTMAP={};   // plan_id -> attachment count
+async function loadAttCounts(){
+  try{
+    ATTMAP={};
+    let from=0;
+    while(true){
+      const { data }=await db.from("plan_documents").select("plan_id").range(from,from+999);
+      (data||[]).forEach(d=>{ ATTMAP[d.plan_id]=(ATTMAP[d.plan_id]||0)+1; });
+      if(!data||data.length<1000) break; from+=1000;
+    }
+  }catch(e){}
+}
+function cleanSales(v){ return (v||"").replace(/^\s*\d+[\s\-._:]*/,""); }
+async function attachModal(planId){
+  const canA=may("planning","edit");
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:520px"><h2 style="margin-top:0">Attachments</h2>
+    <div id="att-list"><div class="spinner"></div></div>
+    ${canA?`<div style="margin-top:12px"><input type="file" id="att-file"></div>`:""}
+    <div id="att-msg" class="banner" style="margin-top:10px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn ghost" id="att-close">Close</button></div>
+  </div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector("#att-close").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  const msg=(t,ok)=>{ const m=bg.querySelector("#att-msg"); m.textContent=t; m.className="banner show "+(ok?"ok":"err"); };
+  async function list(){
+    const { data, error }=await db.from("plan_documents")
+      .select("id,file_name,storage_path,uploaded_by,uploaded_at")
+      .eq("plan_id",planId).order("uploaded_at",{ascending:false});
+    const el=bg.querySelector("#att-list");
+    if(error){ el.innerHTML=`<div class="empty">${esc(error.message)}</div>`; return; }
+    if(!data.length){ el.innerHTML='<div class="empty">No attachments yet.</div>'; return; }
+    el.innerHTML=data.map(d=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">\ud83d\udcce ${esc(d.file_name)}</span>
+      <span style="font-size:11px;color:var(--muted)">${esc((d.uploaded_at||"").slice(0,10))}</span>
+      <button class="btn ghost sm" data-view="${d.storage_path}" data-name="${esc(d.file_name)}">View</button>
+      ${canA?`<button class="btn danger sm" data-del="${d.id}">\u00d7</button>`:""}
+    </div>`).join("");
+    el.querySelectorAll("[data-view]").forEach(b=>b.onclick=async()=>{
+      gbusy(true);
+      const { data:u, error:e2 }=await db.storage.from("plan-docs").createSignedUrl(b.dataset.view, 3600);
+      gbusy(false);
+      if(e2||!u?.signedUrl) return msg(e2?.message||"Could not open the file. Is the plan-docs bucket created?");
+      const isImg=/\.(png|jpe?g|gif|webp)$/i.test(b.dataset.name);
+      if(isImg){
+        const pv=document.createElement("div"); pv.className="modal-bg"; pv.style.display="flex"; pv.style.zIndex=1002;
+        pv.innerHTML=`<div class="modal" style="max-width:760px;text-align:center"><img src="${u.signedUrl}" style="max-width:100%;max-height:70vh;border-radius:8px"><div style="margin-top:10px"><a class="btn ghost sm" href="${u.signedUrl}" target="_blank">Open full</a> <button class="btn ghost sm" id="pv-x">Close</button></div></div>`;
+        document.body.appendChild(pv);
+        pv.querySelector("#pv-x").onclick=()=>pv.remove();
+        pv.onclick=e=>{ if(e.target===pv) pv.remove(); };
+      } else window.open(u.signedUrl,"_blank");
+    });
+    el.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
+      if(!confirm("Delete this attachment?")) return;
+      const { error:e3 }=await db.rpc("delete_plan_document",{ p_id:b.dataset.del });
+      if(e3) return msg(e3.message);
+      ATTMAP[planId]=Math.max(0,(ATTMAP[planId]||1)-1);
+      msg("Deleted.",true); list(); draw();
+    });
+  }
+  await list();
+  const fi=bg.querySelector("#att-file");
+  if(fi) fi.onchange=async()=>{
+    const f=fi.files[0]; if(!f) return;
+    if(f.size>15*1024*1024) return msg("File is larger than 15 MB.");
+    const path=planId+"/"+Date.now()+"-"+f.name.replace(/[^A-Za-z0-9._-]/g,"_");
+    gbusy(true);
+    const { error:ue }=await db.storage.from("plan-docs").upload(path,f);
+    if(ue){ gbusy(false); return msg(ue.message+" (is the plan-docs bucket created?)"); }
+    const { error:ie }=await db.from("plan_documents").insert({ plan_id:planId, file_name:f.name, storage_path:path, uploaded_by:SESSION.user.email });
+    gbusy(false);
+    if(ie) return msg(ie.message);
+    ATTMAP[planId]=(ATTMAP[planId]||0)+1;
+    fi.value=""; msg("Uploaded.",true); list(); draw();
+  };
+}
 function aiTargets(mode){
   return PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name)
     &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
@@ -646,6 +726,7 @@ async function load(){
     const active=await fetchPlans(["Draft","Pushed","Returned"]);
     PLANS=active; draw();
     const everything=await fetchPlans(null);
+    await loadAttCounts();
     const activeIds=new Set(active.map(p=>p.id));
     const accepted=everything.filter(p=>!activeIds.has(p.id));
     PLANS=active.concat(accepted); draw();
@@ -710,7 +791,8 @@ function cardHTML(p){
       ${p.plan_indicator==="Late"?'<span class="late">LATE</span>':""}
       ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
       ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED</span>':""}
-      ${p.odoo_state==="cancel"?'<span class="late">CANCELLED</span>':""}</div>
+      ${p.odoo_state==="cancel"?'<span class="late">CANCELLED</span>':""}
+      ${ATTMAP[p.id]?`<span title="${ATTMAP[p.id]} attachment(s)" style="font-size:11px">\ud83d\udcce${ATTMAP[p.id]}</span>`:""}</div>
     <div class="m">${esc(p.product_name||p.model||"")}${p.planned_qty?` &middot; qty ${p.planned_qty}`:""}</div>
     <div class="m">${esc(p.customer||"")}${p.sales_person?" &middot; "+esc(p.sales_person):""}</div>
     <div class="foot">
@@ -895,7 +977,7 @@ function miniCardHTML(p){
     ${mrib}
     <div class="l1"><b>${esc(p.odoo_so||p.model||"plan")}</b>${p.planned_qty?" \u00b7 "+p.planned_qty:""}
       ${stock?`<span class="mstock" data-s="${esc(p.bom_stock_status)}">${stock}</span>`:""}
-      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}</div>
+      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}${ATTMAP[p.id]?'<span style="font-size:9px">\ud83d\udcce</span>':""}</div>
     <div class="l2">${esc(prod)}${cust?` \u00b7 <i>${esc(cust)}</i>`:""}</div></div>`;
 }
 function drawCalendar(v){
@@ -957,6 +1039,7 @@ function drawCalendar(v){
 }
 
 /* ---------------- spreadsheet ---------------- */
+let SHHIDE=new Set(); try{ SHHIDE=new Set(JSON.parse(localStorage.getItem("nlc-sheet-hide")||"[]")); }catch(e){}
 const SHF={};   // spreadsheet per-column filters: key -> text
 let SHFOCUS=null; // which filter input to refocus after redraw
 const SHEETCOLS=[
@@ -966,6 +1049,7 @@ const SHEETCOLS=[
   ["record_kind","Type","select:Production,Sample,Sticker,Non-Production"],
   ["needs_fabrication","Fab","select:false,true"],
   ["bom_stock_status","BOM stock","select:,In Stock,Partial Stock,Cargo/PO Item"],
+  ["sales_person","Sales person","ro"],
   ["plan_indicator","Indicator","select:,On Time,Late"],
   ["estimated_ready_week","Ready week","text"],["plan_remarks","Remarks","text"]];
 const SHEETCAP=300;
@@ -992,6 +1076,9 @@ function drawSheet(v){
     }
     return true;
   });
+  const VISCOLS=SHEETCOLS.filter(c=>!SHHIDE.has(c[0]));
+  const crefW=Math.min(64,Math.max(18,Math.max(10,...allRows.map(r=>(r.c_ref||"").length))))+"ch";
+  const colW=k=>k==="c_ref"?` style="min-width:${crefW}"`:"";
   const rows=allRows.slice(0,SHEETCAP);
   const totSO=allRows.reduce((a,p)=>a+(p.so_qty||0),0);
   const totPlan=allRows.reduce((a,p)=>a+(p.planned_qty||0),0);
@@ -1010,30 +1097,38 @@ function drawSheet(v){
       <button class="btn ghost" id="shApply" disabled>Apply to (0)</button>`:""}
     </div>
     ${rows.length>SHEETCAP?`<p class="sub" style="margin:0 0 8px">Showing the first ${SHEETCAP} of ${rows.length} plans (totals cover all ${rows.length}). Use the filters or week selector to narrow.</p>`:""}
+    <div style="position:relative;margin-bottom:8px">
+      <button class="btn ghost sm" id="shColsBtn">Columns (${VISCOLS.length}/${SHEETCOLS.length})</button>
+      <div id="shColsPanel" style="display:none;position:absolute;top:34px;left:0;z-index:50;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:10px 14px;max-height:300px;overflow:auto">
+        ${SHEETCOLS.map(([k,lbl])=>`<label style="display:block;font-size:13px;padding:3px 0;white-space:nowrap"><input type="checkbox" class="shColChk" data-k="${k}" ${SHHIDE.has(k)?"":"checked"}> ${lbl}</label>`).join("")}
+      </div>
+    </div>
     <div class="tbl-wrap"><table id="shTable"><thead><tr>
       ${canEdit?'<th style="width:34px"><input type="checkbox" id="shAll"></th>':""}
-      <th style="width:80px">Status</th><th style="width:64px">AFP</th>${SHEETCOLS.map(c=>`<th>${c[1]}<span class="rz"></span></th>`).join("")}</tr>
+      <th style="width:80px">Status</th><th style="width:64px">AFP</th>${VISCOLS.map(c=>`<th${colW(c[0])}>${c[1]}<span class="rz"></span></th>`).join("")}<th style="width:56px">Files</th></tr>
     <tr class="colf">
       ${canEdit?"<th></th>":""}
       <th><select class="shf" data-f="plan_status"><option value="">all</option>${[...new Set(["Draft","Pushed","Accepted","Returned"].concat(PLANS.map(p=>p.plan_status)))].filter(Boolean).map(x=>`<option${SHF.plan_status===x?" selected":""}>${x}</option>`).join("")}</select></th>
       <th><select class="shf" data-f="__afp"><option value="">all</option><option value="afp"${SHF.__afp==="afp"?" selected":""}>AFP</option><option value="notafp"${SHF.__afp==="notafp"?" selected":""}>Not AFP</option></select></th>
-      ${SHEETCOLS.map(([k,_,ty])=>{
+      ${VISCOLS.map(([k,_,ty])=>{
         if(ty&&ty.startsWith("select:")){
           const opts=ty.slice(7).split(",");
           return `<th><select class="shf" data-f="${k}"><option value="">all</option>${opts.filter(o=>o!=="").map(o=>`<option value="${o}"${SHF[k]===o?" selected":""}>${k==="needs_fabrication"?(o==="true"?"Fab":"Not fab"):o}</option>`).join("")}</select></th>`;
         }
         return `<th><input class="shf" data-f="${k}" placeholder="filter" value="${esc(SHF[k]||"")}"></th>`;
-      }).join("")}
+      }).join("")}<th></th>
     </tr></thead>
     <tbody>${rows.map(p=>`<tr>
       ${canEdit?`<td><input type="checkbox" class="shSel" data-sel="${p.id}"></td>`:""}
       <td><span class="chip" data-tone="${STONE[p.plan_status]}">${p.plan_status}</span>${p.odoo_state==="cancel"?'<br><span class="late" style="display:inline-block;margin-top:3px">CANCELLED</span>':(p.odoo_state?`<div style="font-size:10.5px;color:var(--muted);margin-top:3px">DN: ${esc(DNLABEL[p.odoo_state]||p.odoo_state)}</div>`:"")}</td>
       <td>${p.afp===true?'<span class="chip" data-tone="ok">AFP</span>':(p.afp===false?'<span class="chip" data-tone="hold">Not AFP</span>':"")}</td>
-      ${SHEETCOLS.map(([k,_,ty])=>{
+      ${VISCOLS.map(([k,_,ty])=>{
         let val=p[k]==null?"":p[k];
         if(k==="planned_date") val=p.planned_date?isoWeekStr(p.planned_date):"";
         if(k==="needs_fabrication") val=String(!!p.needs_fabrication);
         if(k==="record_kind") val=p.record_kind||"Production";
+        if(k==="sales_person") val=cleanSales(val);
+        if(ty==="ro") return `<td>${esc(val)}</td>`;
         if(!canEdit) return `<td>${k==="planned_date"?esc(weekLabel(val)):esc(val)}</td>`;
         if(ty==="week")
           return `<td class="cell"><select data-id="${p.id}" data-col="${k}" data-wk="${esc(val)}">${weekOptionsBase()}</select></td>`;
@@ -1044,10 +1139,11 @@ function drawSheet(v){
         }
         return `<td class="cell"><input type="${ty}" data-id="${p.id}" data-col="${k}" value="${esc(val)}"></td>`;
       }).join("")}
+      <td style="text-align:center"><button class="attbtn" data-att="${p.id}" title="Attachments">${ATTMAP[p.id]?`\ud83d\udcce ${ATTMAP[p.id]}`:(canEdit?"+":"")}</button></td>
     </tr>`).join("")}</tbody>
     <tfoot><tr style="font-weight:800;color:var(--navy);border-top:2px solid var(--navy)">
       ${canEdit?"<td></td>":""}<td>Totals (${fmt(allRows.length)})</td><td></td>
-      ${SHEETCOLS.map(([k])=>`<td>${k==="so_qty"?fmt(totSO):(k==="planned_qty"?fmt(totPlan):"")}</td>`).join("")}
+      ${VISCOLS.map(([k])=>`<td>${k==="so_qty"?fmt(totSO):(k==="planned_qty"?fmt(totPlan):"")}</td>`).join("")}<td></td>
     </tr></tfoot></table></div>
     ${rows.length?"":'<div class="empty">No plans match the filter.</div>'}`;
   // apply stored week values to the cached option lists
@@ -1106,6 +1202,14 @@ function drawSheet(v){
       document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
     });
   });
+  const cbtn=v.querySelector("#shColsBtn"), cpanel=v.querySelector("#shColsPanel");
+  if(cbtn) cbtn.onclick=()=>{ cpanel.style.display=cpanel.style.display==="none"?"block":"none"; };
+  v.querySelectorAll(".shColChk").forEach(ch=>ch.onchange=()=>{
+    if(ch.checked) SHHIDE.delete(ch.dataset.k); else SHHIDE.add(ch.dataset.k);
+    try{ localStorage.setItem("nlc-sheet-hide", JSON.stringify([...SHHIDE])); }catch(e){}
+    drawSheet(v);
+  });
+  v.querySelectorAll("[data-att]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); attachModal(b.dataset.att); });
   let _shfT=null;
   v.querySelectorAll(".shf").forEach(el=>{
     const apply=()=>{ 
@@ -1381,6 +1485,7 @@ async function planModal(pLite){
               ?`<button class="btn orange" id="p-complete">Complete (no assembly)</button>`
               :`<button class="btn orange" id="p-push">Push to assembly</button>`}
         <button class="btn ghost" id="p-split">Split qty</button>
+        ${p?`<button class="btn ghost" id="p-att" type="button">\ud83d\udcce Attachments${ATTMAP[p.id]?" ("+ATTMAP[p.id]+")":""}</button>`:""}
         <button class="btn danger" id="p-del" style="margin-left:auto">Delete plan</button>`:""}
       </div>`:""}
       ${p&&p.production_record_id?`<p class="sub" style="margin-top:12px">Accepted into production. Open the console to see the record.</p>`:""}
@@ -1489,6 +1594,8 @@ async function planModal(pLite){
     }catch(e){ pmsg("Suggestion failed: "+e.message+". Is the model-suggest function deployed?"); }
     busy(false); aiBtn.disabled=false; aiBtn.textContent="AI";
   };
+  const attBtn=bg.querySelector("#p-att");
+  if(attBtn) attBtn.onclick=()=>attachModal(p.id);
   const copyBtn=bg.querySelector("#p-copysib");
   if(copyBtn) copyBtn.onclick=async()=>{
     const f={};
