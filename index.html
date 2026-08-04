@@ -76,12 +76,12 @@
   body.wide .bom-table td.bom-cell input{min-width:0}
 
   header{background:var(--navy); color:#fff; padding:14px 16px; border-bottom:3px solid var(--orange)}
-  .head-in{max-width:760px; margin:0 auto; display:flex; align-items:center; gap:12px}
+  .head-in{max-width:760px; margin:0 auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; row-gap:4px}
   .brand-logo{height:32px; width:auto; display:block; flex:none}
   .brand-tag{font-size:11px; letter-spacing:2.5px; text-transform:uppercase; color:#b9bce0;
     padding-left:12px; border-left:1px solid rgba(255,255,255,.28)}
   .who{margin-left:auto; text-align:right; font-size:11.5px; color:#c3c6e6}
-  .brand-home{color:#c3c6e6; text-decoration:none; font-size:12.5px; font-weight:600; padding:4px 11px;
+  .brand-home{color:#c3c6e6; text-decoration:none; font-size:12.5px; font-weight:600; padding:4px 11px; white-space:nowrap;
     border:1px solid rgba(255,255,255,.28); border-radius:8px; cursor:pointer}
   .brand-home:hover{background:rgba(255,255,255,.12); color:#fff}
   .who a{color:#fff; text-decoration:underline; cursor:pointer; font-weight:600}
@@ -236,6 +236,36 @@ try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dat
   if(document.body) document.body.appendChild(el);
   let n=0;
   window.gbusy=on=>{ n=Math.max(0,n+(on?1:-1)); el.style.display=n?"flex":"none"; };
+  try{
+    if(!sessionStorage.getItem("nlc-splash")){
+      sessionStorage.setItem("nlc-splash","1");
+      const sp=document.createElement("div");
+      sp.id="splash";
+      sp.innerHTML='<style>'+
+        '#splash{position:fixed;inset:0;z-index:2000;background:linear-gradient(135deg,#1a1c45,#24275E 55%,#2e3170);display:flex;align-items:center;justify-content:center;transition:opacity .5s}'+
+        '#splash .in{text-align:center;font-family:"Bizmo",Arial,sans-serif}'+
+        '#splash .lg{height:62px;width:auto;animation:spPop .7s cubic-bezier(.2,1.4,.4,1) both}'+
+        '#splash .pt{font-weight:800;font-size:30px;line-height:1;letter-spacing:1px;margin-top:18px;opacity:0;animation:spUp .55s .5s ease-out forwards;white-space:nowrap}'+
+        '#splash .pt .k{color:#F6851F}'+
+        '#splash .pt .t,#splash .pt .gap{color:#c3c6e6;display:inline-block;overflow:hidden;white-space:nowrap;max-width:11ch;vertical-align:bottom;animation:spMerge .7s 1.6s cubic-bezier(.6,0,.25,1) forwards}'+
+        '#splash .ab{font-weight:600;font-size:12px;color:#c3c6e6;letter-spacing:3px;text-transform:uppercase;margin-top:12px;opacity:0;animation:spUp .6s 2.35s ease-out forwards}'+
+        '#splash .bar{width:190px;height:3px;background:rgba(255,255,255,.15);border-radius:99px;margin:22px auto 0;overflow:hidden}'+
+        '#splash .bar i{display:block;height:100%;width:0;background:#F6851F;animation:spBar 2.7s .3s ease-in-out forwards}'+
+        '@keyframes spPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}'+
+        '@keyframes spUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}'+
+        '@keyframes spMerge{to{max-width:0;opacity:0;letter-spacing:-2px}}'+
+        '@keyframes spBar{to{width:100%}}'+
+        '</style>'+
+        '<div class="in"><img class="lg" src="'+LOGO+'" alt="NLC">'+
+        '<div class="pt"><span class="k">Pro</span><span class="t">duction</span><span class="gap">&nbsp;&nbsp;</span><span class="k">Trace</span><span class="t">ability</span></div>'+
+        '<div class="ab">PTS \u00b7 Production Traceability System</div>'+
+        '<div class="bar"><i></i></div></div>';
+      (document.body||document.documentElement).appendChild(sp);
+      const bye=()=>{ sp.style.opacity="0"; setTimeout(()=>sp.remove(),520); };
+      setTimeout(bye, 3500);
+      sp.onclick=bye;
+    }
+  }catch(e){}
   const tt=document.createElement("button"); tt.id="toTop"; tt.title="Back to top"; tt.textContent="\u2191";
   (document.body||document.documentElement).appendChild(tt);
   window.addEventListener("scroll",()=>{ tt.style.display=window.scrollY>600?"block":"none"; },{passive:true});
