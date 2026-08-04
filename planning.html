@@ -1077,8 +1077,9 @@ function drawSheet(v){
     return true;
   });
   const VISCOLS=SHEETCOLS.filter(c=>!SHHIDE.has(c[0]));
-  const crefW=Math.min(64,Math.max(18,Math.max(10,...allRows.map(r=>(r.c_ref||"").length))))+"ch";
-  const colW=k=>k==="c_ref"?` style="min-width:${crefW}"`:"";
+  const crefCh=Math.min(64,Math.max(18,Math.max(10,...allRows.map(r=>(r.c_ref||"").length))));
+  const colW=k=>k==="c_ref"?` style="width:${crefCh}ch"`:"";
+  const tblMin=1100+Math.max(0,Math.round((crefCh-12)*7.5));
   const rows=allRows.slice(0,SHEETCAP);
   const totSO=allRows.reduce((a,p)=>a+(p.so_qty||0),0);
   const totPlan=allRows.reduce((a,p)=>a+(p.planned_qty||0),0);
@@ -1103,7 +1104,7 @@ function drawSheet(v){
         ${SHEETCOLS.map(([k,lbl])=>`<label style="display:block;font-size:13px;padding:3px 0;white-space:nowrap"><input type="checkbox" class="shColChk" data-k="${k}" ${SHHIDE.has(k)?"":"checked"}> ${lbl}</label>`).join("")}
       </div>
     </div>
-    <div class="tbl-wrap"><table id="shTable"><thead><tr>
+    <div class="tbl-wrap"><table id="shTable" style="min-width:${tblMin}px"><thead><tr>
       ${canEdit?'<th style="width:34px"><input type="checkbox" id="shAll"></th>':""}
       <th style="width:80px">Status</th><th style="width:64px">AFP</th>${VISCOLS.map(c=>`<th${colW(c[0])}>${c[1]}<span class="rz"></span></th>`).join("")}<th style="width:56px">Files</th></tr>
     <tr class="colf">
