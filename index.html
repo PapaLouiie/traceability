@@ -163,6 +163,9 @@
 
   table{width:100%; border-collapse:collapse; font-size:13.5px}
   .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  .bom-table th{position:relative}
+  .bom-table th .rz{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:2}
+  .bom-table th .rz:hover{background:var(--orange);opacity:.5}
   .bom-table td.bom-cell{padding:3px 4px}
   .bom-table td.bom-cell input{width:100%; min-width:130px; padding:8px 10px; border:1px solid transparent;
     border-radius:7px; background:transparent; font-size:13.5px; font-family:inherit}
@@ -1334,12 +1337,23 @@ async function renderBomEditor(){
         .order("created_at",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     } else {
       ({ data:chunk, error }=await db.from("production_records")
-        .select("id,serial,production_date,so_number,c_ref,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+        .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
         .order("production_date",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     }
     if(error) break;
     data=data.concat(chunk||[]);
     if(!chunk || chunk.length<B) break;
+  }
+  const CMAP={};
+  if(!isPlans && !error){
+    let f2=0;
+    while(true){
+      const { data:pl }=await db.from("planned_records")
+        .select("production_record_id,c_ref").not("production_record_id","is",null)
+        .order("id",{ascending:true}).range(f2,f2+999);
+      (pl||[]).forEach(p=>{ if(p.c_ref) CMAP[p.production_record_id]=p.c_ref; });
+      if(!pl || pl.length<1000) break; f2+=1000;
+    }
   }
   const grid=document.getElementById("bomGrid");
   if(error){ grid.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
@@ -1358,7 +1372,7 @@ async function renderBomEditor(){
     if(!q) return true;
     const terms=q.toLowerCase().split(/[,\s]+/).filter(Boolean);
     const hay=(isPlans?[r.odoo_so,r.sap_so,r.product_name,r.c_ref,r.model,r.customer]
-                      :[r.serial,r.so_number,r.c_ref,r.model,r.customer]).map(v=>(v||"").toLowerCase());
+                      :[r.serial,r.so_number,CMAP[r.id],r.model,r.customer]).map(v=>(v||"").toLowerCase());
     return terms.some(t=>hay.some(v=>v.includes(t)));
   }
   function draw(){
@@ -1378,7 +1392,7 @@ async function renderBomEditor(){
                    <td><span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Returned'?'hold':'')}">${esc(r.plan_status)}</span></td>`
                  :`<td><b>${esc(r.serial||"")}</b><div class="meta">${esc(r.production_date||"")}</div></td>
                    <td>${esc(r.model||"")}</td>
-                   <td>${esc(r.c_ref||"")}</td>
+                   <td>${esc(CMAP[r.id]||"")}</td>
                    <td>${esc(r.so_number||"")}</td>`}
         ${COLS.map(([k])=>{
           const cur=(dirty[r.id]&&dirty[r.id][k]!==undefined)?dirty[r.id][k]:orig[r.id][k];
@@ -1390,6 +1404,32 @@ async function renderBomEditor(){
         }).join("")}
       </tr>`).join("")}</tbody></table></div>
       ${rows.length?"":'<div class="empty">Nothing matches the current filter.</div>'}`;
+    (function(){
+      const tbl=grid.querySelector("table.bom-table"); if(!tbl) return;
+      const key="nlc-bomw-"+(isPlans?"plans":"records");
+      let saved=[]; try{ saved=JSON.parse(localStorage.getItem(key)||"[]"); }catch(e){}
+      const ths=[...tbl.querySelectorAll("thead th")];
+      if(saved.length===ths.length){
+        tbl.style.tableLayout="fixed";
+        ths.forEach((th,i)=>{ if(saved[i]) th.style.width=saved[i]+"px"; });
+      }
+      ths.forEach((th,i)=>{
+        const rz=document.createElement("span"); rz.className="rz"; th.appendChild(rz);
+        rz.addEventListener("mousedown",e=>{
+          e.preventDefault();
+          if(!th.style.width){ ths.forEach(t=>t.style.width=t.offsetWidth+"px"); tbl.style.tableLayout="fixed"; }
+          const x0=e.clientX, w0=th.offsetWidth;
+          const mv=ev=>{ th.style.width=Math.max(48,w0+ev.clientX-x0)+"px"; };
+          const up=()=>{
+            document.removeEventListener("mousemove",mv);
+            document.removeEventListener("mouseup",up);
+            try{ localStorage.setItem(key, JSON.stringify(ths.map(t=>t.offsetWidth))); }catch(err){}
+          };
+          document.addEventListener("mousemove",mv);
+          document.addEventListener("mouseup",up);
+        });
+      });
+    })();
     grid.querySelectorAll("input[data-id], select[data-id]").forEach(inp=>{
       inp.addEventListener("input",()=>{
         const id=inp.dataset.id, col=inp.dataset.col, v=inp.value;
