@@ -468,6 +468,11 @@ async function renderHome(){
         <option value="Customer Return">Customer return</option>
         <option value="none">No open issues</option>
       </select>
+      <select id="f-status" style="max-width:140px">
+        <option value="open">Status: Open</option>
+        <option value="completed">Completed</option>
+        <option value="all">All statuses</option>
+      </select>
       <select id="f-kind" style="max-width:150px">
         <option value="">All pieces</option>
         <option value="Production">Production only</option>
@@ -502,14 +507,14 @@ async function renderHome(){
   searchCtl.set(HOME_TERMS);
   window.__homeSearch=searchCtl;
   document.getElementById("searchBtn").onclick=()=>{ searchCtl.commit(); loadList(searchCtl.get().trim()); };
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.sort=document.getElementById("f-sort").value; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.status=document.getElementById("f-status").value; LPAGE=30; listFilter.sort=document.getElementById("f-sort").value; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
   document.getElementById("f-week").onchange=applyFil;
   document.getElementById("f-tag").onchange=applyFil;
   document.getElementById("f-kind").onchange=applyFil;
   document.getElementById("f-sort").onchange=applyFil;
-  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-status").value=listFilter.status||"open"; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
   document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
@@ -528,7 +533,7 @@ function monthRange(year,month){
 }
 
 let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
-let LAST_LIST=[]; const QRSEL=new Set();
+let LAST_LIST=[]; const QRSEL=new Set(); let LPAGE=30;
 let QPREV=null;
 async function updateQueueBadge(){
   const badge=document.getElementById("qBadge"); if(!badge) return;
@@ -577,23 +582,41 @@ async function loadList(q){
     if(!tagIds.length){ list.innerHTML=`<div class="empty">No records match the selected issue filter.</div>`; return; }
   }
 
-  let query=db.from("production_records")
-    .select("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty,needs_fabrication,fabrication_stage")
-    .order(scol,{ascending:sdir==="asc", nullsFirst:false}).limit((rng||listFilter.tag||listFilter.kind)?1000:30);
-  if(rng){ query=query.gte("production_date",rng[0]).lt("production_date",rng[1]); }
-  if(tagIds){ query=query.in("id",tagIds); }
-  if(excludeIds && excludeIds.length){ query=query.not("id","in","("+excludeIds.join(",")+")"); }
-  if(listFilter.kind){ query=query.eq("record_kind",listFilter.kind); }
-  if(q){
-    const terms=q.split(/[,\s]+/).filter(Boolean);
-    const pats=terms.map(t=>`serial.ilike.%${t}%,so_number.ilike.%${t}%,mo_number.ilike.%${t}%,model.ilike.%${t}%,customer.ilike.%${t}%,customer_reference.ilike.%${t}%`).join(",");
-    query=query.or(pats);
-  }
-  const { data, error }=await query;
+  const stF=listFilter.status||"open";
+  const mk=(sel,opts,withStatus)=>{
+    let qq=db.from("production_records").select(sel,opts||{});
+    if(rng){ qq=qq.gte("production_date",rng[0]).lt("production_date",rng[1]); }
+    if(tagIds){ qq=qq.in("id",tagIds); }
+    if(excludeIds && excludeIds.length){ qq=qq.not("id","in","("+excludeIds.join(",")+")"); }
+    if(listFilter.kind){ qq=qq.eq("record_kind",listFilter.kind); }
+    if(q){
+      const terms=q.split(/[,\s]+/).filter(Boolean);
+      const pats=terms.map(t=>`serial.ilike.%${t}%,so_number.ilike.%${t}%,mo_number.ilike.%${t}%,model.ilike.%${t}%,customer.ilike.%${t}%,customer_reference.ilike.%${t}%`).join(",");
+      qq=qq.or(pats);
+    }
+    if(withStatus==="open") qq=qq.or("status.is.null,status.neq.Completed");
+    else if(withStatus==="completed") qq=qq.eq("status","Completed");
+    return qq;
+  };
+  const query=mk("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty,needs_fabrication,fabrication_stage",null,stF==="all"?null:stF)
+    .order(scol,{ascending:sdir==="asc", nullsFirst:false}).range(0,LPAGE-1);
+  const [{ data, error }, totRes, compRes]=await Promise.all([
+    query,
+    mk("id",{count:"exact",head:true},null),
+    mk("id",{count:"exact",head:true},"completed"),
+  ]);
+  const totAll=totRes?.count??0, totComp=compRes?.count??0, totOpen=Math.max(0,totAll-totComp);
+  const shownTotal=stF==="completed"?totComp:(stF==="open"?totOpen:totAll);
+  const countBar=`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12.5px">
+    <span class="chip">Total ${fmt(totAll)}</span>
+    <span class="chip" data-tone="info">Open ${fmt(totOpen)}</span>
+    <span class="chip" data-tone="ok">Completed ${fmt(totComp)}</span>
+    ${stF!=="all"?`<span style="color:var(--muted)">showing ${stF==="open"?"open":"completed"} only</span>`:""}
+  </div>`;
   if(error){
     if(isJwtErr(error)&&await recoverSession()) return loadList(q);
     list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ list.innerHTML=`<div class="empty">${(q||rng||listFilter.week||listFilter.tag||listFilter.kind)?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
+  if(!data.length){ list.innerHTML=countBar+`<div class="empty">${(q||rng||listFilter.week||listFilter.tag||listFilter.kind||stF!=="all")?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
 
   // open issue types per listed record, for badges
   let flags={};
@@ -608,7 +631,7 @@ async function loadList(q){
     return wy+"-W"+String(wk).padStart(2,"0"); };
   let lastWeek=null;
   LAST_LIST=data;
-  list.innerHTML=data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
+  list.innerHTML=countBar+data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
       <input type="checkbox" class="qr-sel" data-qr="${r.id}" title="Select for QR printing" onclick="event.stopPropagation()">
       <div>
         <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${tagsHTML(flags[r.id])}</div>
@@ -618,7 +641,10 @@ async function loadList(q){
         <span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"Open")}</span>
         <div class="meta" style="margin-top:4px">${esc(r.production_date||"")}</div>
       </div>
-    </div>`).join("");
+    </div>`).join("")
+    +(data.length<shownTotal?`<div style="text-align:center;margin:14px 0"><button class="btn ghost" id="loadMoreBtn">Load more (showing ${fmt(data.length)} of ${fmt(shownTotal)})</button></div>`:"");
+  const lmB=document.getElementById("loadMoreBtn");
+  if(lmB) lmB.onclick=()=>{ LPAGE+=60; loadList(q); };
   list.querySelectorAll(".rec").forEach(el=>el.onclick=()=>openRecord(el.dataset.id));
   const pbtn=document.getElementById("printSel");
   const updPrint=()=>{ if(!pbtn) return; pbtn.style.display=QRSEL.size?"inline-flex":"none"; pbtn.textContent=`Print QRs (${QRSEL.size})`; };
