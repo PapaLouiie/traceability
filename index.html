@@ -582,6 +582,8 @@ async function loadList(q){
     if(!tagIds.length){ list.innerHTML=`<div class="empty">No records match the selected issue filter.</div>`; return; }
   }
 
+  const fmt=x=>Number(x||0).toLocaleString("en-US");
+  try{
   const stF=listFilter.status||"open";
   const mk=(sel,opts,withStatus)=>{
     let qq=db.from("production_records").select(sel,opts||{});
@@ -645,6 +647,7 @@ async function loadList(q){
     +(data.length<shownTotal?`<div style="text-align:center;margin:14px 0"><button class="btn ghost" id="loadMoreBtn">Load more (showing ${fmt(data.length)} of ${fmt(shownTotal)})</button></div>`:"");
   const lmB=document.getElementById("loadMoreBtn");
   if(lmB) lmB.onclick=()=>{ LPAGE+=60; loadList(q); };
+  }catch(err){ list.innerHTML=`<div class="empty">Could not render the list: ${esc(String(err.message||err))}</div>`; return; }
   list.querySelectorAll(".rec").forEach(el=>el.onclick=()=>openRecord(el.dataset.id));
   const pbtn=document.getElementById("printSel");
   const updPrint=()=>{ if(!pbtn) return; pbtn.style.display=QRSEL.size?"inline-flex":"none"; pbtn.textContent=`Print QRs (${QRSEL.size})`; };
