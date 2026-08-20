@@ -739,7 +739,6 @@ async function createMO(planId, force){
 function moEligible(p){
   if(!p.odoo_variant_id) return "no Odoo product reference";
   if(p.odoo_state==="cancel") return "delivery cancelled";
-  if(!["Pushed","Accepted"].includes(p.plan_status)) return "plan not pushed yet";
   if(!(p.planned_qty??p.so_qty)) return "no planned qty";
   if(!p.planned_date) return "no planned week";
   if(p.bom_stock_status!=="In Stock") return "stock not marked In Stock";
@@ -1293,10 +1292,12 @@ function drawSheet(v){
     if(!fresh.length&&!withMO.length){
       return banner("None of the selected plans can get an MO ("+(ineligible[0]?.why||"nothing eligible")+").");
     }
+    const unpushedN=fresh.concat(withMO).filter(p=>!["Pushed","Accepted"].includes(p.plan_status)).length;
     const ok1=await appConfirm("Create draft MOs in Odoo",
       `Draft manufacturing orders will be created for <b>${fresh.length+withMO.length}</b> plan(s).`+
       (ineligible.length?`<br><br><b>${ineligible.length}</b> will be skipped: ${esc([...new Set(ineligible.map(x=>x.why))].join(", "))}.`:"")+
-      `<br><br>Nothing is confirmed automatically.`,"Continue");
+      (unpushedN?`<br><br><span style="color:var(--orange);font-weight:700">\u26a0 ${unpushedN}</span> of them are not pushed yet. Pushing first is recommended, but they will be included if you continue.`:"")+
+      `<br><br>Nothing is confirmed automatically.`,"Continue",unpushedN?"warn":undefined);
     if(!ok1) return;
     let mode="fresh";
     if(withMO.length){
@@ -1706,9 +1707,11 @@ async function planModal(pLite){
         "Recreate MO","warn");
       if(!ok) return;
     } else {
+      const unpushed=!["Pushed","Accepted"].includes(p.plan_status);
       const ok=await appConfirm("Create draft MO in Odoo",
-        `<b>${esc(p.product_name||"")}</b><br>Qty: <b>${q}</b> \u00b7 Scheduled: <b>${esc(d)}</b><br><br>The MO is created in <b>Draft</b>. Nothing is confirmed automatically.`,
-        "Create MO");
+        `<b>${esc(p.product_name||"")}</b><br>Qty: <b>${q}</b> \u00b7 Scheduled: <b>${esc(d)}</b><br><br>The MO is created in <b>Draft</b>. Nothing is confirmed automatically.`+
+        (unpushed?`<br><br><span style="color:var(--orange);font-weight:700">\u26a0 This plan is not pushed yet.</span> Pushing first is recommended so the MO reflects a committed plan. You can still proceed.`:""),
+        unpushed?"Create anyway":"Create MO", unpushed?"warn":undefined);
       if(!ok) return;
     }
     btn.disabled=true; gbusy(true);
