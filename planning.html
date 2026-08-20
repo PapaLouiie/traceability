@@ -618,7 +618,7 @@ function banner(msg,ok){
 // touches fields it is sent, so lean rows are safe to edit from.
 const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_person,region,model,"+
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
-  "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,"+
+  "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,odoo_mo,"+
   "sort_order,created_by,updated_by,updated_at,created_at";
 let ATTMAP={};   // plan_id -> attachment count
 async function loadAttCounts(){
@@ -697,6 +697,21 @@ async function attachModal(planId){
     ATTMAP[planId]=(ATTMAP[planId]||0)+1;
     fi.value=""; msg("Uploaded.",true); list(); draw();
   };
+}
+async function createMO(planId, force){
+  const r=await fetch(SUPABASE_URL+"/functions/v1/odoo-sync",{ method:"POST",
+    headers:{ Authorization:"Bearer "+(await fnToken()), "Content-Type":"application/json" },
+    body:JSON.stringify({ create_mo:{ plan_id:planId, force:!!force } }) });
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.error) throw Object.assign(new Error(j.error||("HTTP "+r.status)),{exists:j.exists});
+  return j;
+}
+function moEligible(p){
+  if(!p.odoo_variant_id) return "no Odoo product reference";
+  if(p.odoo_state==="cancel") return "delivery cancelled";
+  if(!(p.planned_qty??p.so_qty)) return "no planned qty";
+  if(!p.planned_date) return "no planned date";
+  return null;
 }
 function aiTargets(mode){
   return PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name)
@@ -1049,6 +1064,7 @@ const SHEETCOLS=[
   ["record_kind","Type","select:Production,Sample,Sticker,Non-Production"],
   ["needs_fabrication","Fab","select:false,true"],
   ["bom_stock_status","BOM stock","select:,In Stock,Partial Stock,Cargo/PO Item"],
+  ["odoo_mo","MO","ro"],
   ["sales_person","Sales person","ro"],
   ["plan_indicator","Indicator","select:,On Time,Late"],
   ["estimated_ready_week","Ready week","text"],["plan_remarks","Remarks","text"]];
@@ -1095,7 +1111,8 @@ function drawSheet(v){
       <span style="border-left:1px solid var(--line);height:24px"></span>
       <select id="shFabSel" style="max-width:120px"><option value="">Fab: keep</option><option value="true">Fab: Yes</option><option value="false">Fab: No</option></select>
       <select id="shStockSel" style="max-width:170px"><option value="">Stock: keep</option><option>In Stock</option><option>Partial Stock</option><option>Cargo/PO Item</option></select>
-      <button class="btn ghost" id="shApply" disabled>Apply to (0)</button>`:""}
+      <button class="btn ghost" id="shApply" disabled>Apply to (0)</button>
+      <button class="btn ghost" id="shMO" disabled>\u2699 Create MOs (0)</button>`:""}
     </div>
     ${rows.length>SHEETCAP?`<p class="sub" style="margin:0 0 8px">Showing the first ${SHEETCAP} of ${rows.length} plans (totals cover all ${rows.length}). Use the filters or week selector to narrow.</p>`:""}
     <div style="position:relative;margin-bottom:8px">
@@ -1174,6 +1191,8 @@ function drawSheet(v){
     setWeekBtn.disabled=!ns; setWeekBtn.textContent=`Set week (${ns})`;
     pushBtn.disabled=!ns; pushBtn.textContent=`Push (${ns})`;
     if(applyBtn){ applyBtn.disabled=!ns; applyBtn.textContent=`Apply to (${ns})`; }
+    const moB=v.querySelector("#shMO");
+    if(moB){ moB.disabled=!ns; moB.textContent=`\u2699 Create MOs (${ns})`; }
   };
   if(applyBtn) applyBtn.onclick=async()=>{
     const fab=document.getElementById("shFabSel").value;
@@ -1227,6 +1246,41 @@ function drawSheet(v){
     if(f){ f.focus(); const L=f.value.length; try{ f.setSelectionRange(L,L); }catch(e){} }
     SHFOCUS=null;
   }
+  const shMOBtn=v.querySelector("#shMO");
+  if(shMOBtn) shMOBtn.onclick=async()=>{
+    const ids=[...v.querySelectorAll(".shSel:checked")].map(c=>c.dataset.sel);
+    if(!ids.length) return;
+    const sel=ids.map(id=>PLANS.find(p=>p.id===id)).filter(Boolean);
+    const ineligible=sel.map(p=>({p,why:moEligible(p)})).filter(x=>x.why);
+    const withMO=sel.filter(p=>!moEligible(p)&&p.odoo_mo);
+    const fresh=sel.filter(p=>!moEligible(p)&&!p.odoo_mo);
+    if(!fresh.length&&!withMO.length){
+      return banner("None of the selected plans can get an MO ("+(ineligible[0]?.why||"nothing eligible")+").");
+    }
+    let msg=`Create DRAFT manufacturing orders in Odoo for ${fresh.length+withMO.length} plan(s)?`;
+    if(ineligible.length) msg+=`\n\n${ineligible.length} will be skipped (${[...new Set(ineligible.map(x=>x.why))].join(", ")}).`;
+    msg+=`\n\nNothing will be confirmed automatically.`;
+    if(!confirm(msg)) return;
+    let doForce=false;
+    if(withMO.length){
+      doForce=confirm(`${withMO.length} of the selected plan(s) ALREADY have MOs in Odoo:\n`+
+        withMO.slice(0,8).map(p=>`  ${p.odoo_mo} (${p.odoo_so||""})`).join("\n")+(withMO.length>8?"\n  ...":"")+
+        `\n\nPlease check Odoo first: only recreate if those MOs were deleted there (for example to fix a BOM).\n\nOK = recreate MOs for these too.\nCancel = skip them and only create the ${fresh.length} new one(s).`);
+      if(!doForce&&!fresh.length) return;
+    }
+    const work=doForce?fresh.concat(withMO):fresh;
+    shMOBtn.disabled=true;
+    let ok=0, fail=0, firstErr="";
+    for(let i=0;i<work.length;i++){
+      shMOBtn.textContent=`Creating ${i+1}/${work.length}...`;
+      try{
+        const j=await createMO(work[i].id, doForce&&!!work[i].odoo_mo);
+        work[i].odoo_mo=j.mo; ok++;
+      }catch(e){ fail++; if(!firstErr) firstErr=String(e.message||e); }
+    }
+    banner(`MOs created: ${ok}${fail?`, failed: ${fail} (first error: ${firstErr})`:""}${ineligible.length?`, skipped: ${ineligible.length}`:""}.`, !fail);
+    draw();
+  };
   v.querySelectorAll(".shSel").forEach(cb=>cb.onchange=()=>{
     if(cb.checked) selected.add(cb.dataset.sel); else selected.delete(cb.dataset.sel); updBtns(); });
   document.getElementById("shAll").onchange=e=>{
@@ -1487,6 +1541,9 @@ async function planModal(pLite){
               :`<button class="btn orange" id="p-push">Push to assembly</button>`}
         <button class="btn ghost" id="p-split">Split qty</button>
         ${p?`<button class="btn ghost" id="p-att" type="button">\ud83d\udcce Attachments${ATTMAP[p.id]?" ("+ATTMAP[p.id]+")":""}</button>`:""}
+        ${p&&canEdit?(p.odoo_mo
+          ?`<span class="chip" data-tone="ok" title="Draft MO created in Odoo">MO: ${esc(p.odoo_mo)}</span> <button class="btn ghost sm" id="p-mo-re" type="button" title="Recreate the MO (if it was deleted in Odoo)">\u27f3</button>`
+          :`<button class="btn ghost" id="p-mo" type="button" title="Create a draft manufacturing order in Odoo">\u2699 Create MO</button>`):""}
         <button class="btn danger" id="p-del" style="margin-left:auto">Delete plan</button>`:""}
       </div>`:""}
       ${p&&p.production_record_id?`<p class="sub" style="margin-top:12px">Accepted into production. Open the console to see the record.</p>`:""}
@@ -1597,6 +1654,29 @@ async function planModal(pLite){
   };
   const attBtn=bg.querySelector("#p-att");
   if(attBtn) attBtn.onclick=()=>attachModal(p.id);
+  const doMO=async(btn,force)=>{
+    const mErr=t=>{ const m=bg.querySelector("#p-msg"); if(m){ m.textContent=t; m.className="banner show err"; } else banner(t); };
+    const bad=moEligible(p); if(bad) return mErr("Cannot create MO: "+bad+".");
+    const q=p.planned_qty??p.so_qty, d=p.planned_date;
+    if(force){
+      if(!confirm(`An MO was already created for this plan (${p.odoo_mo}).\n\nPlease check Odoo first: only recreate if that MO was deleted there (for example to fix the BOM or item selection).\n\nProceed and create a NEW draft MO?`)) return;
+    } else {
+      if(!confirm(`Create a DRAFT manufacturing order in Odoo?\n\nProduct: ${p.product_name||""}\nQty: ${q}\nScheduled: ${d}\n\nIt will NOT be confirmed automatically.`)) return;
+    }
+    btn.disabled=true; gbusy(true);
+    try{
+      const j=await createMO(p.id, force);
+      gbusy(false);
+      p.odoo_mo=j.mo;
+      const row=PLANS.find(x=>x.id===p.id); if(row) row.odoo_mo=j.mo;
+      banner(`Draft MO ${j.mo} created in Odoo.`, true);
+      bg.remove(); openPlan(p);
+    }catch(e){ gbusy(false); btn.disabled=false; mErr(String(e.message||e)); }
+  };
+  const moBtn=bg.querySelector("#p-mo");
+  if(moBtn) moBtn.onclick=()=>doMO(moBtn,false);
+  const moRe=bg.querySelector("#p-mo-re");
+  if(moRe) moRe.onclick=()=>doMO(moRe,true);
   const copyBtn=bg.querySelector("#p-copysib");
   if(copyBtn) copyBtn.onclick=async()=>{
     const f={};
