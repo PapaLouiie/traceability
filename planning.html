@@ -127,6 +127,9 @@
     border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
     box-shadow:0 6px 20px rgba(0,0,0,.3)}
   #toTop:hover{background:var(--orange)}
+  .mobadge{background:#e6f6ec;color:#1c7c3f;border:1px solid #bfe6cd;border-radius:7px;padding:1px 7px;font-size:10.5px;font-weight:800;letter-spacing:.3px}
+  html[data-theme="dark"] .mobadge{background:#12331f;color:#7fd8a0;border-color:#1d5232}
+  .mobadge.mini{padding:0 4px;font-size:9px}
   .attbtn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:3px 7px;cursor:pointer;font-size:12px}
   .attbtn:hover{border-color:var(--orange)}
   .colf th{padding:4px 6px}
@@ -297,7 +300,7 @@ const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;
 const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold",Completed:"ok"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
-let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="";
+let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="", MOF="";
 let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone", AFPF="";
 const DNLABEL={assigned:"Ready",confirmed:"Waiting",waiting:"Waiting (other op)",done:"Done",draft:"Draft"};
 const GEXP=new Set();
@@ -483,6 +486,11 @@ function renderShell(){
           <option value="show">Cancelled: show</option>
           <option value="only">Cancelled only</option>
         </select>
+        <select id="moFilter" style="max-width:130px">
+          <option value="">MO: all</option>
+          <option value="with">With MO</option>
+          <option value="without">Without MO</option>
+        </select>
         <select id="sortSel" style="max-width:150px">
           <option value="recent">Sort: recent</option>
           <option value="week_asc">Week, earliest</option>
@@ -514,6 +522,7 @@ function renderShell(){
   }
   SEARCHCTL=chipSearch("qBox","q",()=>drawSoon(),true);
   document.getElementById("fabFilter").onchange=e=>{ FABFILTER=e.target.value; draw(); };
+  document.getElementById("moFilter").onchange=e=>{ MOF=e.target.value; draw(); };
   document.getElementById("stockFilter").onchange=e=>{ STOCKF=e.target.value; draw(); };
   document.getElementById("indFilter").onchange=e=>{ INDF=e.target.value; draw(); };
   document.getElementById("statusFilter").onchange=e=>{ STATUSF=e.target.value; draw(); };
@@ -633,6 +642,27 @@ async function loadAttCounts(){
   }catch(e){}
 }
 function cleanSales(v){ return (v||"").replace(/^\s*\d+[\s\-._:]*/,""); }
+function appDialog({title, html, buttons, tone}){
+  return new Promise(res=>{
+    const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex"; bg.style.zIndex=1004;
+    bg.innerHTML=`<div class="modal" style="max-width:460px">
+      <h2 style="margin-top:0;display:flex;align-items:center;gap:9px">${tone==="warn"?'<span style="color:var(--orange);font-size:22px">\u26a0</span>':""}${esc(title)}</h2>
+      <div style="font-size:13.5px;line-height:1.55">${html}</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+        ${buttons.map((b,i)=>`<button class="btn ${b.cls||"ghost"}" data-dv="${i}">${esc(b.label)}</button>`).join("")}
+      </div></div>`;
+    document.body.appendChild(bg);
+    const done=v=>{ bg.remove(); res(v); };
+    bg.querySelectorAll("[data-dv]").forEach(b=>b.onclick=()=>done(buttons[+b.dataset.dv].value));
+    bg.onclick=e=>{ if(e.target===bg) done(null); };
+  });
+}
+function appConfirm(title, html, okLabel, tone){
+  return appDialog({title, html, tone, buttons:[
+    {label:"Cancel", value:false, cls:"ghost"},
+    {label:okLabel||"Confirm", value:true, cls:tone==="warn"?"danger":"primary"},
+  ]}).then(v=>!!v);
+}
 async function attachModal(planId){
   const canA=may("planning","edit");
   const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
@@ -709,8 +739,10 @@ async function createMO(planId, force){
 function moEligible(p){
   if(!p.odoo_variant_id) return "no Odoo product reference";
   if(p.odoo_state==="cancel") return "delivery cancelled";
+  if(!["Pushed","Accepted"].includes(p.plan_status)) return "plan not pushed yet";
   if(!(p.planned_qty??p.so_qty)) return "no planned qty";
-  if(!p.planned_date) return "no planned date";
+  if(!p.planned_date) return "no planned week";
+  if(p.bom_stock_status!=="In Stock") return "stock not marked In Stock";
   return null;
 }
 function aiTargets(mode){
@@ -770,6 +802,8 @@ function filtered(){
   if(FABFILTER==="fab") rows=rows.filter(p=>p.needs_fabrication);
   else if(FABFILTER==="nofab") rows=rows.filter(p=>!p.needs_fabrication);
   if(STOCKF) rows=rows.filter(p=>p.bom_stock_status===STOCKF);
+  if(MOF==="with") rows=rows.filter(p=>p.odoo_mo);
+  else if(MOF==="without") rows=rows.filter(p=>!p.odoo_mo);
   if(INDF) rows=rows.filter(p=>p.plan_indicator===INDF);
   if(STATUSF) rows=rows.filter(p=>p.plan_status===STATUSF);
   if(WEEKF) rows=rows.filter(p=>p.planned_date && isoWeekStr(p.planned_date)===WEEKF);
@@ -807,6 +841,7 @@ function cardHTML(p){
       ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
       ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED</span>':""}
       ${p.odoo_state==="cancel"?'<span class="late">CANCELLED</span>':""}
+      ${p.odoo_mo?`<span class="mobadge" title="${esc(p.odoo_mo)}">\u2699 MO</span>`:""}
       ${ATTMAP[p.id]?`<span title="${ATTMAP[p.id]} attachment(s)" style="font-size:11px">\ud83d\udcce${ATTMAP[p.id]}</span>`:""}</div>
     <div class="m">${esc(p.product_name||p.model||"")}${p.planned_qty?` &middot; qty ${p.planned_qty}`:""}</div>
     <div class="m">${esc(p.customer||"")}${p.sales_person?" &middot; "+esc(p.sales_person):""}</div>
@@ -992,7 +1027,7 @@ function miniCardHTML(p){
     ${mrib}
     <div class="l1"><b>${esc(p.odoo_so||p.model||"plan")}</b>${p.planned_qty?" \u00b7 "+p.planned_qty:""}
       ${stock?`<span class="mstock" data-s="${esc(p.bom_stock_status)}">${stock}</span>`:""}
-      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}${ATTMAP[p.id]?'<span style="font-size:9px">\ud83d\udcce</span>':""}</div>
+      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}${p.odoo_mo?'<span class="mobadge mini" title="'+esc(p.odoo_mo)+'">M</span>':""}${ATTMAP[p.id]?'<span style="font-size:9px">\ud83d\udcce</span>':""}</div>
     <div class="l2">${esc(prod)}${cust?` \u00b7 <i>${esc(cust)}</i>`:""}</div></div>`;
 }
 function drawCalendar(v){
@@ -1146,6 +1181,7 @@ function drawSheet(v){
         if(k==="needs_fabrication") val=String(!!p.needs_fabrication);
         if(k==="record_kind") val=p.record_kind||"Production";
         if(k==="sales_person") val=cleanSales(val);
+        if(k==="odoo_mo") return `<td>${val?`<span class="chip" data-tone="ok" style="font-weight:700">\u2699 ${esc(val)}</span>`:""}</td>`;
         if(ty==="ro") return `<td>${esc(val)}</td>`;
         if(!canEdit) return `<td>${k==="planned_date"?esc(weekLabel(val)):esc(val)}</td>`;
         if(ty==="week")
@@ -1257,17 +1293,23 @@ function drawSheet(v){
     if(!fresh.length&&!withMO.length){
       return banner("None of the selected plans can get an MO ("+(ineligible[0]?.why||"nothing eligible")+").");
     }
-    let msg=`Create DRAFT manufacturing orders in Odoo for ${fresh.length+withMO.length} plan(s)?`;
-    if(ineligible.length) msg+=`\n\n${ineligible.length} will be skipped (${[...new Set(ineligible.map(x=>x.why))].join(", ")}).`;
-    msg+=`\n\nNothing will be confirmed automatically.`;
-    if(!confirm(msg)) return;
-    let doForce=false;
+    const ok1=await appConfirm("Create draft MOs in Odoo",
+      `Draft manufacturing orders will be created for <b>${fresh.length+withMO.length}</b> plan(s).`+
+      (ineligible.length?`<br><br><b>${ineligible.length}</b> will be skipped: ${esc([...new Set(ineligible.map(x=>x.why))].join(", "))}.`:"")+
+      `<br><br>Nothing is confirmed automatically.`,"Continue");
+    if(!ok1) return;
+    let mode="fresh";
     if(withMO.length){
-      doForce=confirm(`${withMO.length} of the selected plan(s) ALREADY have MOs in Odoo:\n`+
-        withMO.slice(0,8).map(p=>`  ${p.odoo_mo} (${p.odoo_so||""})`).join("\n")+(withMO.length>8?"\n  ...":"")+
-        `\n\nPlease check Odoo first: only recreate if those MOs were deleted there (for example to fix a BOM).\n\nOK = recreate MOs for these too.\nCancel = skip them and only create the ${fresh.length} new one(s).`);
-      if(!doForce&&!fresh.length) return;
+      mode=await appDialog({ title:"Some plans already have MOs", tone:"warn",
+        html:`<b>${withMO.length}</b> of the selected plan(s) already have MOs in Odoo:<br><div style="margin:8px 0;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:12.5px">${withMO.slice(0,8).map(p=>`${esc(p.odoo_mo)} <span style="color:var(--muted)">(${esc(p.odoo_so||"")})</span>`).join("<br>")}${withMO.length>8?"<br>...":""}</div>Please check Odoo first. Only recreate MOs that were deleted there, for example to fix a BOM.`,
+        buttons:[
+          {label:"Cancel", value:null, cls:"ghost"},
+          ...(fresh.length?[{label:`Skip these, create ${fresh.length} new`, value:"fresh", cls:"ghost"}]:[]),
+          {label:"Recreate these too", value:"force", cls:"danger"},
+        ]});
+      if(mode===null) return;
     }
+    const doForce=mode==="force";
     const work=doForce?fresh.concat(withMO):fresh;
     shMOBtn.disabled=true;
     let ok=0, fail=0, firstErr="";
@@ -1659,9 +1701,15 @@ async function planModal(pLite){
     const bad=moEligible(p); if(bad) return mErr("Cannot create MO: "+bad+".");
     const q=p.planned_qty??p.so_qty, d=p.planned_date;
     if(force){
-      if(!confirm(`An MO was already created for this plan (${p.odoo_mo}).\n\nPlease check Odoo first: only recreate if that MO was deleted there (for example to fix the BOM or item selection).\n\nProceed and create a NEW draft MO?`)) return;
+      const ok=await appConfirm("MO already created",
+        `An MO was already created for this plan: <b>${esc(p.odoo_mo)}</b>.<br><br>Please check Odoo first. Only recreate if that MO was deleted there, for example to fix the BOM or the item selection.<br><br>Proceed and create a <b>new draft MO</b>?`,
+        "Recreate MO","warn");
+      if(!ok) return;
     } else {
-      if(!confirm(`Create a DRAFT manufacturing order in Odoo?\n\nProduct: ${p.product_name||""}\nQty: ${q}\nScheduled: ${d}\n\nIt will NOT be confirmed automatically.`)) return;
+      const ok=await appConfirm("Create draft MO in Odoo",
+        `<b>${esc(p.product_name||"")}</b><br>Qty: <b>${q}</b> \u00b7 Scheduled: <b>${esc(d)}</b><br><br>The MO is created in <b>Draft</b>. Nothing is confirmed automatically.`,
+        "Create MO");
+      if(!ok) return;
     }
     btn.disabled=true; gbusy(true);
     try{
