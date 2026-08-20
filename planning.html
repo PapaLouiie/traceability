@@ -127,6 +127,8 @@
     border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
     box-shadow:0 6px 20px rgba(0,0,0,.3)}
   #toTop:hover{background:var(--orange)}
+  a.mobadge{text-decoration:none}
+  a.mobadge:hover, a .chip:hover{filter:brightness(.93)}
   .mobadge{background:#e6f6ec;color:#1c7c3f;border:1px solid #bfe6cd;border-radius:7px;padding:1px 7px;font-size:10.5px;font-weight:800;letter-spacing:.3px}
   html[data-theme="dark"] .mobadge{background:#12331f;color:#7fd8a0;border-color:#1d5232}
   .mobadge.mini{padding:0 4px;font-size:9px}
@@ -628,7 +630,7 @@ function banner(msg,ok){
 const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_person,region,model,"+
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
   "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,odoo_mo,"+
-  "sort_order,created_by,updated_by,updated_at,created_at";
+  "sort_order,created_by,updated_by,updated_at,created_at,odoo_mo_id";
 let ATTMAP={};   // plan_id -> attachment count
 async function loadAttCounts(){
   try{
@@ -736,6 +738,12 @@ async function createMO(planId, force){
   if(!r.ok||j.error) throw Object.assign(new Error(j.error||("HTTP "+r.status)),{exists:j.exists});
   return j;
 }
+const ODOO_BASE="https://nlco.odoo.com";
+function moLink(p, inner, cls){
+  const body=inner;
+  if(p&&p.odoo_mo_id) return `<a href="${ODOO_BASE}/odoo/manufacturing/${p.odoo_mo_id}" target="_blank" rel="noopener" class="${cls||""}" title="Open ${esc(p.odoo_mo||"MO")} in Odoo" onclick="event.stopPropagation()">${body}</a>`;
+  return `<span class="${cls||""}" title="${esc(p&&p.odoo_mo||"")}">${body}</span>`;
+}
 function moEligible(p){
   if(!p.odoo_variant_id) return "no Odoo product reference";
   if(p.odoo_state==="cancel") return "delivery cancelled";
@@ -840,7 +848,7 @@ function cardHTML(p){
       ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
       ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED</span>':""}
       ${p.odoo_state==="cancel"?'<span class="late">CANCELLED</span>':""}
-      ${p.odoo_mo?`<span class="mobadge" title="${esc(p.odoo_mo)}">\u2699 MO</span>`:""}
+      ${p.odoo_mo?moLink(p,"\u2699 MO","mobadge"):""}
       ${ATTMAP[p.id]?`<span title="${ATTMAP[p.id]} attachment(s)" style="font-size:11px">\ud83d\udcce${ATTMAP[p.id]}</span>`:""}</div>
     <div class="m">${esc(p.product_name||p.model||"")}${p.planned_qty?` &middot; qty ${p.planned_qty}`:""}</div>
     <div class="m">${esc(p.customer||"")}${p.sales_person?" &middot; "+esc(p.sales_person):""}</div>
@@ -1026,7 +1034,7 @@ function miniCardHTML(p){
     ${mrib}
     <div class="l1"><b>${esc(p.odoo_so||p.model||"plan")}</b>${p.planned_qty?" \u00b7 "+p.planned_qty:""}
       ${stock?`<span class="mstock" data-s="${esc(p.bom_stock_status)}">${stock}</span>`:""}
-      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}${p.odoo_mo?'<span class="mobadge mini" title="'+esc(p.odoo_mo)+'">M</span>':""}${ATTMAP[p.id]?'<span style="font-size:9px">\ud83d\udcce</span>':""}</div>
+      ${p.plan_indicator==="Late"?'<span class="late">L</span>':""}${p.needs_fabrication?'<span class="fabb">F</span>':""}${p.odoo_state==="cancel"?'<span class="late">CX</span>':""}${p.odoo_mo?moLink(p,"M","mobadge mini"):""}${ATTMAP[p.id]?'<span style="font-size:9px">\ud83d\udcce</span>':""}</div>
     <div class="l2">${esc(prod)}${cust?` \u00b7 <i>${esc(cust)}</i>`:""}</div></div>`;
 }
 function drawCalendar(v){
@@ -1180,7 +1188,7 @@ function drawSheet(v){
         if(k==="needs_fabrication") val=String(!!p.needs_fabrication);
         if(k==="record_kind") val=p.record_kind||"Production";
         if(k==="sales_person") val=cleanSales(val);
-        if(k==="odoo_mo") return `<td>${val?`<span class="chip" data-tone="ok" style="font-weight:700">\u2699 ${esc(val)}</span>`:""}</td>`;
+        if(k==="odoo_mo") return `<td>${val?moLink(p,`<span class="chip" data-tone="ok" style="font-weight:700">\u2699 ${esc(val)}</span>`):""}</td>`;
         if(ty==="ro") return `<td>${esc(val)}</td>`;
         if(!canEdit) return `<td>${k==="planned_date"?esc(weekLabel(val)):esc(val)}</td>`;
         if(ty==="week")
@@ -1318,7 +1326,7 @@ function drawSheet(v){
       shMOBtn.textContent=`Creating ${i+1}/${work.length}...`;
       try{
         const j=await createMO(work[i].id, doForce&&!!work[i].odoo_mo);
-        work[i].odoo_mo=j.mo; ok++;
+        work[i].odoo_mo=j.mo; work[i].odoo_mo_id=j.mo_id; ok++;
       }catch(e){ fail++; if(!firstErr) firstErr=String(e.message||e); }
     }
     banner(`MOs created: ${ok}${fail?`, failed: ${fail} (first error: ${firstErr})`:""}${ineligible.length?`, skipped: ${ineligible.length}`:""}.`, !fail);
@@ -1585,7 +1593,7 @@ async function planModal(pLite){
         <button class="btn ghost" id="p-split">Split qty</button>
         ${p?`<button class="btn ghost" id="p-att" type="button">\ud83d\udcce Attachments${ATTMAP[p.id]?" ("+ATTMAP[p.id]+")":""}</button>`:""}
         ${p&&canEdit?(p.odoo_mo
-          ?`<span class="chip" data-tone="ok" title="Draft MO created in Odoo">MO: ${esc(p.odoo_mo)}</span> <button class="btn ghost sm" id="p-mo-re" type="button" title="Recreate the MO (if it was deleted in Odoo)">\u27f3</button>`
+          ?`${moLink(p,`<span class="chip" data-tone="ok" title="Draft MO created in Odoo. Click to open it.">MO: ${esc(p.odoo_mo)}</span>`)} <button class="btn ghost sm" id="p-mo-re" type="button" title="Recreate the MO (if it was deleted in Odoo)">\u27f3</button>`
           :`<button class="btn ghost" id="p-mo" type="button" title="Create a draft manufacturing order in Odoo">\u2699 Create MO</button>`):""}
         <button class="btn danger" id="p-del" style="margin-left:auto">Delete plan</button>`:""}
       </div>`:""}
@@ -1718,8 +1726,8 @@ async function planModal(pLite){
     try{
       const j=await createMO(p.id, force);
       gbusy(false);
-      p.odoo_mo=j.mo;
-      const row=PLANS.find(x=>x.id===p.id); if(row) row.odoo_mo=j.mo;
+      p.odoo_mo=j.mo; p.odoo_mo_id=j.mo_id;
+      const row=PLANS.find(x=>x.id===p.id); if(row){ row.odoo_mo=j.mo; row.odoo_mo_id=j.mo_id; }
       banner(`Draft MO ${j.mo} created in Odoo.`, true);
       bg.remove(); openPlan(p);
     }catch(e){ gbusy(false); btn.disabled=false; mErr(String(e.message||e)); }
