@@ -741,7 +741,7 @@ async function createMO(planId, force){
 const ODOO_BASE="https://nlco.odoo.com";
 function moLink(p, inner, cls){
   const body=inner;
-  if(p&&p.odoo_mo_id) return `<a href="${ODOO_BASE}/odoo/manufacturing/${p.odoo_mo_id}" target="_blank" rel="noopener" class="${cls||""}" title="Open ${esc(p.odoo_mo||"MO")} in Odoo" onclick="event.stopPropagation()">${body}</a>`;
+  if(p&&p.odoo_mo_id) return `<a href="${ODOO_BASE}/web#id=${p.odoo_mo_id}&model=mrp.production&view_type=form" target="_blank" rel="noopener" class="${cls||""}" title="Open ${esc(p.odoo_mo||"MO")} in Odoo" onclick="event.stopPropagation()">${body}</a>`;
   return `<span class="${cls||""}" title="${esc(p&&p.odoo_mo||"")}">${body}</span>`;
 }
 function moEligible(p){
@@ -758,8 +758,8 @@ function aiTargets(mode){
 }
 
 async function fetchPlans(statuses, liveOnly){
-  const B=1000; let all=[], from=0;
-  while(true){
+  const B=1000, PAR=6;
+  const page=async(from)=>{
     let q=db.from("planned_records").select(LIST_COLS)
       .order("sort_order",{ascending:true}).order("created_at",{ascending:true})
       .order("id",{ascending:true})
@@ -768,9 +768,19 @@ async function fetchPlans(statuses, liveOnly){
     if(liveOnly) q=q.or("odoo_state.is.null,odoo_state.not.in.(done,cancel)");
     const { data, error }=await q;
     if(error) throw error;
-    all=all.concat(data||[]);
-    if(!data || data.length<B || from>=99000) break;
-    from+=B;
+    return data||[];
+  };
+  let all=await page(0);
+  if(all.length<B) return all;
+  let from=B, done=false;
+  while(!done && from<99000){
+    const starts=[]; for(let i=0;i<PAR && from+i*B<99000;i++) starts.push(from+i*B);
+    const parts=await Promise.all(starts.map(page));
+    for(const part of parts){
+      all=all.concat(part);
+      if(part.length<B){ done=true; break; }
+    }
+    from+=PAR*B;
   }
   return all;
 }
