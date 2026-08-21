@@ -757,7 +757,7 @@ function aiTargets(mode){
     &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
 }
 
-async function fetchPlans(statuses, excludeStatuses){
+async function fetchPlans(statuses, liveOnly){
   const B=1000; let all=[], from=0;
   while(true){
     let q=db.from("planned_records").select(LIST_COLS)
@@ -765,7 +765,7 @@ async function fetchPlans(statuses, excludeStatuses){
       .order("id",{ascending:true})
       .range(from, from+B-1);
     if(statuses) q=q.in("plan_status",statuses);
-    else if(excludeStatuses) q=q.not("plan_status","in","("+excludeStatuses.map(x=>'"'+x+'"').join(",")+")");
+    if(liveOnly) q=q.or("odoo_state.is.null,odoo_state.not.in.(done,cancel)");
     const { data, error }=await q;
     if(error) throw error;
     all=all.concat(data||[]);
@@ -776,8 +776,11 @@ async function fetchPlans(statuses, excludeStatuses){
 }
 async function load(){
   try{
-    // working statuses paint first; accepted history arrives behind them
-    const active=await fetchPlans(["Draft","Pushed","Returned"]);
+    // fast first paint: only what the default view shows (live DNs);
+    // the full fetch below remains the source of truth for everything
+    let active;
+    try{ active=await fetchPlans(["Draft","Pushed","Returned"], true); }
+    catch(e){ active=await fetchPlans(["Draft","Pushed","Returned"]); }
     PLANS=active; draw();
     const everything=await fetchPlans(null);
     await loadAttCounts();
