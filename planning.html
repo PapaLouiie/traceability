@@ -608,7 +608,10 @@ function renderShell(){
       if(j.error) banner("Sync failed: "+j.error);
       else { try{ localStorage.setItem("nlc-last-sync", String(Date.now())); }catch(e){}
         const rm=document.getElementById("syncRemind"); if(rm) rm.remove();
-        banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+(j.note?` ${j.note}`:""),true); await load(); }
+        const tms=j.timings?` (odoo ${Math.round(((j.timings.pickings_ms||0)+(j.timings.moves_ms||0)+(j.timings.sales_and_prep_ms||0))/1000)}s, db ${Math.round((j.timings.upsert_and_heal_ms||0)/1000)}s)`:"";
+        banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+tms,true);
+        if(SNAP_T){ await applyDelta(); await loadAttCounts(); draw(); }
+        else await load(); }
     }catch(e){ banner("Sync failed: "+e.message+". Is the odoo-sync function deployed?"); }
     busy(false);
     sb.disabled=false; sb.textContent="Sync from Odoo";
@@ -757,7 +760,52 @@ function aiTargets(mode){
     &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
 }
 
-async function fetchPlans(statuses, liveOnly){
+const SNAP_KEY="nlc-plans-snap-"+LIST_COLS.length;
+let SNAP_T=null;   // ISO time the local snapshot is valid to
+function saveSnap(){
+  try{
+    localStorage.setItem(SNAP_KEY, JSON.stringify({ t:SNAP_T, rows:PLANS }));
+  }catch(e){ try{ localStorage.removeItem(SNAP_KEY); }catch(_){} }
+}
+function loadSnap(){
+  try{
+    const s=JSON.parse(localStorage.getItem(SNAP_KEY)||"null");
+    if(!s||!s.t||!Array.isArray(s.rows)||!s.rows.length) return null;
+    if(Date.now()-new Date(s.t).getTime() > 48*3600*1000) return null;
+    return s;
+  }catch(e){ return null; }
+}
+async function fetchDelta(sinceIso){
+  const B=1000; let out=[], from=0;
+  const since=new Date(new Date(sinceIso).getTime()-180000).toISOString();
+  while(true){
+    const { data, error }=await db.from("planned_records").select(LIST_COLS)
+      .gte("updated_at", since)
+      .order("updated_at",{ascending:true}).order("id",{ascending:true})
+      .range(from, from+B-1);
+    if(error) throw error;
+    out=out.concat(data||[]);
+    if(!data||data.length<B||from>=20000) break;
+    from+=B;
+  }
+  return out;
+}
+async function applyDelta(){
+  if(!SNAP_T) return false;
+  const t0=new Date().toISOString();
+  const delta=await fetchDelta(SNAP_T);
+  if(delta.length){
+    const byId=new Map(PLANS.map((p,i)=>[p.id,i]));
+    for(const r of delta){
+      const i=byId.get(r.id);
+      if(i==null){ byId.set(r.id, PLANS.length); PLANS.push(r); }
+      else PLANS[i]=r;
+    }
+  }
+  SNAP_T=t0; saveSnap();
+  return delta.length>0;
+}
+async function fetchPlans(statuses, liveOnly, historyOnly){
   const B=1000, PAR=6;
   const page=async(from)=>{
     let q=db.from("planned_records").select(LIST_COLS)
@@ -766,6 +814,7 @@ async function fetchPlans(statuses, liveOnly){
       .range(from, from+B-1);
     if(statuses) q=q.in("plan_status",statuses);
     if(liveOnly) q=q.or("odoo_state.is.null,odoo_state.not.in.(done,cancel)");
+    if(historyOnly) q=q.in("odoo_state",["done","cancel"]);
     const { data, error }=await q;
     if(error) throw error;
     return data||[];
@@ -786,17 +835,29 @@ async function fetchPlans(statuses, liveOnly){
 }
 async function load(){
   try{
-    // fast first paint: only what the default view shows (live DNs);
-    // the full fetch below remains the source of truth for everything
-    let active;
-    try{ active=await fetchPlans(["Draft","Pushed","Returned"], true); }
-    catch(e){ active=await fetchPlans(["Draft","Pushed","Returned"]); }
-    PLANS=active; draw();
-    const everything=await fetchPlans(null);
-    await loadAttCounts();
-    const activeIds=new Set(active.map(p=>p.id));
-    const accepted=everything.filter(p=>!activeIds.has(p.id));
-    PLANS=active.concat(accepted); draw();
+    const snap=loadSnap();
+    if(snap){
+      // warm path: paint the snapshot instantly, then merge only changes
+      PLANS=snap.rows; SNAP_T=snap.t; draw();
+      loadAttCounts().then(()=>draw());
+      const changed=await applyDelta();
+      if(changed) draw();
+    } else {
+      // cold path: live rows first for a fast paint, then only the
+      // shipped/cancelled complement (never the same rows twice)
+      const t0=new Date().toISOString();
+      let active;
+      try{ active=await fetchPlans(["Draft","Pushed","Returned"], true); }
+      catch(e){ active=await fetchPlans(["Draft","Pushed","Returned"]); }
+      PLANS=active; draw();
+      loadAttCounts().then(()=>draw());
+      let rest;
+      try{ rest=await fetchPlans(null, false, true); }
+      catch(e){ rest=(await fetchPlans(null)).filter(p=>!active.some(a=>a.id===p.id)); }
+      const seen=new Set(active.map(p=>p.id));
+      PLANS=active.concat(rest.filter(p=>!seen.has(p.id))); draw();
+      SNAP_T=t0; saveSnap();
+    }
     if(may("planning","edit")){
       const _ab=document.getElementById("aiFillBtn");
       if(_ab){ const _t=aiTargets("live");
