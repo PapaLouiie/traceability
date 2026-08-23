@@ -65,7 +65,7 @@
   html,body{margin:0}
   body{font-family:"Bizmo","Bizmo Semi Bold",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg); color:var(--ink); line-height:1.45; -webkit-font-smoothing:antialiased}
-  .wrap{max-width:760px; margin:0 auto; padding:0 16px 60px}
+  .wrap{max-width:1280px; margin:0 auto; padding:0 20px 60px}
   body.wide .wrap{max-width:96vw}
   body.wide .bom-table{min-width:0; width:100%; table-layout:fixed}
   body.wide .bom-table th:nth-child(1){width:13%}
@@ -76,7 +76,7 @@
   body.wide .bom-table td.bom-cell input{min-width:0}
 
   header{background:var(--navy); color:#fff; padding:14px 16px; border-bottom:3px solid var(--orange)}
-  .head-in{max-width:760px; margin:0 auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; row-gap:4px}
+  .head-in{max-width:1280px; margin:0 auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; row-gap:4px}
   .brand-logo{height:32px; width:auto; display:block; flex:none}
   .brand-tag{font-size:11px; letter-spacing:2.5px; text-transform:uppercase; color:#b9bce0;
     padding-left:12px; border-left:1px solid rgba(255,255,255,.28)}
@@ -193,6 +193,20 @@
 
   /* login */
   .login{max-width:380px; margin:60px auto; padding:0 16px}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .toolbar select,.toolbar input:not([type=checkbox]),.toolbar .btn{height:36px;box-sizing:border-box}
+  tfoot td{font-weight:700;border-top:2px solid var(--line);padding:8px 6px;vertical-align:middle}
+  @media(max-width:700px){
+    .wrap{padding:0 10px 80px}
+    .head-in{gap:6px}
+    .brand-home{padding:4px 8px;font-size:11.5px}
+    .toolbar select,.toolbar input:not([type=checkbox]){flex:1 1 46%;min-width:0}
+    .toolbar .btn{flex:0 0 auto}
+    table{font-size:12px;min-width:0}
+    .tbl-wrap{margin:0 -10px;border-radius:0;border-left:none;border-right:none}
+    .modal{max-width:96vw}
+    .rec{flex-wrap:wrap}
+  }
   .login .card{margin-top:0}
   .login .logo-wrap{text-align:center; margin-bottom:22px}
   .login .logo-wrap img{height:40px}
