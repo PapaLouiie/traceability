@@ -391,6 +391,29 @@ const may=(s,w)=>{ const p=PERMS[s]; if(!p) return true; return w==="edit"?!!p.e
   const { data:lt }=await db.from("light_types").select("name").order("name");
   LIGHT_TYPES=(lt||[]).map(x=>x.name);
   try{ const { data:r0 }=await db.rpc("my_role"); ROLE=r0||""; }catch(e){}
+  try{
+    db.from("app_releases").select("version").order("released_on",{ascending:false}).order("created_at",{ascending:false}).limit(1)
+      .then(({data})=>{ if(data&&data[0]&&data[0].version&&data[0].version!==APP_VERSION){
+        APP_VERSION=data[0].version;
+        try{ localStorage.setItem("nlc-latest-version",APP_VERSION); }catch(e){}
+        maybeToast();
+      } else maybeToast(); }).catch(()=>{});
+    function maybeToast(){
+    const seenV=localStorage.getItem("nlc-seen-version");
+    if(seenV && seenV!==APP_VERSION){
+      setTimeout(()=>{
+        const t=document.createElement("div");
+        t.style.cssText="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:1500;background:var(--navy,#24275E);color:#fff;padding:11px 18px;border-radius:12px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center";
+        t.innerHTML='ProTrace updated to v'+APP_VERSION+' \u00b7 <a href="changelog.html" target="_blank" style="color:#F6851F;font-weight:700">Release notes</a>';
+        const x=document.createElement("button");
+        x.textContent="\u00d7"; x.style.cssText="background:none;border:none;color:#c3c6e6;font-size:16px;cursor:pointer";
+        x.onclick=()=>t.remove(); t.appendChild(x);
+        document.body.appendChild(t); setTimeout(()=>t.remove(), 12000);
+      },2600);
+    }
+    localStorage.setItem("nlc-seen-version", APP_VERSION);
+    }
+  }catch(e){}
   renderShell(); await load();
   // remind planners when the sync has not run for a while on this device
   if(may("planning","edit")){
@@ -760,6 +783,7 @@ function aiTargets(mode){
     &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
 }
 
+let APP_VERSION=(function(){try{return localStorage.getItem("nlc-latest-version")||"1.0.0";}catch(e){return "1.0.0";}})();
 const SNAP_KEY="nlc-plans-snap-"+LIST_COLS.length;
 let SNAP_T=null;   // ISO time the local snapshot is valid to
 function saveSnap(){
