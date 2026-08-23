@@ -691,7 +691,7 @@ function banner(msg,ok){
 const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_person,region,model,"+
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
   "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,odoo_mo,"+
-  "sort_order,created_by,updated_by,updated_at,created_at,odoo_mo_id";
+  "sort_order,created_by,updated_by,updated_at,created_at,odoo_mo_id,odoo_variant_id,odoo_ref";
 let ATTMAP={};   // plan_id -> attachment count
 async function loadAttCounts(){
   try{
@@ -2030,8 +2030,9 @@ async function planModal(pLite){
       if(isNaN(k)||k<1||k>total-1){ smsg(`Keep must be between 1 and ${total-1}.`); return; }
       busy(true);
       const { data:sib, error }=await db.rpc("split_plan",{ p_id:p.id, p_first_qty:k });
+      if(error){ busy(false); smsg(error.message); return; }
+      if(sib&&sib.id){ try{ await db.rpc("copy_plan_meta",{ p_from:p.id, p_to:sib.id }); }catch(e){} }
       busy(false);
-      if(error){ smsg(error.message); return; }
       sclose();
       banner(`Split done: this plan now has ${k} pieces, the new draft has ${sib.planned_qty}.`,true);
       close(); await load();
