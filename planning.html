@@ -234,6 +234,20 @@
     border-radius:50%; animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .login{max-width:380px; margin:60px auto; padding:0 16px; text-align:center}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .toolbar select,.toolbar input:not([type=checkbox]),.toolbar .btn{height:36px;box-sizing:border-box}
+  #shTable tfoot td{font-weight:700;border-top:2px solid var(--line);padding:8px 6px;vertical-align:middle}
+  @media(max-width:700px){
+    .wrap{padding:0 10px 90px}
+    .toolbar select,.toolbar input:not([type=checkbox]){flex:1 1 46%;min-width:0}
+    .kb,.kb.kb5{display:flex;overflow-x:auto;grid-template-columns:none;gap:10px;padding-bottom:8px}
+    .kb>*{min-width:250px;flex:0 0 250px}
+    .modal{max-width:96vw}
+    .qrow{flex-direction:column;align-items:stretch;gap:8px}
+    .qrow .act{flex-wrap:wrap;justify-content:flex-start}
+    table{font-size:12px}
+    .tbl-wrap{margin:0 -10px;border-radius:0;border-left:none;border-right:none}
+  }
   .login img{height:40px; margin-bottom:20px}
   .login .card{background:#fff; border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow);
     padding:18px; text-align:left}
@@ -302,7 +316,7 @@ const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;
 const STATUSES=["Draft","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Pushed:"info",Accepted:"ok",Returned:"hold",Completed:"ok"};
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
-let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="", MOF="";
+let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="", MOF="", BACKLOGF=false;
 let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone", AFPF="";
 const DNLABEL={assigned:"Ready",confirmed:"Waiting",waiting:"Waiting (other op)",done:"Done",draft:"Draft"};
 const GEXP=new Set();
@@ -415,6 +429,27 @@ const may=(s,w)=>{ const p=PERMS[s]; if(!p) return true; return w==="edit"?!!p.e
     }
   }catch(e){}
   renderShell(); await load();
+  // backlog warning: plans planned before the current week, still open
+  function refreshBacklogBar(){
+    try{
+      const n=PLANS.filter(isBacklog).length;
+      let bar=document.getElementById("backlogBar");
+      if(!n){ if(bar) bar.remove(); return; }
+      if(!bar){
+        bar=document.createElement("div");
+        bar.className="sync-remind"; bar.id="backlogBar";
+        const tb=document.querySelector(".toolbar");
+        tb.parentNode.insertBefore(bar, tb);
+      }
+      bar.innerHTML=`<b>${n} plan(s) are planned before this week</b> and are still open:
+        missed, not yet accepted, or not returned.
+        <button class="btn orange sm" id="bl-show">${BACKLOGF?"Show all plans":"Show backlog"}</button>`;
+      bar.querySelector("#bl-show").onclick=()=>{ BACKLOGF=!BACKLOGF; draw(); refreshBacklogBar(); };
+    }catch(e){}
+  }
+  refreshBacklogBar();
+  const _draw0=draw;
+  draw=function(){ _draw0(); try{ refreshBacklogBar(); }catch(e){} };
   // remind planners when the sync has not run for a while on this device
   if(may("planning","edit")){
     try{
@@ -778,6 +813,25 @@ function moEligible(p){
   if(p.bom_stock_status!=="In Stock") return "stock not marked In Stock";
   return null;
 }
+function isBacklog(p){
+  return ["Draft","Pushed","Returned"].includes(p.plan_status)
+    && p.planned_date && p.planned_date<weekStartToday()
+    && p.odoo_state!=="done" && p.odoo_state!=="cancel";
+}
+function isoWeekBounds(dateStr){
+  const dt=new Date(dateStr+"T00:00:00");
+  if(isNaN(dt)) return [null,null];
+  const off=(dt.getDay()+6)%7;
+  const mon=new Date(dt); mon.setDate(dt.getDate()-off);
+  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const f=x=>x.toISOString().slice(0,10);
+  return [f(mon),f(sun)];
+}
+function weekStartToday(){
+  const t=new Date(); const off=(t.getDay()+6)%7;
+  const mon=new Date(t); mon.setDate(t.getDate()-off);
+  return mon.toISOString().slice(0,10);
+}
 function aiTargets(mode){
   return PLANS.filter(p=>["Draft","Returned"].includes(p.plan_status)&&!p.model&&(p.c_ref||p.product_name)
     &&(mode==="cancelled" ? p.odoo_state==="cancel" : (p.odoo_state!=="done"&&p.odoo_state!=="cancel")));
@@ -909,6 +963,7 @@ function filtered(){
   if(STOCKF) rows=rows.filter(p=>p.bom_stock_status===STOCKF);
   if(MOF==="with") rows=rows.filter(p=>p.odoo_mo);
   else if(MOF==="without") rows=rows.filter(p=>!p.odoo_mo);
+  if(BACKLOGF) rows=rows.filter(isBacklog);
   if(INDF) rows=rows.filter(p=>p.plan_indicator===INDF);
   if(STATUSF) rows=rows.filter(p=>p.plan_status===STATUSF);
   if(WEEKF) rows=rows.filter(p=>p.planned_date && isoWeekStr(p.planned_date)===WEEKF);
@@ -1495,8 +1550,15 @@ function drawSheet(v){
 function drawQueue(v){
   const rows=filtered().filter(p=>p.plan_status==="Pushed");
   const canAccept=may("records","edit");
-  v.innerHTML=rows.length?rows.map(p=>`
+  const bulkBar=canAccept&&rows.length?`
+    <div class="toolbar" style="margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="qAll"> Select all</label>
+      <button class="btn primary" id="qAccSel" disabled>Accept selected (0)</button>
+      <button class="btn danger" id="qRetSel" disabled>Return selected (0)</button>
+    </div>`:"";
+  v.innerHTML=bulkBar+(rows.length?rows.map(p=>`
     <div class="qrow">
+      ${canAccept?`<input type="checkbox" class="qSel" data-qsel="${p.id}" style="margin-top:4px">`:""}
       <div class="info">
         <div class="t">${p.afp===true?'<span class="chip" data-tone="ok" style="margin-right:6px">AFP</span>':(p.afp===false?'<span class="chip" data-tone="hold" style="margin-right:6px">Not AFP</span>':"")}${esc(p.odoo_so||p.sap_so||"(no SO)")} &middot; ${esc(p.model||p.product_name||"")}
           ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}</div>
@@ -1505,13 +1567,28 @@ function drawQueue(v){
       </div>
       ${canAccept?`<div class="act">
         <select data-line="${p.id}"><option value="">Choose line\u2026</option>${CONVEYORS.map(c=>`<option>${c}</option>`).join("")}</select>
-        <input type="date" data-date="${p.id}" value="${esc(p.planned_date||new Date().toISOString().slice(0,10))}">
+        <input type="date" data-date="${p.id}" value="${esc(p.planned_date||new Date().toISOString().slice(0,10))}"${p.planned_date?(()=>{const[a,b]=isoWeekBounds(p.planned_date);return a?` min="${a}" max="${b}" title="Within the planned ISO week (${a} to ${b})"`:"";})():""}>
         <button class="btn primary sm" data-acc="${p.id}">Accept</button>
         <button class="btn danger" data-ret="${p.id}">Return</button>
       </div>`:'<div class="act"><span class="chip" data-tone="info">Awaiting assembly</span></div>'}
     </div>`).join("")
-  :`<div class="empty">No pushed plans waiting. ${may("planning","edit")?"Push a ready plan from the kanban.":""}</div>`;
+  :`<div class="empty">No pushed plans waiting. ${may("planning","edit")?"Push a ready plan from the kanban.":""}</div>`);
   if(!canAccept) return;
+  const selCount=()=>[...v.querySelectorAll(".qSel:checked")].length;
+  const refreshSel=()=>{
+    const n=selCount();
+    const a=v.querySelector("#qAccSel"), r=v.querySelector("#qRetSel");
+    if(a){ a.disabled=!n; a.textContent=`Accept selected (${n})`; }
+    if(r){ r.disabled=!n; r.textContent=`Return selected (${n})`; }
+  };
+  v.querySelectorAll(".qSel").forEach(c=>c.onchange=refreshSel);
+  const qa=v.querySelector("#qAll");
+  if(qa) qa.onchange=()=>{ v.querySelectorAll(".qSel").forEach(c=>c.checked=qa.checked); refreshSel(); };
+  const selIds=()=>[...v.querySelectorAll(".qSel:checked")].map(c=>c.dataset.qsel);
+  const accB=v.querySelector("#qAccSel");
+  if(accB) accB.onclick=()=>bulkAcceptModal(selIds());
+  const retB=v.querySelector("#qRetSel");
+  if(retB) retB.onclick=()=>returnModal(selIds());
   v.querySelectorAll("[data-acc]").forEach(b=>b.onclick=async()=>{
     const id=b.dataset.acc;
     const line=v.querySelector(`[data-line="${id}"]`).value||null;
@@ -1525,10 +1602,69 @@ function drawQueue(v){
   v.querySelectorAll("[data-ret]").forEach(b=>b.onclick=()=>returnModal(b.dataset.ret));
 }
 
+/* ---------------- bulk accept modal ---------------- */
+function bulkAcceptModal(ids){
+  const plans=ids.map(id=>PLANS.find(p=>p.id===id)).filter(Boolean);
+  if(!plans.length) return;
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:720px"><div class="mh">Accept ${plans.length} plan(s)<span class="x">&times;</span></div>
+    <div class="mb">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;font-size:12.5px">
+        <span style="color:var(--muted)">Set all:</span>
+        <select id="ba-line-all" style="height:32px"><option value="">line\u2026</option>${CONVEYORS.map(c=>`<option>${c}</option>`).join("")}</select>
+      </div>
+      <div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table style="min-width:0">
+        <thead><tr><th>Plan</th><th style="width:110px">Qty</th><th style="width:150px">Line</th><th style="width:160px">Date (in week)</th></tr></thead>
+        <tbody>${plans.map(p=>{
+          const [a,b]=p.planned_date?isoWeekBounds(p.planned_date):[null,null];
+          return `<tr>
+            <td><b>${esc(p.odoo_so||p.sap_so||"")}</b><div style="font-size:11px;color:var(--muted)">${esc(p.model||p.product_name||"")}</div></td>
+            <td>${p.planned_qty??"?"}</td>
+            <td><select data-ba-line="${p.id}"><option value="">line\u2026</option>${CONVEYORS.map(c=>`<option>${c}</option>`).join("")}</select></td>
+            <td><input type="date" data-ba-date="${p.id}" value="${esc(p.planned_date||"")}"${a?` min="${a}" max="${b}"`:""}></td>
+          </tr>`;}).join("")}</tbody>
+      </table></div>
+      <div class="banner" id="ba-msg" style="margin-top:10px"></div>
+      <div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">
+        <button class="btn ghost" id="ba-cancel">Cancel</button>
+        <button class="btn primary" id="ba-go">Accept all</button>
+      </div>
+    </div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.querySelector("#ba-cancel").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  bg.querySelector("#ba-line-all").onchange=e=>{
+    if(e.target.value) bg.querySelectorAll("[data-ba-line]").forEach(s2=>s2.value=e.target.value);
+  };
+  bg.querySelector("#ba-go").onclick=async()=>{
+    const msg=bg.querySelector("#ba-msg");
+    const jobs=plans.map(p=>({ p,
+      line:bg.querySelector(`[data-ba-line="${p.id}"]`).value||null,
+      date:bg.querySelector(`[data-ba-date="${p.id}"]`).value||null }));
+    const noLine=jobs.filter(j=>!j.line).length;
+    if(noLine){ msg.textContent=`Choose a line for every plan (${noLine} missing).`; msg.className="banner show err"; return; }
+    const go=bg.querySelector("#ba-go"); go.disabled=true;
+    let ok=0, fail=0, firstErr="", serials=[];
+    for(let i=0;i<jobs.length;i++){
+      go.textContent=`Accepting ${i+1}/${jobs.length}\u2026`;
+      const { data, error }=await db.rpc("accept_plan",{ p_id:jobs[i].p.id, p_line:jobs[i].line, p_date:jobs[i].date });
+      if(error){ fail++; if(!firstErr) firstErr=error.message; }
+      else { ok++; if(data&&data.serial) serials.push(data.serial); }
+    }
+    close();
+    banner(`Accepted ${ok} plan(s)${serials.length?` (${serials.slice(0,4).join(", ")}${serials.length>4?"\u2026":""})`:""}${fail?`; ${fail} failed (${firstErr})`:""}.`, !fail);
+    await load();
+  };
+}
+
 /* ---------------- return reason modal ---------------- */
 function returnModal(id){
+  const ids=Array.isArray(id)?id:[id];
+  if(!ids.length) return;
   const bg=document.createElement("div"); bg.className="modal-bg";
-  bg.innerHTML=`<div class="modal" style="max-width:440px"><div class="mh">Return plan to planner<span class="x">&times;</span></div>
+  bg.innerHTML=`<div class="modal" style="max-width:440px"><div class="mh">Return ${ids.length>1?ids.length+" plans":"plan"} to planner<span class="x">&times;</span></div>
     <div class="mb">
       <div class="field"><label>Reason</label>
         <div class="checks" style="flex-direction:column;align-items:flex-start;gap:9px">
@@ -1569,10 +1705,14 @@ function returnModal(id){
       reason="No stock: "+parts.join(", ");
     }
     busy(true);
-    const { error }=await db.rpc("return_plan",{ p_id:id, p_reason:reason });
+    let ok=0, fail=0, firstErr="";
+    for(const one of ids){
+      const { error }=await db.rpc("return_plan",{ p_id:one, p_reason:reason });
+      if(error){ fail++; if(!firstErr) firstErr=error.message; } else ok++;
+    }
     busy(false);
-    if(error){ const m=bg.querySelector("#rr-msg"); m.textContent=error.message; m.className="banner show err"; return; }
-    close(); banner("Plan returned: "+reason,true); await load();
+    if(fail&&!ok){ const m=bg.querySelector("#rr-msg"); m.textContent=firstErr; m.className="banner show err"; return; }
+    close(); banner(`${ok} plan(s) returned: ${reason}`+(fail?` (${fail} failed: ${firstErr})`:""), !fail); await load();
   };
 }
 
