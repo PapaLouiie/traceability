@@ -195,7 +195,19 @@
   .login{max-width:380px; margin:60px auto; padding:0 16px}
   .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .toolbar select,.toolbar input:not([type=checkbox]),.toolbar .btn{height:36px;box-sizing:border-box}
+  .toolbar select{padding-top:0;padding-bottom:0;line-height:34px}
+  .toolbar input:not([type=checkbox]){padding-top:0;padding-bottom:0}
   tfoot td{font-weight:700;border-top:2px solid var(--line);padding:8px 6px;vertical-align:middle}
+  .cnt-strip{display:flex;align-items:center;gap:18px;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;padding:12px 20px;margin:2px 0 14px;flex-wrap:wrap}
+  .cnt{display:flex;flex-direction:column;line-height:1.15}
+  .cnt .n{font-size:20px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums}
+  .cnt .l{font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-top:2px}
+  .cnt.open .n{color:#2456c9}
+  .cnt.done .n{color:#1c7c3f}
+  .cnt-div{width:1px;height:30px;background:var(--line)}
+  .cnt-note{margin-left:auto;font-size:11.5px;color:var(--muted);font-style:italic}
+  @media(max-width:700px){ .cnt-strip{gap:12px;padding:10px 14px} .cnt .n{font-size:17px} }
   @media(max-width:700px){
     .wrap{padding:0 10px 80px}
     .head-in{gap:6px}
@@ -649,11 +661,13 @@ async function loadList(q){
   ]);
   const totAll=totRes?.count??0, totComp=compRes?.count??0, totOpen=Math.max(0,totAll-totComp);
   const shownTotal=stF==="completed"?totComp:(stF==="open"?totOpen:totAll);
-  const countBar=`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12.5px">
-    <span class="chip">Total ${fmt(totAll)}</span>
-    <span class="chip" data-tone="info">Open ${fmt(totOpen)}</span>
-    <span class="chip" data-tone="ok">Completed ${fmt(totComp)}</span>
-    ${stF!=="all"?`<span style="color:var(--muted)">showing ${stF==="open"?"open":"completed"} only</span>`:""}
+  const countBar=`<div class="cnt-strip">
+    <div class="cnt"><span class="n">${fmt(totAll)}</span><span class="l">Total records</span></div>
+    <div class="cnt-div"></div>
+    <div class="cnt open"><span class="n">${fmt(totOpen)}</span><span class="l">Open</span></div>
+    <div class="cnt-div"></div>
+    <div class="cnt done"><span class="n">${fmt(totComp)}</span><span class="l">Completed</span></div>
+    ${stF!=="all"?`<span class="cnt-note">showing ${stF==="open"?"open":"completed"} only</span>`:""}
   </div>`;
   if(error){
     if(isJwtErr(error)&&await recoverSession()) return loadList(q);
