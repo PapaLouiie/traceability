@@ -1447,6 +1447,7 @@ async function renderBomEditor(){
     <div class="toolbar">
       <div class="tabs" id="bomTabs">
         <button data-src="plans" class="${BOMSRC==="plans"?"on":""}">Planning drafts</button>
+        <button data-src="rejected" class="${BOMSRC==="rejected"?"on":""}">Returned to engineering</button>
         <button data-src="records" class="${BOMSRC==="records"?"on":""}">Production records</button>
       </div>
       <div class="chipsearch" id="bomSearchBox" style="flex:1;min-width:170px"><input id="bomSearch" placeholder="Filter: type a term, press Enter to tag it"></div>
@@ -1462,15 +1463,16 @@ async function renderBomEditor(){
   document.getElementById("back").onclick=renderHome;
   document.querySelectorAll("#bomTabs button").forEach(b=>b.onclick=()=>{ BOMSRC=b.dataset.src; renderBomEditor(); });
 
-  const isPlans=BOMSRC==="plans";
+  const isRejected=BOMSRC==="rejected";
+  const isPlans=BOMSRC==="plans"||isRejected;
   let data=[], error=null;
   const B=1000;
   for(let from=0; from<5000; from+=B){
     let chunk;
     if(isPlans){
       ({ data:chunk, error }=await db.from("planned_records")
-        .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status")
-        .in("plan_status",["Draft","Returned","Pushed"])
+        .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note")
+        .in("plan_status", isRejected?["Returned to Engineering"]:["Draft","Returned","Warehouse","Pushed"])
         .order("created_at",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     } else {
       ({ data:chunk, error }=await db.from("production_records")
@@ -1494,7 +1496,7 @@ async function renderBomEditor(){
   }
   const grid=document.getElementById("bomGrid");
   if(error){ grid.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ grid.innerHTML=`<div class="empty">${isPlans?"No plans in Draft, Returned or Pushed.":"No production records yet."}</div>`; return; }
+  if(!data.length){ grid.innerHTML=`<div class="empty">${isRejected?"Nothing returned to engineering. Plans the warehouse rejects appear here for BOM correction.":(isPlans?"No plans in Draft, Returned, Warehouse or Pushed.":"No production records yet.")}</div>`; return; }
 
   const dirty={};
   const COLS=isPlans
@@ -1520,7 +1522,7 @@ async function renderBomEditor(){
     const wk=wkEl?wkEl.value:"";
     const rows=data.filter(r=>rowVisible(r,q,only,wk));
     grid.innerHTML=`<div class="tbl-wrap"><table class="bom-table"><thead><tr>
-        ${isPlans?`<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="width:90px">Status</th>`
+        ${isPlans?`<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
         ${COLS.map(c=>`<th style="min-width:140px">${c[1]}</th>`).join("")}
       </tr></thead><tbody>${
@@ -1529,7 +1531,9 @@ async function renderBomEditor(){
                    <td>${esc(r.product_name||r.model||"")}</td>
                    <td>${esc(r.c_ref||"")}</td>
                    <td>${r.so_qty==null?"":esc(r.so_qty)}</td>
-                   <td><span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Returned'?'hold':'')}">${esc(r.plan_status)}</span></td>`
+                   <td>${isRejected
+                     ?`<div style="display:flex;flex-wrap:wrap;gap:3px">${(r.warehouse_reasons||[]).map(x=>`<span class="chip" data-tone="hold" style="font-size:10px">${esc(x)}</span>`).join("")||'<span class="chip" data-tone="hold">Rejected</span>'}</div>${r.warehouse_note?`<div class="meta" style="margin-top:3px">${esc(r.warehouse_note)}</div>`:""}`
+                     :`<span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Warehouse'?'warn':(r.plan_status==='Returned'?'hold':''))}">${esc(r.plan_status)}</span>`}</td>`
                  :`<td><b>${esc(r.serial||"")}</b><div class="meta">${esc(r.production_date||"")}</div></td>
                    <td>${esc(r.model||"")}</td>
                    <td>${esc(CMAP[r.id]||"")}</td>
