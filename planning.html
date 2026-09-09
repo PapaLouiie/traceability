@@ -1272,7 +1272,7 @@ function drawKanban(v){
       </span>
       <span style="position:relative">
         <button class="btn ghost sm" id="kbColsBtn" type="button" title="Show or hide columns">Columns${KBHIDE.size?` (${cols.length-KBHIDE.size}/${cols.length})`:""}</button>
-        <div class="kbcols" id="kbColsPanel" ${KBCOLS_OPEN?"":"hidden"}>
+        <div class="kbcols" id="kbColsPanel" ${KBCOLS_OPEN?"":"hidden"} style="display:${KBCOLS_OPEN?"flex":"none"}">
           ${cols.map(([key,label,,cards])=>`<label><input type="checkbox" data-kbc="${esc(key)}" ${KBHIDE.has(key)?"":"checked"}> <span>${esc(label)}</span> <b>${cards.length}</b></label>`).join("")}
           <div class="kbc-act"><button class="btn link" id="kbcAll" type="button">Show all</button><button class="btn ghost sm" id="kbcDone" type="button">Done</button></div>
         </div>
@@ -1293,20 +1293,28 @@ function drawKanban(v){
   if(zo) zo.onclick=()=>kbZoomStep(-1);
   const cb=document.getElementById("kbColsBtn"), cp=document.getElementById("kbColsPanel");
   if(cb&&cp){
-    const setOpen=v=>{ KBCOLS_OPEN=v; cp.hidden=!v; cb.classList.toggle("on",v); };
+    const setOpen=v=>{
+      KBCOLS_OPEN=v;
+      cp.hidden=!v;
+      cp.style.display=v?"flex":"none";
+      cb.classList.toggle("on",v);
+    };
     cb.onclick=e=>{ e.stopPropagation(); setOpen(!KBCOLS_OPEN); };
-    cp.onclick=e=>e.stopPropagation();
+    cp.onclick=e=>{
+      e.stopPropagation();
+      if(e.target.closest("#kbcDone")) setOpen(false);
+    };
     if(!window.__kbColsDoc){
       window.__kbColsDoc=true;
       document.addEventListener("click",()=>{
         const p=document.getElementById("kbColsPanel");
-        if(p&&!p.hidden){ KBCOLS_OPEN=false; p.hidden=true;
+        if(p&&!p.hidden){ KBCOLS_OPEN=false; p.hidden=true; p.style.display="none";
           const b=document.getElementById("kbColsBtn"); if(b) b.classList.remove("on"); }
       });
       document.addEventListener("keydown",e=>{
         if(e.key!=="Escape") return;
         const p=document.getElementById("kbColsPanel");
-        if(p&&!p.hidden){ KBCOLS_OPEN=false; p.hidden=true;
+        if(p&&!p.hidden){ KBCOLS_OPEN=false; p.hidden=true; p.style.display="none";
           const b=document.getElementById("kbColsBtn"); if(b) b.classList.remove("on"); }
       });
     }
