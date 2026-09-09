@@ -582,7 +582,7 @@ function renderShell(){
         <select id="statusFilter" style="max-width:130px">
           <option value="">Status: all</option><option>Draft</option><option>Warehouse</option>
           <option>Returned to Engineering</option><option>Pushed</option>
-          <option>Accepted</option><option>Returned</option>
+          <option>Accepted</option><option value="Returned">Returned to planning</option>
         </select>
         <select id="afpFilter" style="max-width:130px">
           <option value="">AFP: all</option>
@@ -1061,7 +1061,7 @@ function cardHTML(p){
     <div class="t">${soLink(p, esc(p.odoo_so||p.sap_so||"(no SO)"))}
       ${p.plan_indicator==="Late"?'<span class="late">LATE</span>':""}
       ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
-      ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED</span>':""}
+      ${p.plan_status==="Returned"?'<span class="late" style="background:var(--warn)">RETURNED TO PLANNING</span>':""}
       ${p.plan_status==="Warehouse"?'<span class="late" style="background:var(--warn)">WAREHOUSE</span>':""}
       ${p.plan_status==="Returned to Engineering"?'<span class="late">BOM REJECTED</span>':""}
       ${p.odoo_state==="cancel"?'<span class="late">CANCELLED</span>':""}
@@ -1147,7 +1147,7 @@ function drawStats(v){
       ${tile("Awaiting warehouse", fmt(groups["Warehouse"].length), fmt(pcs(groups["Warehouse"]))+" pcs","--warn")}
       ${tile("Returned to engineering", fmt(groups["Returned to Engineering"].length), fmt(pcs(groups["Returned to Engineering"]))+" pcs","--hold")}
       ${tile("Pushed, awaiting assembly", fmt(groups["Pushed"].length), fmt(pcs(groups["Pushed"]))+" pcs","--info")}
-      ${tile("Returned to fix", fmt(groups["Returned"].length), fmt(pcs(groups["Returned"]))+" pcs","--hold")}
+      ${tile("Returned to planning", fmt(groups["Returned"].length), fmt(pcs(groups["Returned"]))+" pcs","--hold")}
       ${tile("Accepted", fmt(groups["Accepted"].length), fmt(pcs(groups["Accepted"]))+" pcs","--ok")}
       ${tile("Fabrication items", fmt(fab.length), fmt(pcs(fab))+" pcs","--info")}
       ${tile("Late", fmt(late.length), fmt(pcs(late))+" pcs","--hold")}
@@ -1177,7 +1177,7 @@ function drawKanban(v){
     ["Warehouse","Warehouse queue","warn", rows.filter(p=>p.plan_status==="Warehouse")],
     ["Returned to Engineering","Returned to engineering","hold", rows.filter(p=>p.plan_status==="Returned to Engineering")],
     ["Pushed","Assembly queue","info", rows.filter(p=>p.plan_status==="Pushed")],
-    ["Returned","Returned","hold", rows.filter(p=>p.plan_status==="Returned")],
+    ["Returned","Returned to planning","hold", rows.filter(p=>p.plan_status==="Returned")],
     ["Accepted","Accepted / other","ok", rows.filter(p=>!["Draft","Warehouse","Returned to Engineering","Pushed","Returned"].includes(p.plan_status))]
   ];
   const colBody=(key,cards)=>{
