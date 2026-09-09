@@ -1457,6 +1457,7 @@ async function renderBomEditor(){
       </select>
       <select id="bomWeek" style="max-width:190px"><option value="">Week: all</option></select>
       <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
+      ${BOMSRC==="rejected"?`<button class="btn orange" id="bomRepush" disabled>Re-push to warehouse (0)</button>`:""}
     </div>
     <div class="card"><div id="bomGrid"><div class="spinner"></div></div></div>`);
   wireShell();
@@ -1522,7 +1523,7 @@ async function renderBomEditor(){
     const wk=wkEl?wkEl.value:"";
     const rows=data.filter(r=>rowVisible(r,q,only,wk));
     grid.innerHTML=`<div class="tbl-wrap"><table class="bom-table"><thead><tr>
-        ${isPlans?`<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
+        ${isPlans?`${isRejected?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
         ${COLS.map(c=>`<th style="min-width:140px">${c[1]}</th>`).join("")}
       </tr></thead><tbody>${
@@ -1531,6 +1532,7 @@ async function renderBomEditor(){
                    <td>${esc(r.product_name||r.model||"")}</td>
                    <td>${esc(r.c_ref||"")}</td>
                    <td>${r.so_qty==null?"":esc(r.so_qty)}</td>
+                   ${isRejected?`<td style="width:28px"><input type="checkbox" class="rpSel" data-rp="${r.id}"></td>`:""}
                    <td>${isRejected
                      ?`<div style="display:flex;flex-wrap:wrap;gap:3px">${(r.warehouse_reasons||[]).map(x=>`<span class="chip" data-tone="hold" style="font-size:10px">${esc(x)}</span>`).join("")||'<span class="chip" data-tone="hold">Rejected</span>'}</div>${r.warehouse_note?`<div class="meta" style="margin-top:3px">${esc(r.warehouse_note)}</div>`:""}`
                      :`<span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Warehouse'?'warn':(r.plan_status==='Returned'?'hold':''))}">${esc(r.plan_status)}</span>`}</td>`
@@ -1584,6 +1586,7 @@ async function renderBomEditor(){
         updateSaveBtn();
       });
     });
+    wireRepush();
   }
   function updateSaveBtn(){
     const n=Object.keys(dirty).length;
@@ -1603,6 +1606,30 @@ async function renderBomEditor(){
       weeks.map(w=>`<option value="${w}"${w===curW?" data-cur=\"1\"":""}>${w}${w===curW?" (this week)":""}</option>`).join("");
     sel.addEventListener("change",draw);
   })();
+  function wireRepush(){
+    const btn=document.getElementById("bomRepush");
+    if(!btn) return;
+    const boxes=[...document.querySelectorAll(".rpSel")];
+    const sync=()=>{ const n=boxes.filter(b=>b.checked).length;
+      btn.disabled=!n; btn.textContent=`Re-push to warehouse (${n})`; };
+    boxes.forEach(b=>b.onchange=sync);
+    sync();
+    btn.onclick=async()=>{
+      const ids=boxes.filter(b=>b.checked).map(b=>b.dataset.rp);
+      if(!ids.length) return;
+      if(Object.keys(dirty).length){
+        banner("Save your BOM changes first, then re-push."); return; }
+      btn.disabled=true; btn.textContent="Re-pushing\u2026";
+      let ok=0; const errs=[];
+      for(const id of ids){
+        const { error }=await db.rpc("repush_plan",{ p_id:id });
+        if(error) errs.push(error.message); else ok++;
+      }
+      if(errs.length) banner(`Re-pushed ${ok}. Failed: ${[...new Set(errs)].join(" | ")}`);
+      else banner(`${ok} plan${ok==1?"":"s"} sent back to the warehouse queue.`,true);
+      renderBomEditor();
+    };
+  }
   document.getElementById("bomSave").onclick=async()=>{
     const b=document.getElementById("bomSave");
     const rows=Object.entries(dirty).map(([id,ch])=>{
