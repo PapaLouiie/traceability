@@ -113,6 +113,10 @@
   .qrbox img.kind-Sample{border:5px solid var(--orange)}
   .wk-head{margin:14px 0 6px; padding:5px 10px; background:#eef0f7; border-radius:8px; font-size:11.5px;
     font-weight:800; letter-spacing:1px; color:var(--navy)}
+  a.mobadge{text-decoration:none}
+  a.mobadge:hover{filter:brightness(.93)}
+  .mobadge{display:inline-block;background:#e6f6ec;color:#1c7c3f;border:1px solid #bfe6cd;border-radius:7px;padding:1px 7px;font-size:10.5px;font-weight:800;letter-spacing:.3px}
+  html[data-theme="dark"] .mobadge{background:#12331f;color:#7fd8a0;border-color:#1d5232}
   .badge-sample{display:inline-block; font-size:10px; font-weight:800; letter-spacing:.5px; color:#fff;
     background:var(--orange); padding:1px 6px; border-radius:5px; vertical-align:middle}
   .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
@@ -229,6 +233,33 @@
   @keyframes spin{to{transform:rotate(360deg)}}
   @media(prefers-reduced-motion:reduce){.spinner{animation:none}}
   .hidden{display:none !important}
+
+  /* ================= polish layer: rhythm and alignment ================= */
+  :root{--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--r:10px}
+  .btn{height:36px;padding:0 var(--s4);border-radius:var(--r);font-weight:600;font-size:13px;
+    display:inline-flex;align-items:center;gap:6px;line-height:1;transition:border-color .15s,background .15s,color .15s}
+  .btn.sm{height:29px;padding:0 10px;font-size:12px;border-radius:8px}
+  .btn:hover{border-color:var(--navy)}
+  .btn.primary:hover,.btn.orange:hover{border-color:transparent;filter:brightness(1.06)}
+  .btn:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--orange);outline-offset:1px}
+  .toolbar{gap:var(--s2);row-gap:var(--s2)}
+  .toolbar select,.toolbar input:not([type=checkbox]){border-radius:var(--r);font-size:13px}
+  .chip{display:inline-flex;align-items:center;gap:4px;padding:2.5px 9px;border-radius:999px;
+    font-size:11.5px;font-weight:700;letter-spacing:.2px;line-height:1.5;vertical-align:middle}
+  .banner{border-radius:var(--r);padding:10px 14px;line-height:1.45}
+  table th{padding:9px 8px;font-size:11.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)}
+  table td{padding:7px 8px;vertical-align:middle}
+  tbody tr:hover td{background:color-mix(in srgb, var(--navy) 4%, transparent)}
+  .modal{border-radius:16px}
+  .modal .mh{padding:var(--s4) var(--s5);font-size:16px;font-weight:800}
+  .modal .mb{padding:var(--s4) var(--s5) var(--s5)}
+  .empty{padding:44px 0;letter-spacing:.2px}
+  h2{letter-spacing:.1px}
+
+  .rec{gap:var(--s3);padding:var(--s3) var(--s4)}
+  .rec .meta{margin-top:2px}
+  .cnt-strip{gap:22px}
+  .bom-table td.bom-cell{padding:4px 5px}
 </style>
 </head>
 <body>
@@ -373,6 +404,27 @@ let SESSION = null;
 let current = null;   // currently open record
 let selWorkers = [];  // staff ids chosen for the next entry
 
+function bomIsoW(ds){
+  if(!ds) return null;
+  const dt=new Date(ds+"T00:00:00Z"); if(isNaN(dt)) return null;
+  const t=new Date(Date.UTC(dt.getUTCFullYear(),dt.getUTCMonth(),dt.getUTCDate()));
+  const day=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-day+3);
+  const wy=t.getUTCFullYear(); const jan4=new Date(Date.UTC(wy,0,4));
+  const wk=1+Math.round(((t-jan4)/86400000-3+((jan4.getUTCDay()+6)%7))/7);
+  return wy+"-W"+String(wk).padStart(2,"0");
+}
+function fmtStamp(ts){
+  if(!ts) return "";
+  const d=new Date(ts);
+  if(isNaN(d)) return String(ts).slice(0,16).replace("T"," ");
+  const p=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+const ODOO_BASE="https://nlco.odoo.com";
+function moLink(r, body, cls){
+  if(r&&r.odoo_mo_id) return `<a href="${ODOO_BASE}/web#id=${r.odoo_mo_id}&model=mrp.production&view_type=form" target="_blank" rel="noopener" class="${cls||""}" title="Open ${esc(r.mo_number||"MO")} in Odoo" onclick="event.stopPropagation()">${body}</a>`;
+  return `<span class="${cls||""}" title="${esc(r&&r.mo_number||"")}">${body}</span>`;
+}
 const TAGMAP = { "Customer Complaint":{l:"Complaint",c:"#c0392b"}, "Customer Return":{l:"Return",c:"#8e44ad"}, "Quality Issue":{l:"Quality",c:"#c9820b"} };
 function tagsHTML(openTypes){
   if(!openTypes||!openTypes.length) return "";
@@ -565,9 +617,10 @@ async function renderHome(){
   document.getElementById("f-week").onchange=applyFil;
   document.getElementById("f-tag").onchange=applyFil;
   document.getElementById("f-kind").onchange=applyFil;
+  document.getElementById("f-status").onchange=applyFil;
   document.getElementById("f-sort").onchange=applyFil;
   document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-status").value=listFilter.status||"open"; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",status:"open",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-status").value="open"; document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -652,7 +705,7 @@ async function loadList(q){
     else if(withStatus==="completed") qq=qq.eq("status","Completed");
     return qq;
   };
-  const query=mk("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty,needs_fabrication,fabrication_stage",null,stF==="all"?null:stF)
+  const query=mk("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty,needs_fabrication,fabrication_stage,mo_number,odoo_mo_id",null,stF==="all"?null:stF)
     .order(scol,{ascending:sdir==="asc", nullsFirst:false}).range(0,LPAGE-1);
   const [{ data, error }, totRes, compRes]=await Promise.all([
     query,
@@ -690,7 +743,7 @@ async function loadList(q){
   list.innerHTML=countBar+data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
       <input type="checkbox" class="qr-sel" data-qr="${r.id}" title="Select for QR printing" onclick="event.stopPropagation()">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${tagsHTML(flags[r.id])}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${tagsHTML(flags[r.id])}</div>
         <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
       </div>
       <div class="r-right">
@@ -1401,6 +1454,7 @@ async function renderBomEditor(){
         <option value="">All rows</option>
         <option value="missing">Incomplete BOM only</option>
       </select>
+      <select id="bomWeek" style="max-width:190px"><option value="">Week: all</option></select>
       <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
     </div>
     <div class="card"><div id="bomGrid"><div class="spinner"></div></div></div>`);
@@ -1448,7 +1502,8 @@ async function renderBomEditor(){
     :[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"]];
   const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||""); });
 
-  function rowVisible(r,q,only){
+  function rowVisible(r,q,only,wk){
+    if(wk && bomIsoW(r.planned_date)!==wk) return false;
     if(only==="missing" && r.bom_driver && r.bom_led && r.bom_em && r.bom_housing){
       if(!dirty[r.id]) return false;
     }
@@ -1461,7 +1516,9 @@ async function renderBomEditor(){
   function draw(){
     const q=bomCtl.get().trim();
     const only=document.getElementById("bomOnly").value;
-    const rows=data.filter(r=>rowVisible(r,q,only));
+    const wkEl=document.getElementById("bomWeek");
+    const wk=wkEl?wkEl.value:"";
+    const rows=data.filter(r=>rowVisible(r,q,only,wk));
     grid.innerHTML=`<div class="tbl-wrap"><table class="bom-table"><thead><tr>
         ${isPlans?`<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="width:90px">Status</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
@@ -1531,6 +1588,17 @@ async function renderBomEditor(){
   }
   const bomCtl=chipSearch("bomSearchBox","bomSearch",()=>draw(),true);
   document.getElementById("bomOnly").addEventListener("change",draw);
+  // populate the week dropdown from the weeks actually present in the loaded plans
+  (function(){
+    const sel=document.getElementById("bomWeek");
+    if(!sel) return;
+    if(!isPlans){ sel.style.display="none"; return; }
+    const weeks=[...new Set(data.map(r=>bomIsoW(r.planned_date)).filter(Boolean))].sort();
+    const cur=new Date(); const curW=bomIsoW(cur.toISOString().slice(0,10));
+    sel.innerHTML=`<option value="">Week: all</option>`+
+      weeks.map(w=>`<option value="${w}"${w===curW?" data-cur=\"1\"":""}>${w}${w===curW?" (this week)":""}</option>`).join("");
+    sel.addEventListener("change",draw);
+  })();
   document.getElementById("bomSave").onclick=async()=>{
     const b=document.getElementById("bomSave");
     const rows=Object.entries(dirty).map(([id,ch])=>{
@@ -2070,7 +2138,7 @@ async function loadCcrs(){
       <div style="display:flex;align-items:center;gap:8px">
         <span class="chip" data-tone="${c.status==='Resolved'?'ok':'hold'}">${esc(c.issue_type||'Issue')}</span>
         ${c.affected_qty!=null?`<span class="badge-sample" style="background:var(--hold)">${c.affected_qty} affected</span>`:""}
-        <span class="meta">${esc(c.status)} &middot; ${esc((c.created_at||'').slice(0,10))}${c.created_by?' &middot; '+esc(c.created_by):''}</span>
+        <span class="meta">${esc(c.status)} &middot; Raised ${esc(fmtStamp(c.created_at))}${c.created_by?' by '+esc(c.created_by):''}${c.resolved_at?` &middot; Resolved ${esc(fmtStamp(c.resolved_at))}${c.resolved_by?' by '+esc(c.resolved_by):''}`:''}</span>
         ${c.status!=='Resolved'?`<button class="btn link" style="margin-left:auto" data-resolve="${c.id}">Mark resolved</button>`:''}
       </div>
       <div class="val" style="margin-top:6px">${esc(c.description)}</div>
