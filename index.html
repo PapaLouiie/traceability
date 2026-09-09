@@ -1528,11 +1528,11 @@ async function renderBomEditor(){
         ${COLS.map(c=>`<th style="min-width:140px">${c[1]}</th>`).join("")}
       </tr></thead><tbody>${
       rows.map(r=>`<tr>
-        ${isPlans?`<td><b>${esc(r.odoo_so||r.sap_so||"")}</b><div class="meta">${esc(r.customer||"")}</div></td>
+        ${isPlans?`${isRejected?`<td style="width:28px"><input type="checkbox" class="rpSel" data-rp="${r.id}"></td>`:""}
+                   <td><b>${esc(r.odoo_so||r.sap_so||"")}</b><div class="meta">${esc(r.customer||"")}</div></td>
                    <td>${esc(r.product_name||r.model||"")}</td>
                    <td>${esc(r.c_ref||"")}</td>
                    <td>${r.so_qty==null?"":esc(r.so_qty)}</td>
-                   ${isRejected?`<td style="width:28px"><input type="checkbox" class="rpSel" data-rp="${r.id}"></td>`:""}
                    <td>${isRejected
                      ?`<div style="display:flex;flex-wrap:wrap;gap:3px">${(r.warehouse_reasons||[]).map(x=>`<span class="chip" data-tone="hold" style="font-size:10px">${esc(x)}</span>`).join("")||'<span class="chip" data-tone="hold">Rejected</span>'}</div>${r.warehouse_note?`<div class="meta" style="margin-top:3px">${esc(r.warehouse_note)}</div>`:""}`
                      :`<span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Warehouse'?'warn':(r.plan_status==='Returned'?'hold':''))}">${esc(r.plan_status)}</span>`}</td>`
@@ -1552,7 +1552,7 @@ async function renderBomEditor(){
       ${rows.length?"":'<div class="empty">Nothing matches the current filter.</div>'}`;
     (function(){
       const tbl=grid.querySelector("table.bom-table"); if(!tbl) return;
-      const key="nlc-bomw-"+(isPlans?"plans":"records");
+      const key="nlc-bomw-"+(isRejected?"rejected":(isPlans?"plans":"records"));
       let saved=[]; try{ saved=JSON.parse(localStorage.getItem(key)||"[]"); }catch(e){}
       const ths=[...tbl.querySelectorAll("thead th")];
       if(saved.length===ths.length){
