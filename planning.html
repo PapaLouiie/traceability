@@ -95,7 +95,8 @@
   .kbcols label:hover{background:var(--bg)}
   .kbcols label span{flex:1}
   .kbcols label b{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
-  .kbc-act{border-top:1px solid var(--line);margin-top:4px;padding-top:4px;display:flex;justify-content:flex-end}
+  .kbc-act{border-top:1px solid var(--line);margin-top:4px;padding-top:4px;display:flex;justify-content:space-between;align-items:center}
+  #kbColsBtn.on{background:var(--navy);color:#fff;border-color:var(--navy)}
   .kb-col.mini{min-height:0; padding-bottom:4px}
   .fold{margin-left:6px; cursor:pointer; color:var(--muted); font-weight:800; font-size:15px;
     padding:0 6px; border-radius:6px; user-select:none}
@@ -396,6 +397,7 @@ const KBZ_STEPS=[0.65,0.75,0.85,1,1.15,1.35,1.6,1.9];
 const KB_COLW=205; // column min width at 100%; the grid reflows off this
 let KBZOOM=(()=>{ const v=parseFloat(localStorage.getItem("nlc-kbzoom")); return KBZ_STEPS.includes(v)?v:1; })();
 let KBHIDE=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem("nlc-kbhide")||"[]")); }catch(e){ return new Set(); } })();
+let KBCOLS_OPEN=false;
 function saveKbHide(){ try{ localStorage.setItem("nlc-kbhide",JSON.stringify([...KBHIDE])); }catch(e){} }
 function setKbZoom(z){
   KBZOOM=Math.min(KBZ_STEPS[KBZ_STEPS.length-1],Math.max(KBZ_STEPS[0],z));
@@ -1268,9 +1270,9 @@ function drawKanban(v){
       </span>
       <span style="position:relative">
         <button class="btn ghost sm" id="kbColsBtn" type="button" title="Show or hide columns">Columns${KBHIDE.size?` (${cols.length-KBHIDE.size}/${cols.length})`:""}</button>
-        <div class="kbcols" id="kbColsPanel" hidden>
+        <div class="kbcols" id="kbColsPanel" ${KBCOLS_OPEN?"":"hidden"}>
           ${cols.map(([key,label,,cards])=>`<label><input type="checkbox" data-kbc="${esc(key)}" ${KBHIDE.has(key)?"":"checked"}> <span>${esc(label)}</span> <b>${cards.length}</b></label>`).join("")}
-          <div class="kbc-act"><button class="btn link" id="kbcAll" type="button">Show all</button></div>
+          <div class="kbc-act"><button class="btn link" id="kbcAll" type="button">Show all</button><button class="btn ghost sm" id="kbcDone" type="button">Done</button></div>
         </div>
       </span>
       ${GROUPMODE?'<span class="sub" style="margin:0">Click an SO row to open or close its cards.</span>':""}
@@ -1289,9 +1291,24 @@ function drawKanban(v){
   if(zo) zo.onclick=()=>kbZoomStep(-1);
   const cb=document.getElementById("kbColsBtn"), cp=document.getElementById("kbColsPanel");
   if(cb&&cp){
-    cb.onclick=e=>{ e.stopPropagation(); cp.hidden=!cp.hidden; };
+    const setOpen=v=>{ KBCOLS_OPEN=v; cp.hidden=!v; cb.classList.toggle("on",v); };
+    cb.onclick=e=>{ e.stopPropagation(); setOpen(!KBCOLS_OPEN); };
     cp.onclick=e=>e.stopPropagation();
-    document.addEventListener("click",()=>{ cp.hidden=true; },{once:true});
+    if(!window.__kbColsDoc){
+      window.__kbColsDoc=true;
+      document.addEventListener("click",()=>{
+        const p=document.getElementById("kbColsPanel");
+        if(p&&!p.hidden){ KBCOLS_OPEN=false; p.hidden=true;
+          const b=document.getElementById("kbColsBtn"); if(b) b.classList.remove("on"); }
+      });
+      document.addEventListener("keydown",e=>{
+        if(e.key!=="Escape") return;
+        const p=document.getElementById("kbColsPanel");
+        if(p&&!p.hidden){ KBCOLS_OPEN=false; p.hidden=true;
+          const b=document.getElementById("kbColsBtn"); if(b) b.classList.remove("on"); }
+      });
+    }
+    cb.classList.toggle("on",KBCOLS_OPEN);
     cp.querySelectorAll("[data-kbc]").forEach(x=>x.onchange=()=>{
       const k=x.dataset.kbc;
       if(x.checked) KBHIDE.delete(k); else KBHIDE.add(k);
@@ -1299,8 +1316,10 @@ function drawKanban(v){
       if(KBHIDE.size>=cols.length){ KBHIDE.delete(k); x.checked=true; banner("Keep at least one column visible."); return; }
       saveKbHide(); draw();
     });
+    const dn=document.getElementById("kbcDone");
+    if(dn) dn.onclick=e=>{ e.stopPropagation(); setOpen(false); };
     const sa=document.getElementById("kbcAll");
-    if(sa) sa.onclick=()=>{ KBHIDE.clear(); saveKbHide(); draw(); };
+    if(sa) sa.onclick=()=>{ KBHIDE.clear(); saveKbHide(); KBCOLS_OPEN=false; draw(); };
   }
   if(zf) zf.onclick=()=>{
     // largest step at which every visible column still sits on a single row
