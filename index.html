@@ -167,8 +167,13 @@
 
   table{width:100%; border-collapse:collapse; font-size:13.5px}
   .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
-  .bom-table th{position:relative}
-  .bom-table th .rz{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:2}
+  .bom-wrap{max-height:calc(100vh - 230px); overflow:auto}
+  @media(max-width:900px){ .bom-wrap{max-height:calc(100vh - 190px)} }
+  .bom-table th{position:sticky; top:0; z-index:5; background:var(--card);
+    box-shadow:inset 0 -1px 0 var(--line), 0 1px 2px rgba(0,0,0,.05)}
+  .bom-table th .rz{z-index:6}
+  html[data-theme="dark"] .bom-table th{background:#15173a}
+  .bom-table th .rz{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:6}
   .bom-table th .rz:hover{background:var(--orange);opacity:.5}
   .bom-table td.bom-cell{padding:3px 4px}
   .bom-table td.bom-cell input{width:100%; min-width:130px; padding:8px 10px; border:1px solid transparent;
@@ -1466,9 +1471,10 @@ async function renderBomEditor(){
 
   const isRejected=BOMSRC==="rejected";
   const isPlans=BOMSRC==="plans"||isRejected;
-  let data=[], error=null;
-  const B=1000;
-  for(let from=0; from<5000; from+=B){
+  let data=[], error=null, truncated=false;
+  const B=1000, CAP=30000;
+  let from=0;
+  for(; from<CAP; from+=B){
     let chunk;
     if(isPlans){
       ({ data:chunk, error }=await db.from("planned_records")
@@ -1484,6 +1490,7 @@ async function renderBomEditor(){
     data=data.concat(chunk||[]);
     if(!chunk || chunk.length<B) break;
   }
+  if(from>=CAP) truncated=true;
   const CMAP={};
   if(!isPlans && !error){
     let f2=0;
@@ -1516,13 +1523,48 @@ async function renderBomEditor(){
                       :[r.serial,r.so_number,CMAP[r.id],r.model,r.customer]).map(v=>(v||"").toLowerCase());
     return terms.some(t=>hay.some(v=>v.includes(t)));
   }
+  // The loaded set is capped, so a search term is also sent to the database and
+  // any matches not already present are merged in. Without this, searching can
+  // silently miss older rows that fall outside the loaded window.
+  const seenQ=new Set();
+  async function deepSearch(q){
+    if(!q || q.length<2 || seenQ.has(q)) return;
+    seenQ.add(q);
+    const terms=q.toLowerCase().split(/[,\s]+/).filter(t=>t.length>=2);
+    if(!terms.length) return;
+    const have=new Set(data.map(r=>r.id));
+    let found=0;
+    for(const t of terms){
+      const like=`%${t.replace(/[%_]/g,m=>"\\"+m)}%`;
+      const cols=isPlans
+        ? ["odoo_so","sap_so","product_name","c_ref","model","customer"]
+        : ["serial","so_number","model","customer"];
+      const or=cols.map(c=>`${c}.ilike.${like}`).join(",");
+      let res;
+      if(isPlans){
+        res=await db.from("planned_records")
+          .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note")
+          .in("plan_status", isRejected?["Returned to Engineering"]:["Draft","Returned","Warehouse","Pushed"])
+          .or(or).order("id",{ascending:true}).limit(500);
+      } else {
+        res=await db.from("production_records")
+          .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+          .or(or).order("id",{ascending:true}).limit(500);
+      }
+      if(res.error) continue;
+      (res.data||[]).forEach(r=>{ if(!have.has(r.id)){ have.add(r.id); data.push(r); found++; } });
+    }
+    if(found) draw();
+  }
+
   function draw(){
     const q=bomCtl.get().trim();
+    if(q) deepSearch(q.toLowerCase());
     const only=document.getElementById("bomOnly").value;
     const wkEl=document.getElementById("bomWeek");
     const wk=wkEl?wkEl.value:"";
     const rows=data.filter(r=>rowVisible(r,q,only,wk));
-    grid.innerHTML=`<div class="tbl-wrap"><table class="bom-table"><thead><tr>
+    grid.innerHTML=`<div class="tbl-wrap bom-wrap"><table class="bom-table"><thead><tr>
         ${isPlans?`${isRejected?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
         ${COLS.map(c=>`<th style="min-width:140px">${c[1]}</th>`).join("")}
@@ -1549,7 +1591,10 @@ async function renderBomEditor(){
           return `<td class="bom-cell${changed?" changed":""}"><input data-id="${r.id}" data-col="${k}" value="${esc(cur)}"></td>`;
         }).join("")}
       </tr>`).join("")}</tbody></table></div>
-      ${rows.length?"":'<div class="empty">Nothing matches the current filter.</div>'}`;
+      ${rows.length?"":`<div class="empty">Nothing matches the current filter.${q?" Searching the database for more\u2026":""}</div>`}
+      <div class="meta" style="padding:8px 10px;border-top:1px solid var(--line)">
+        Showing ${rows.length.toLocaleString()} of ${data.length.toLocaleString()} loaded${truncated?` <b style="color:var(--hold)">(load capped at ${CAP.toLocaleString()}; use the search box to reach anything not loaded)</b>`:""}
+      </div>`;
     (function(){
       const tbl=grid.querySelector("table.bom-table"); if(!tbl) return;
       const key="nlc-bomw-"+(isRejected?"rejected":(isPlans?"plans":"records"));
