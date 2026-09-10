@@ -1461,6 +1461,12 @@ async function renderBomEditor(){
         <option value="missing">Incomplete BOM only</option>
       </select>
       <select id="bomWeek" style="max-width:190px"><option value="">Week: all</option></select>
+      <select id="bomState" style="max-width:210px" title="Matches the planning page, which hides cancelled and delivered lines by default">
+        <option value="live">Hide cancelled and delivered</option>
+        <option value="all">Show every line</option>
+        <option value="cancel">Cancelled only</option>
+        <option value="done">Delivered only</option>
+      </select>
       <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
       ${BOMSRC==="rejected"?`<button class="btn orange" id="bomRepush" disabled>Re-push to warehouse (0)</button>`:""}
     </div>
@@ -1478,7 +1484,7 @@ async function renderBomEditor(){
     let chunk;
     if(isPlans){
       ({ data:chunk, error }=await db.from("planned_records")
-        .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note")
+        .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note,odoo_state")
         .in("plan_status", isRejected?["Returned to Engineering"]:["Draft","Returned","Warehouse","Pushed"])
         .order("created_at",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     } else {
@@ -1512,7 +1518,12 @@ async function renderBomEditor(){
     :[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"]];
   const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||""); });
 
-  function rowVisible(r,q,only,wk){
+  function rowVisible(r,q,only,wk,st){
+    if(isPlans && st){
+      if(st==="live" && (r.odoo_state==="cancel"||r.odoo_state==="done")) return false;
+      if(st==="cancel" && r.odoo_state!=="cancel") return false;
+      if(st==="done" && r.odoo_state!=="done") return false;
+    }
     if(wk && bomIsoW(r.planned_date)!==wk) return false;
     if(only==="missing" && r.bom_driver && r.bom_led && r.bom_em && r.bom_housing){
       if(!dirty[r.id]) return false;
@@ -1543,7 +1554,7 @@ async function renderBomEditor(){
       let res;
       if(isPlans){
         res=await db.from("planned_records")
-          .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note")
+          .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note,odoo_state")
           .in("plan_status", isRejected?["Returned to Engineering"]:["Draft","Returned","Warehouse","Pushed"])
           .or(or).order("id",{ascending:true}).limit(500);
       } else {
@@ -1563,7 +1574,9 @@ async function renderBomEditor(){
     const only=document.getElementById("bomOnly").value;
     const wkEl=document.getElementById("bomWeek");
     const wk=wkEl?wkEl.value:"";
-    const rows=data.filter(r=>rowVisible(r,q,only,wk));
+    const stEl=document.getElementById("bomState");
+    const st=stEl?stEl.value:"live";
+    const rows=data.filter(r=>rowVisible(r,q,only,wk,st));
     grid.innerHTML=`<div class="tbl-wrap bom-wrap"><table class="bom-table"><thead><tr>
         ${isPlans?`${isRejected?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
@@ -1577,7 +1590,7 @@ async function renderBomEditor(){
                    <td>${r.so_qty==null?"":esc(r.so_qty)}</td>
                    <td>${isRejected
                      ?`<div style="display:flex;flex-wrap:wrap;gap:3px">${(r.warehouse_reasons||[]).map(x=>`<span class="chip" data-tone="hold" style="font-size:10px">${esc(x)}</span>`).join("")||'<span class="chip" data-tone="hold">Rejected</span>'}</div>${r.warehouse_note?`<div class="meta" style="margin-top:3px">${esc(r.warehouse_note)}</div>`:""}`
-                     :`<span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Warehouse'?'warn':(r.plan_status==='Returned'?'hold':''))}">${esc(r.plan_status)}</span>`}</td>`
+                     :`<span class="chip" data-tone="${r.plan_status==='Pushed'?'info':(r.plan_status==='Warehouse'?'warn':(r.plan_status==='Returned'?'hold':''))}">${esc(r.plan_status)}</span>${r.odoo_state==="cancel"?'<span class="chip" data-tone="hold" style="margin-left:4px">Cancelled</span>':(r.odoo_state==="done"?'<span class="chip" data-tone="ok" style="margin-left:4px">Delivered</span>':"")}`}</td>`
                  :`<td><b>${esc(r.serial||"")}</b><div class="meta">${esc(r.production_date||"")}</div></td>
                    <td>${esc(r.model||"")}</td>
                    <td>${esc(CMAP[r.id]||"")}</td>
@@ -1640,6 +1653,10 @@ async function renderBomEditor(){
   }
   const bomCtl=chipSearch("bomSearchBox","bomSearch",()=>draw(),true);
   document.getElementById("bomOnly").addEventListener("change",draw);
+  (function(){ const el=document.getElementById("bomState");
+    if(!el) return;
+    if(!isPlans){ el.style.display="none"; return; }
+    el.addEventListener("change",draw); })();
   // populate the week dropdown from the weeks actually present in the loaded plans
   (function(){
     const sel=document.getElementById("bomWeek");
