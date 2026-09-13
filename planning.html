@@ -161,6 +161,10 @@
   .wh-bl{font-size:9.5px;font-weight:800;letter-spacing:.4px;color:var(--muted);text-transform:uppercase}
   .wh-bv{font-size:12.5px;font-weight:600}
   .wh-bv.miss{color:var(--hold);font-style:italic;font-weight:500}
+  .wh-rem{font-size:12px;color:var(--text);margin-top:5px;background:var(--bg);border-left:3px solid var(--line);
+    border-radius:0 7px 7px 0;padding:5px 9px;overflow-wrap:anywhere}
+  .wh-rl{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.4px;color:var(--muted);
+    text-transform:uppercase;margin-right:6px}
   .wh-why{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
   .wh-why .chip{font-size:10.5px}
   a.mobadge{text-decoration:none}
@@ -798,7 +802,8 @@ const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_per
   "so_qty,planned_qty,planned_date,plan_status,bom_stock_status,plan_indicator,estimated_ready_week,"+
   "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,odoo_mo,"+
   "sort_order,created_by,updated_by,updated_at,created_at,odoo_mo_id,odoo_variant_id,odoo_ref,odoo_so_id,"+
-  "warehouse_reasons,warehouse_note,warehouse_actioned_at,warehouse_actioned_by";
+  "warehouse_reasons,warehouse_note,warehouse_actioned_at,warehouse_actioned_by,"+
+  "bom_driver,bom_led,bom_em,bom_housing,bom_remarks,plan_remarks,cargo_remarks,cargo_eta";
 let ATTMAP={};   // plan_id -> attachment count
 async function loadAttCounts(){
   try{
@@ -1768,7 +1773,9 @@ function drawWarehouse(v){
           ${bomCell("Driver",p.bom_driver)}${bomCell("LED",p.bom_led)}
           ${bomCell("EM",p.bom_em)}${bomCell("Housing",p.bom_housing)}
         </div>
-        ${p.bom_remarks?`<div class="m" style="margin-top:4px"><b>BOM remarks:</b> ${esc(p.bom_remarks)}</div>`:""}
+        ${p.bom_remarks?`<div class="wh-rem"><span class="wh-rl">BOM remarks</span> ${esc(p.bom_remarks)}</div>`:""}
+        ${p.plan_remarks?`<div class="wh-rem"><span class="wh-rl">Planning remarks</span> ${esc(p.plan_remarks)}</div>`:""}
+        ${p.cargo_remarks?`<div class="wh-rem"><span class="wh-rl">Cargo</span> ${esc(p.cargo_remarks)}${p.cargo_eta?` (ETA ${esc(p.cargo_eta)})`:""}</div>`:""}
       </div>
       ${canAct?`<div class="act">
         <button class="btn primary sm" data-wapp="${p.id}">Material issued</button>
