@@ -1518,13 +1518,18 @@ async function renderBomEditor(){
     :[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"]];
   const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||""); });
 
+  const rowWeekDate=r=>isPlans?r.planned_date:r.production_date;
   function rowVisible(r,q,only,wk,st){
     if(isPlans && st){
       if(st==="live" && (r.odoo_state==="cancel"||r.odoo_state==="done")) return false;
       if(st==="cancel" && r.odoo_state!=="cancel") return false;
       if(st==="done" && r.odoo_state!=="done") return false;
     }
-    if(wk && bomIsoW(r.planned_date)!==wk) return false;
+    if(wk){
+      const rw=bomIsoW(rowWeekDate(r));
+      if(wk==="__none"){ if(rw) return false; }
+      else if(rw!==wk) return false;
+    }
     if(only==="missing" && r.bom_driver && r.bom_led && r.bom_em && r.bom_housing){
       if(!dirty[r.id]) return false;
     }
@@ -1661,10 +1666,11 @@ async function renderBomEditor(){
   (function(){
     const sel=document.getElementById("bomWeek");
     if(!sel) return;
-    if(!isPlans){ sel.style.display="none"; return; }
-    const weeks=[...new Set(data.map(r=>bomIsoW(r.planned_date)).filter(Boolean))].sort();
+    const weeks=[...new Set(data.map(r=>bomIsoW(rowWeekDate(r))).filter(Boolean))].sort();
     const cur=new Date(); const curW=bomIsoW(cur.toISOString().slice(0,10));
-    sel.innerHTML=`<option value="">Week: all</option>`+
+    sel.title=isPlans?"Filter by planned week":"Filter by production week";
+    sel.innerHTML=`<option value="">${isPlans?"Planned week: all":"Production week: all"}</option>`+
+      `<option value="__none">${isPlans?"No planned date":"No production date"}</option>`+
       weeks.map(w=>`<option value="${w}"${w===curW?" data-cur=\"1\"":""}>${w}${w===curW?" (this week)":""}</option>`).join("");
     sel.addEventListener("change",draw);
   })();
