@@ -161,6 +161,16 @@
   .wh-bl{font-size:9.5px;font-weight:800;letter-spacing:.4px;color:var(--muted);text-transform:uppercase}
   .wh-bv{font-size:12.5px;font-weight:600}
   .wh-bv.miss{color:var(--hold);font-style:italic;font-weight:500}
+  .wh-b{cursor:pointer}
+  .wh-b.empty{opacity:.6;cursor:default}
+  .wh-b .wh-bl i{font-style:normal;color:var(--orange);font-weight:800}
+  .wh-b .wh-av{margin-top:3px;align-self:flex-start}
+  .wh-conf{display:flex;align-items:center;gap:9px;margin-top:8px;flex-wrap:wrap}
+  .pb-opt{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-radius:9px;
+    padding:9px 11px;cursor:pointer}
+  .pb-opt:hover{background:var(--bg)}
+  .pb-opt span{display:flex;flex-direction:column;gap:1px;font-size:13px}
+  .pb-opt i{font-style:normal;font-size:11.5px;color:var(--muted)}
   .wh-rem{font-size:12px;color:var(--text);margin-top:5px;background:var(--bg);border-left:3px solid var(--line);
     border-radius:0 7px 7px 0;padding:5px 9px;overflow-wrap:anywhere}
   .wh-rl{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.4px;color:var(--muted);
@@ -803,7 +813,9 @@ const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_per
   "needs_fabrication,fabrication_stage,record_kind,odoo_state,afp,line,return_reason,production_record_id,odoo_mo,"+
   "sort_order,created_by,updated_by,updated_at,created_at,odoo_mo_id,odoo_variant_id,odoo_ref,odoo_so_id,"+
   "warehouse_reasons,warehouse_note,warehouse_actioned_at,warehouse_actioned_by,"+
-  "bom_driver,bom_led,bom_em,bom_housing,bom_remarks,plan_remarks,cargo_remarks,cargo_eta";
+  "bom_driver,bom_led,bom_em,bom_housing,bom_remarks,plan_remarks,cargo_remarks,cargo_eta,"+
+  "bom_driver_qty,bom_led_qty,bom_em_qty,bom_housing_qty,"+
+  "bom_driver_avail,bom_led_avail,bom_em_avail,bom_housing_avail,stock_confirmed_at,stock_confirmed_by";
 let ATTMAP={};   // plan_id -> attachment count
 async function loadAttCounts(){
   try{
@@ -926,7 +938,7 @@ function moEligible(p){
   if(p.odoo_state==="cancel") return "delivery cancelled";
   if(!(p.planned_qty??p.so_qty)) return "no planned qty";
   if(!p.planned_date) return "no planned week";
-  if(p.bom_stock_status!=="In Stock") return "stock not marked In Stock";
+  // Stock is confirmed by the warehouse after the push, not before it.
   return null;
 }
 function isBacklog(p){
@@ -1754,7 +1766,15 @@ function acceptErr(msg){
 function drawWarehouse(v){
   const rows=filtered().filter(p=>p.plan_status==="Warehouse");
   const canAct=may("warehouse","edit");
-  const bomCell=(lbl,val)=>`<div class="wh-b"><span class="wh-bl">${lbl}</span><span class="wh-bv${val?"":" miss"}">${val?esc(val):"not set"}</span></div>`;
+  const bomCell=(p,lbl,key,val,qty)=>{
+    const has=!!(val&&String(val).trim());
+    const checked=p[key+"_avail"]===true?"checked":"";
+    return `<label class="wh-b${has?"":" empty"}" title="${has?"Tick when this item is available":"No BOM value set"}">
+      <span class="wh-bl">${lbl}${qty?` <i>x${esc(qty)}</i>`:""}</span>
+      <span class="wh-bv${has?"":" miss"}">${has?esc(val):"not set"}</span>
+      ${has&&canAct?`<input type="checkbox" class="wh-av" data-av="${p.id}" data-k="${key}" ${checked}>`:""}
+    </label>`;
+  };
   const bulkBar=canAct&&rows.length?`
     <div class="toolbar" style="margin-bottom:12px">
       <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="wAll"> Select all</label>
@@ -1765,22 +1785,27 @@ function drawWarehouse(v){
     <div class="qrow">
       ${canAct?`<input type="checkbox" class="wSel" data-wsel="${p.id}" style="margin-top:4px">`:""}
       <div class="info">
-        <div class="t">${soLink(p, esc(p.odoo_so||p.sap_so||"(no SO)"))} &middot; ${esc(p.model||p.product_name||"")}
+        <div class="t">${soLink(p, esc(p.odoo_so||p.sap_so||"(no SO)"))} &middot; ${esc(p.model||"")}
           ${p.needs_fabrication?'<span class="fabb">FAB</span>':""}
-          ${p.bom_stock_status?`<span class="chip" data-tone="${p.bom_stock_status==="In Stock"?"ok":"warn"}" style="margin-left:6px">${esc(p.bom_stock_status)}</span>`:""}</div>
-        <div class="m">Qty ${p.planned_qty??"?"} &middot; ${esc(p.customer||"")}${p.planned_date?" \u00b7 planned "+esc(p.planned_date):""}</div>
+          ${p.bom_stock_status?`<span class="chip" data-tone="${p.bom_stock_status==="In Stock"?"ok":(p.bom_stock_status==="Not available"?"hold":"warn")}" style="margin-left:6px">${esc(p.bom_stock_status)}</span>`:""}
+          ${p.stock_confirmed_at?`<span class="chip" title="Confirmed by ${esc(p.stock_confirmed_by||"")} on ${esc(String(p.stock_confirmed_at).slice(0,16).replace("T"," "))}">stock checked</span>`:""}</div>
+        ${p.product_name?`<div class="m"><b>${esc(p.product_name)}</b></div>`:""}
+        <div class="m">Qty ${p.planned_qty??"?"} &middot; ${esc(p.customer||"")}${p.c_ref?` &middot; C.Ref ${esc(p.c_ref)}`:""}${p.planned_date?" \u00b7 planned "+esc(p.planned_date):""}</div>
         <div class="wh-bom">
-          ${bomCell("Driver",p.bom_driver)}${bomCell("LED",p.bom_led)}
-          ${bomCell("EM",p.bom_em)}${bomCell("Housing",p.bom_housing)}
+          ${bomCell(p,"Driver","bom_driver",p.bom_driver,p.bom_driver_qty)}${bomCell(p,"LED","bom_led",p.bom_led,p.bom_led_qty)}
+          ${bomCell(p,"EM","bom_em",p.bom_em,p.bom_em_qty)}${bomCell(p,"Housing","bom_housing",p.bom_housing,p.bom_housing_qty)}
         </div>
+        ${canAct?`<div class="wh-conf"><button class="btn ghost sm" data-conf="${p.id}">Confirm stock from ticks</button>
+          <span class="m" style="color:var(--muted)">Sets In Stock, Partial Stock or Not available automatically</span></div>`:""}
         ${p.bom_remarks?`<div class="wh-rem"><span class="wh-rl">BOM remarks</span> ${esc(p.bom_remarks)}</div>`:""}
         ${p.plan_remarks?`<div class="wh-rem"><span class="wh-rl">Planning remarks</span> ${esc(p.plan_remarks)}</div>`:""}
         ${p.cargo_remarks?`<div class="wh-rem"><span class="wh-rl">Cargo</span> ${esc(p.cargo_remarks)}${p.cargo_eta?` (ETA ${esc(p.cargo_eta)})`:""}</div>`:""}
       </div>
-      ${canAct?`<div class="act">
-        <button class="btn primary sm" data-wapp="${p.id}">Material issued</button>
-        <button class="btn danger" data-wrej="${p.id}">Reject</button>
-      </div>`:'<div class="act"><span class="chip" data-tone="warn">Awaiting warehouse</span></div>'}
+      <div class="act">
+        ${canAct?`<button class="btn primary sm" data-wapp="${p.id}">Material issued</button>
+        <button class="btn danger" data-wrej="${p.id}">Return</button>`:'<span class="chip" data-tone="warn">Awaiting warehouse</span>'}
+        ${may("planning","edit")?`<button class="btn ghost sm" data-pull="${p.id}" title="Pull this plan back out of the queue">Pull back</button>`:""}
+      </div>
     </div>`).join("")
   :`<div class="empty">Nothing waiting on the warehouse. Pushed plans arrive here for material issuance before assembly.</div>`);
   if(!canAct) return;
@@ -1808,12 +1833,64 @@ function drawWarehouse(v){
     else banner(`Material issuance approved for ${ok} plan${ok==1?"":"s"}. Now in the assembly queue.`,true);
     await load();
   }
+  // confirm stock from the ticked availability boxes
+  v.querySelectorAll("[data-conf]").forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.conf;
+    const tick=k=>{ const el=v.querySelector(`.wh-av[data-av="${id}"][data-k="${k}"]`); return el?el.checked:null; };
+    b.disabled=true; b.textContent="Confirming\u2026"; busy(true);
+    const { data, error }=await db.rpc("confirm_bom_stock",{
+      p_id:id, p_driver:tick("bom_driver"), p_led:tick("bom_led"),
+      p_em:tick("bom_em"), p_housing:tick("bom_housing") });
+    busy(false);
+    if(error){ banner(error.message); b.disabled=false; b.textContent="Confirm stock from ticks"; return; }
+    banner(`Stock confirmed: ${data&&data.bom_stock_status?data.bom_stock_status:"updated"}.`,true);
+    await load();
+  });
+  v.querySelectorAll("[data-pull]").forEach(b=>b.onclick=()=>pullBackModal([b.dataset.pull]));
   v.querySelectorAll("[data-wapp]").forEach(b=>b.onclick=()=>approve([b.dataset.wapp]));
   const appB=v.querySelector("#wAppSel");
   if(appB) appB.onclick=()=>approve(selIds());
   v.querySelectorAll("[data-wrej]").forEach(b=>b.onclick=()=>rejectModal([b.dataset.wrej]));
   const rejB=v.querySelector("#wRejSel");
   if(rejB) rejB.onclick=()=>rejectModal(selIds());
+}
+
+/* ---------------- pull a plan back out of a queue ---------------- */
+function pullBackModal(ids){
+  const plans=ids.map(id=>PLANS.find(p=>p.id===id)).filter(Boolean);
+  if(!plans.length) return;
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:520px"><div class="mh">Pull back ${plans.length} plan(s)<span class="x">&times;</span></div>
+    <div class="mb">
+      <p class="sub" style="margin:0 0 12px">Takes the plan out of the queue it is sitting in. Choose where it should land.</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <label class="pb-opt"><input type="radio" name="pbT" value="planning" checked>
+          <span><b>Back to planning</b><i>Returns to In planning as a draft</i></span></label>
+        <label class="pb-opt"><input type="radio" name="pbT" value="engineering">
+          <span><b>Back to engineering</b><i>Goes to Returned to engineering for a BOM fix</i></span></label>
+      </div>
+      <div class="field" style="margin-top:12px"><label>Reason (optional)</label><input id="pbWhy" placeholder="Why is this being pulled back"></div>
+    </div>
+    <div class="mf"><button class="btn ghost" id="pbCancel">Cancel</button><button class="btn orange" id="pbGo">Pull back</button></div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.querySelector("#pbCancel").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  bg.querySelector("#pbGo").onclick=async()=>{
+    const t=bg.querySelector('input[name="pbT"]:checked').value;
+    const why=bg.querySelector("#pbWhy").value.trim()||null;
+    const go=bg.querySelector("#pbGo"); go.disabled=true; go.textContent="Pulling\u2026"; busy(true);
+    let ok=0; const errs=[];
+    for(const id of ids){
+      const { error }=await db.rpc("pull_back_plan",{ p_id:id, p_target:t, p_reason:why });
+      if(error) errs.push(error.message); else ok++;
+    }
+    busy(false); close();
+    if(errs.length) banner(`Pulled back ${ok}. Failed: ${[...new Set(errs)].join(" | ")}`);
+    else banner(`${ok} plan${ok==1?"":"s"} pulled back to ${t}.`,true);
+    await load();
+  };
 }
 
 /* ---------------- warehouse rejection modal ---------------- */
@@ -1823,7 +1900,13 @@ function rejectModal(ids){
   const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
   bg.innerHTML=`<div class="modal" style="max-width:560px"><div class="mh">Reject ${plans.length} plan(s)<span class="x">&times;</span></div>
     <div class="mb">
-      <p class="sub" style="margin:0 0 10px">Say what is wrong so engineering can fix the BOM and send it back. The plan moves to <b>Returned to Engineering</b>.</p>
+      <p class="sub" style="margin:0 0 10px">Say what is wrong, and where it should go back to.</p>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <label class="pb-opt" style="flex:1"><input type="radio" name="wrT" value="engineering" checked>
+          <span><b>To engineering</b><i>BOM needs fixing</i></span></label>
+        <label class="pb-opt" style="flex:1"><input type="radio" name="wrT" value="planning">
+          <span><b>To planning</b><i>Scheduling or order issue</i></span></label>
+      </div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
         ${WH_REASONS.map((r,i)=>`<label style="display:flex;align-items:center;gap:8px;font-size:13.5px">
           <input type="checkbox" class="wr" value="${esc(r)}" id="wr${i}"> ${esc(r)}</label>`).join("")}
@@ -1845,15 +1928,16 @@ function rejectModal(ids){
     const reasons=boxes.filter(b=>b.checked).map(b=>b.value);
     if(!reasons.length) return;
     const note=bg.querySelector("#wrNote").value.trim()||null;
+    const target=bg.querySelector('input[name="wrT"]:checked').value;
     go.disabled=true; go.textContent="Rejecting\u2026"; busy(true);
     let ok=0; const errs=[];
     for(const id of ids){
-      const { error }=await db.rpc("reject_material_issuance",{ p_id:id, p_reasons:reasons, p_note:note });
+      const { error }=await db.rpc("reject_material_issuance",{ p_id:id, p_reasons:reasons, p_note:note, p_target:target });
       if(error) errs.push(error.message); else ok++;
     }
     busy(false); close();
     if(errs.length) banner(`Rejected ${ok}. Failed: ${[...new Set(errs)].join(" | ")}`);
-    else banner(`${ok} plan${ok==1?"":"s"} returned to engineering.`,true);
+    else banner(`${ok} plan${ok==1?"":"s"} returned to ${target}.`,true);
     await load();
   };
 }
@@ -1882,7 +1966,8 @@ function drawQueue(v){
         <input type="date" data-date="${p.id}" value="${esc(p.planned_date||new Date().toISOString().slice(0,10))}"${p.planned_date?(()=>{const[a,b]=isoWeekBounds(p.planned_date);return a?` min="${a}" max="${b}" title="Within the planned ISO week (${a} to ${b})"`:"";})():""}>
         <button class="btn primary sm" data-acc="${p.id}">Accept</button>
         <button class="btn danger" data-ret="${p.id}">Return</button>
-      </div>`:'<div class="act"><span class="chip" data-tone="info">Awaiting assembly</span></div>'}
+        ${may("planning","edit")?`<button class="btn ghost sm" data-pull="${p.id}" title="Pull this plan back out of the queue">Pull back</button>`:""}
+      </div>`:`<div class="act"><span class="chip" data-tone="info">Awaiting assembly</span>${may("planning","edit")?` <button class="btn ghost sm" data-pull="${p.id}">Pull back</button>`:""}</div>`}
     </div>`).join("")
   :`<div class="empty">No pushed plans waiting. ${may("planning","edit")?"Push a ready plan from the kanban.":""}</div>`);
   if(!canAccept) return;
@@ -1901,6 +1986,7 @@ function drawQueue(v){
   if(accB) accB.onclick=()=>bulkAcceptModal(selIds());
   const retB=v.querySelector("#qRetSel");
   if(retB) retB.onclick=()=>returnModal(selIds());
+  v.querySelectorAll("[data-pull]").forEach(b=>b.onclick=()=>pullBackModal([b.dataset.pull]));
   v.querySelectorAll("[data-acc]").forEach(b=>b.onclick=async()=>{
     const id=b.dataset.acc;
     const line=v.querySelector(`[data-line="${id}"]`).value||null;
@@ -2033,6 +2119,7 @@ function fieldsOf(p){
   const keys=["odoo_so","sap_so","contact","sales_person","region","product_name","c_ref","so_qty",
     "planned_date","model","customer","customer_reference","light_type","voltage","planned_qty",
     "record_kind","needs_fabrication","bom_driver","bom_led","bom_em","bom_housing",
+    "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty",
     "odoo_variant_name","odoo_variant_id","line","bom_stock_status","cargo_eta","plan_indicator",
     "plan_remarks","estimated_ready_week","wh_no_stock","sort_order"];
   const o={}; keys.forEach(k=>{ if(p&&p[k]!=null) o[k]=p[k]; }); return o;
@@ -2118,10 +2205,18 @@ async function planModal(pLite){
           <option ${g("plan_indicator")==="Late"?"selected":""}>Late</option></select></div>
         <div class="field"><label>Estimated ready week</label><input id="p-estimated_ready_week" value="${esc(g("estimated_ready_week"))}" placeholder="2026-W33"></div>
         <div class="field full"><label>Remarks (why late / notes)</label><input id="p-plan_remarks" value="${esc(g("plan_remarks"))}"></div>
-        <div class="field"><label>BOM: Driver</label><input id="p-bom_driver" value="${esc(g("bom_driver"))}"></div>
-        <div class="field"><label>BOM: LED</label><input id="p-bom_led" value="${esc(g("bom_led"))}"></div>
-        <div class="field"><label>BOM: EM</label><input id="p-bom_em" value="${esc(g("bom_em"))}"></div>
-        <div class="field"><label>BOM: Housing</label><input id="p-bom_housing" value="${esc(g("bom_housing"))}"></div>
+        <div class="field"><label>BOM: Driver</label>
+          <div style="display:flex;gap:6px"><input id="p-bom_driver" value="${esc(g("bom_driver"))}" style="flex:1">
+          <input id="p-bom_driver_qty" type="number" min="0" step="any" value="${esc(g("bom_driver_qty"))}" placeholder="Qty" style="width:82px" title="Quantity per unit"></div></div>
+        <div class="field"><label>BOM: LED</label>
+          <div style="display:flex;gap:6px"><input id="p-bom_led" value="${esc(g("bom_led"))}" style="flex:1">
+          <input id="p-bom_led_qty" type="number" min="0" step="any" value="${esc(g("bom_led_qty"))}" placeholder="Qty" style="width:82px" title="Quantity per unit"></div></div>
+        <div class="field"><label>BOM: EM</label>
+          <div style="display:flex;gap:6px"><input id="p-bom_em" value="${esc(g("bom_em"))}" style="flex:1">
+          <input id="p-bom_em_qty" type="number" min="0" step="any" value="${esc(g("bom_em_qty"))}" placeholder="Qty" style="width:82px" title="Quantity per unit"></div></div>
+        <div class="field"><label>BOM: Housing</label>
+          <div style="display:flex;gap:6px"><input id="p-bom_housing" value="${esc(g("bom_housing"))}" style="flex:1">
+          <input id="p-bom_housing_qty" type="number" min="0" step="any" value="${esc(g("bom_housing_qty"))}" placeholder="Qty" style="width:82px" title="Quantity per unit"></div></div>
         <div class="field full"><label>BOM remarks (engineering notes)</label><input id="p-bom_remarks" value="${esc(g("bom_remarks"))}"></div>
       </div>
       ${p&&p.needs_fabrication&&may("fabrication","view")?`
@@ -2220,12 +2315,16 @@ async function planModal(pLite){
 
   const collect=()=>{
     const val=id=>bg.querySelector("#p-"+id).value.trim();
+    const numOrNull=id=>{ const el=bg.querySelector("#p-"+id); if(!el) return null;
+      const v=el.value.trim(); if(!v) return null; const n=Number(v); return isFinite(n)?n:null; };
     return { odoo_so:val("odoo_so"), sap_so:val("sap_so"), customer:val("customer"), contact:val("contact"),
       sales_person:val("sales_person"), region:val("region"), product_name:val("product_name"),
       c_ref:val("c_ref"), so_qty:val("so_qty"), model:val("model"), planned_qty:val("planned_qty"),
       planned_date:(bg.querySelector("#p-planned_week").value?weekMonday(bg.querySelector("#p-planned_week").value):""),
       light_type:val("light_type"), voltage:val("voltage"), bom_remarks:val("bom_remarks"),
       bom_driver:val("bom_driver"), bom_led:val("bom_led"), bom_em:val("bom_em"), bom_housing:val("bom_housing"),
+      bom_driver_qty:numOrNull("bom_driver_qty"), bom_led_qty:numOrNull("bom_led_qty"),
+      bom_em_qty:numOrNull("bom_em_qty"), bom_housing_qty:numOrNull("bom_housing_qty"),
       needs_fabrication:bg.querySelector("#p-needs_fabrication").value==="true",
       record_kind:bg.querySelector("#p-record_kind").value,
       bom_stock_status:val("bom_stock_status"), cargo_eta:val("cargo_eta"),
@@ -2315,6 +2414,7 @@ async function planModal(pLite){
     const f={};
     ["model","light_type","voltage","planned_qty","planned_date","record_kind","needs_fabrication",
      "bom_driver","bom_led","bom_em","bom_housing","bom_remarks","bom_stock_status",
+     "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty",
      "cargo_eta","cargo_received","cargo_remarks","plan_indicator","plan_remarks",
      "estimated_ready_week","wh_no_stock","stock_allocations"]
       .forEach(k=>{ if(SIB[k]!=null) f[k]=SIB[k]; });
