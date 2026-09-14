@@ -176,6 +176,8 @@
   .bom-table th .rz{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:6}
   .bom-table th .rz:hover{background:var(--orange);opacity:.5}
   .bom-table td.bom-cell{padding:3px 4px}
+  .bom-table td.bom-cell.qty input{min-width:0;text-align:center;font-variant-numeric:tabular-nums;font-weight:600}
+  .bom-table th:has(+th){}
   .bom-table td.bom-cell input{width:100%; min-width:130px; padding:8px 10px; border:1px solid transparent;
     border-radius:7px; background:transparent; font-size:13.5px; font-family:inherit}
   .bom-table td.bom-cell select{width:100%; min-width:0; padding:8px 9px; border:1px solid transparent;
@@ -1484,12 +1486,12 @@ async function renderBomEditor(){
     let chunk;
     if(isPlans){
       ({ data:chunk, error }=await db.from("planned_records")
-        .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note,odoo_state")
+        .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,bom_driver_qty,bom_led_qty,bom_em_qty,bom_housing_qty,warehouse_reasons,warehouse_note,odoo_state")
         .in("plan_status", isRejected?["Returned to Engineering"]:["Draft","Returned","Warehouse","Pushed"])
         .order("created_at",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     } else {
       ({ data:chunk, error }=await db.from("production_records")
-        .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+        .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_driver_qty,bom_led_qty,bom_em_qty,bom_housing_qty")
         .order("production_date",{ascending:false}).order("id",{ascending:true}).range(from,from+B-1));
     }
     if(error) break;
@@ -1514,9 +1516,14 @@ async function renderBomEditor(){
 
   const dirty={};
   const COLS=isPlans
-    ?[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"],["bom_stock_status","Stock status"]]
-    :[["bom_driver","Driver"],["bom_led","LED"],["bom_em","EM"],["bom_housing","Housing"],["bom_remarks","Remarks"]];
-  const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||""); });
+    ?[["bom_driver","Driver"],["bom_driver_qty","Drv qty"],["bom_led","LED"],["bom_led_qty","LED qty"],
+      ["bom_em","EM"],["bom_em_qty","EM qty"],["bom_housing","Housing"],["bom_housing_qty","Hsg qty"],
+      ["bom_remarks","Remarks"],["bom_stock_status","Stock status"]]
+    :[["bom_driver","Driver"],["bom_driver_qty","Drv qty"],["bom_led","LED"],["bom_led_qty","LED qty"],
+      ["bom_em","EM"],["bom_em_qty","EM qty"],["bom_housing","Housing"],["bom_housing_qty","Hsg qty"],
+      ["bom_remarks","Remarks"]];
+  const isQty=k=>k.endsWith("_qty");
+  const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=(r[k]===null||r[k]===undefined)?"":String(r[k])); });
 
   const rowWeekDate=r=>isPlans?r.planned_date:r.production_date;
   function rowVisible(r,q,only,wk,st){
@@ -1559,12 +1566,12 @@ async function renderBomEditor(){
       let res;
       if(isPlans){
         res=await db.from("planned_records")
-          .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,warehouse_reasons,warehouse_note,odoo_state")
+          .select("id,odoo_so,sap_so,product_name,c_ref,so_qty,model,customer,plan_status,planned_date,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_stock_status,bom_driver_qty,bom_led_qty,bom_em_qty,bom_housing_qty,warehouse_reasons,warehouse_note,odoo_state")
           .in("plan_status", isRejected?["Returned to Engineering"]:["Draft","Returned","Warehouse","Pushed"])
           .or(or).order("id",{ascending:true}).limit(500);
       } else {
         res=await db.from("production_records")
-          .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks")
+          .select("id,serial,production_date,so_number,model,customer,bom_driver,bom_led,bom_em,bom_housing,bom_remarks,bom_driver_qty,bom_led_qty,bom_em_qty,bom_housing_qty")
           .or(or).order("id",{ascending:true}).limit(500);
       }
       if(res.error) continue;
@@ -1585,7 +1592,7 @@ async function renderBomEditor(){
     grid.innerHTML=`<div class="tbl-wrap bom-wrap"><table class="bom-table"><thead><tr>
         ${isPlans?`${isRejected?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
-        ${COLS.map(c=>`<th style="min-width:140px">${c[1]}</th>`).join("")}
+        ${COLS.map(c=>`<th style="min-width:${isQty(c[0])?"74px":"140px"}">${c[1]}</th>`).join("")}
       </tr></thead><tbody>${
       rows.map(r=>`<tr>
         ${isPlans?`${isRejected?`<td style="width:28px"><input type="checkbox" class="rpSel" data-rp="${r.id}"></td>`:""}
@@ -1605,7 +1612,9 @@ async function renderBomEditor(){
           const changed=dirty[r.id]&&dirty[r.id][k]!==undefined&&dirty[r.id][k]!==orig[r.id][k];
           if(k==="bom_stock_status")
             return `<td class="bom-cell${changed?" changed":""}"><select data-id="${r.id}" data-col="${k}">
-              ${["","In Stock","Partial Stock","Cargo/PO Item"].map(o=>`<option value="${o}" ${cur===o?"selected":""}>${o||"\u2014"}</option>`).join("")}</select></td>`;
+              ${["","In Stock","Partial Stock","Cargo/PO Item","Not available"].map(o=>`<option value="${o}" ${cur===o?"selected":""}>${o||"\u2014"}</option>`).join("")}</select></td>`;
+          if(isQty(k))
+            return `<td class="bom-cell qty${changed?" changed":""}"><input type="number" min="0" step="any" data-id="${r.id}" data-col="${k}" value="${esc(cur)}"></td>`;
           return `<td class="bom-cell${changed?" changed":""}"><input data-id="${r.id}" data-col="${k}" value="${esc(cur)}"></td>`;
         }).join("")}
       </tr>`).join("")}</tbody></table></div>
@@ -1701,10 +1710,25 @@ async function renderBomEditor(){
   document.getElementById("bomSave").onclick=async()=>{
     const b=document.getElementById("bomSave");
     const rows=Object.entries(dirty).map(([id,ch])=>{
-      const o={ id }; COLS.forEach(([k])=>o[k]=ch[k]!==undefined?ch[k]:orig[id][k]); return o; });
+      const o={ id };
+      COLS.forEach(([k])=>{
+        const v=ch[k]!==undefined?ch[k]:orig[id][k];
+        if(isQty(k)){ const t=String(v==null?"":v).trim(); const n=Number(t); o[k]=(t===""||!isFinite(n))?null:n; }
+        else o[k]=v;
+      });
+      return o; });
     b.disabled=true; b.textContent="Saving\u2026";
     const { data:count, error }=await db.rpc(isPlans?"bulk_update_plan_bom":"bulk_update_bom",{ p_rows:rows });
     if(error){ banner(error.message); updateSaveBtn(); return; }
+    // quantities go through their own RPC: the bulk BOM functions map a fixed
+    // column list and would drop these keys without erroring
+    const qtyRows=rows.filter(r=>COLS.some(([k])=>isQty(k)&&r[k]!==undefined))
+      .map(r=>({ id:r.id, bom_driver_qty:r.bom_driver_qty, bom_led_qty:r.bom_led_qty,
+                 bom_em_qty:r.bom_em_qty, bom_housing_qty:r.bom_housing_qty }));
+    if(qtyRows.length){
+      const { error:qe }=await db.rpc(isPlans?"bulk_update_plan_bom_qty":"bulk_update_bom_qty",{ p_rows:qtyRows });
+      if(qe){ banner("BOM text saved, but quantities did not: "+qe.message); }
+    }
     rows.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=r[k]||"");
       const rec=data.find(x=>x.id===r.id);
       if(rec) COLS.forEach(([k])=>rec[k]=r[k]); });
