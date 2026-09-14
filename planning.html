@@ -615,6 +615,8 @@ function renderShell(){
       <span class="brand-tag">Planning</span>
       <a href="index.html" class="brand-home">Console</a>
       <a href="dashboard.html" class="brand-home">Dashboard</a>
+      <a href="index.html#/history" class="brand-home">History</a>
+      <a class="brand-home" id="fbBtn" title="Report an issue or request a feature">Report</a>
       <a class="brand-home" id="themeBtn" title="Light / dark">${document.documentElement.dataset.theme==="dark"?"\u2600":"\u263E"}</a>
       <div class="who">${esc(SESSION.user.email)}<br>${ROLE?`<span class="role-tag">${esc(ROLE)}</span> \u00b7 `:""}<a id="signout">Sign out</a></div>
     </div></header>
@@ -692,6 +694,8 @@ function renderShell(){
   tt.onclick=()=>window.scrollTo({top:0,behavior:"smooth"});
   document.getElementById("signout").onclick=async()=>{ await db.auth.signOut(); location.reload(); };
   document.getElementById("themeBtn").onclick=toggleTheme;
+  const fbB=document.getElementById("fbBtn");
+  if(fbB) fbB.onclick=e=>{ e.preventDefault(); planReportModal(); };
   document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
     document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); VIEW=b.dataset.v; draw(); });
@@ -1853,6 +1857,47 @@ function drawWarehouse(v){
   v.querySelectorAll("[data-wrej]").forEach(b=>b.onclick=()=>rejectModal([b.dataset.wrej]));
   const rejB=v.querySelector("#wRejSel");
   if(rejB) rejB.onclick=()=>rejectModal(selIds());
+}
+
+/* ---------------- report an issue or request a feature ---------------- */
+function planReportModal(){
+  const pageName={warehouse:"Warehouse queue", queue:"Assembly queue"}[VIEW]||"Planning board";
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:560px"><div class="mh">Report an issue or request a feature<span class="x">&times;</span></div>
+    <div class="mb">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <label class="pb-opt" style="flex:1"><input type="radio" name="fbK" value="issue" checked>
+          <span><b>Something is wrong</b><i>A bug or a problem</i></span></label>
+        <label class="pb-opt" style="flex:1"><input type="radio" name="fbK" value="feature">
+          <span><b>Something is missing</b><i>A feature request</i></span></label>
+      </div>
+      <div class="field"><label>Short title</label><input id="fbTitle" maxlength="140" placeholder="One line describing it"></div>
+      <div class="field"><label>Detail</label><textarea id="fbDetail" rows="4" placeholder="What happened, or what you need it to do"></textarea></div>
+      <div class="field"><label>How urgent is it for you</label><select id="fbSev">
+        <option value="Critical">Critical, I cannot do my job</option>
+        <option value="High">High, it is slowing me down a lot</option>
+        <option value="Medium" selected>Medium, it is annoying</option>
+        <option value="Low">Low, would be nice to have</option></select></div>
+      <div class="m" style="color:var(--muted)">Filed against: <b>${esc(pageName)}</b></div>
+    </div>
+    <div class="mf"><button class="btn ghost" id="fbCancel">Cancel</button><button class="btn primary" id="fbGo">Send</button></div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.querySelector("#fbCancel").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  bg.querySelector("#fbGo").onclick=async()=>{
+    const title=bg.querySelector("#fbTitle").value.trim();
+    if(!title){ banner("Give it a short title first."); return; }
+    const go=bg.querySelector("#fbGo"); go.disabled=true; go.textContent="Sending\u2026";
+    const { error }=await db.rpc("submit_feedback",{
+      p_kind:bg.querySelector('input[name="fbK"]:checked').value,
+      p_page:pageName, p_title:title,
+      p_detail:bg.querySelector("#fbDetail").value.trim()||null,
+      p_severity:bg.querySelector("#fbSev").value });
+    if(error){ banner(error.message); go.disabled=false; go.textContent="Send"; return; }
+    close(); banner("Thanks. Your report is on the list.",true);
+  };
 }
 
 /* ---------------- pull a plan back out of a queue ---------------- */
