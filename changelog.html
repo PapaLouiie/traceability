@@ -24,6 +24,16 @@ body{margin:0;font-family:"Bizmo",Arial,sans-serif;color:var(--ink);background:v
 .rel .date{font-size:12px;color:var(--muted);margin-bottom:6px}
 .rel h3{font-size:12px;color:var(--navy);text-transform:uppercase;letter-spacing:1.2px;border-left:3px solid var(--orange);padding-left:9px;margin:16px 0 6px}
 .rel p{margin:4px 0;font-size:13.5px;line-height:1.55}
+.hint{font-size:12px;color:var(--muted);margin:10px 0 2px;line-height:1.5}
+.rel-list{list-style:none;margin:4px 0;padding:0}
+.rel-list li.top{font-size:13.5px;line-height:1.55;margin:4px 0;padding-left:16px;position:relative}
+.rel-list li.top:before{content:"";position:absolute;left:3px;top:8px;width:5px;height:5px;
+  border-radius:50%;background:var(--orange)}
+.rel-list ul.sub{list-style:none;margin:2px 0 6px;padding:0 0 0 16px}
+.rel-list ul.sub li{font-size:12.5px;line-height:1.5;color:var(--muted);margin:2px 0;
+  padding-left:14px;position:relative}
+.rel-list ul.sub li:before{content:"";position:absolute;left:2px;top:8px;width:6px;height:1px;
+  background:var(--muted);opacity:.6}
 .tools{position:absolute;top:16px;right:16px;display:flex;gap:6px}
 .empty{color:var(--muted);text-align:center;padding:40px 0}
 .modal-bg{position:fixed;inset:0;background:rgba(20,22,50,.55);display:none;align-items:flex-start;justify-content:center;padding:30px 14px;overflow:auto;z-index:100}
@@ -47,9 +57,10 @@ body{margin:0;font-family:"Bizmo",Arial,sans-serif;color:var(--ink);background:v
   <div class="row"><div><label>Version</label><input id="e-v" placeholder="1.1.0"></div>
   <div><label>Date</label><input id="e-d" type="date"></div></div>
   <label>Headline (optional)</label><input id="e-t" placeholder="MO creation and faster planning">
-  <label>New (one item per line)</label><textarea id="e-new"></textarea>
-  <label>Improved (one item per line)</label><textarea id="e-imp"></textarea>
-  <label>Fixed (one item per line)</label><textarea id="e-fix"></textarea>
+  <p class="hint">One item per line. Start a line with a dash or two spaces to make it a sub-point of the line above.</p>
+  <label>New</label><textarea id="e-new" placeholder="Warehouse queue added&#10;  - Tick each available item&#10;  - Status is set automatically"></textarea>
+  <label>Improved</label><textarea id="e-imp"></textarea>
+  <label>Fixed</label><textarea id="e-fix"></textarea>
   <div class="msg" id="e-msg"></div>
   <div class="foot"><button class="btn" id="e-cancel">Cancel</button>
   <button class="btn primary" id="e-save">Publish</button></div>
@@ -69,6 +80,25 @@ async function canAdmin(){
   }
   return false;
 }
+const SUBRE=/^(\s{2,}|[-*\u2022]\s+)/;
+function itemsHtml(items){
+  let out="", open=false;
+  (items||[]).forEach(raw=>{
+    const line=String(raw==null?"":raw);
+    const sub=SUBRE.test(line);
+    const text=line.replace(SUBRE,"").trim();
+    if(!text) return;
+    if(sub){
+      if(!open){ out+="<ul class=\"sub\">"; open=true; }
+      out+=`<li>${esc(text)}</li>`;
+    } else {
+      if(open){ out+="</ul>"; open=false; }
+      out+=`<li class="top">${esc(text)}</li>`;
+    }
+  });
+  if(open) out+="</ul>";
+  return `<ul class="rel-list">${out}</ul>`;
+}
 function relHtml(r){
   const secs=(r.sections||[]).filter(s=>s.items&&s.items.length);
   return `<div class="rel">
@@ -77,7 +107,7 @@ function relHtml(r){
       <button class="btn danger" data-del="${esc(r.version)}">\u00d7</button></div>`:""}
     <h2>v${esc(r.version)}${r.title?` \u00b7 ${esc(r.title)}`:""}</h2>
     <div class="date">${esc(r.released_on||"")}</div>
-    ${secs.map(s=>`<h3>${esc(s.h)}</h3>${s.items.map(i=>`<p>${esc(i)}</p>`).join("")}`).join("")}
+    ${secs.map(s=>`<h3>${esc(s.h)}</h3>${itemsHtml(s.items)}`).join("")}
   </div>`;
 }
 async function load(){
@@ -98,7 +128,11 @@ async function load(){
   }
 }
 function copyMail(r){
-  const sec=h=>{ const s=(r.sections||[]).find(x=>x.h===h); return s&&s.items.length?h.toUpperCase()+"\n"+s.items.map(i=>"- "+i).join("\n")+"\n\n":""; };
+  const sec=h=>{ const s=(r.sections||[]).find(x=>x.h===h);
+    if(!s||!s.items.length) return "";
+    const body=s.items.map(i=>{ const t=String(i); const txt=t.replace(SUBRE,"").trim();
+      return SUBRE.test(t) ? "    \u00b7 "+txt : "- "+txt; }).filter(x=>x.trim().length>2).join("\n");
+    return h.toUpperCase()+"\n"+body+"\n\n"; };
   const body=`Subject: ProTrace v${r.version} released${r.title?" - "+r.title:""}\n\nTeam,\n\nProTrace has been updated to v${r.version}. Here is what changed:\n\n`+
     sec("New")+sec("Improved")+sec("Fixed")+
     `No action is needed on your side; refresh the page and you are on the new version. Full notes are always available on the Release notes page.\n\nHaitham\nDigital Transformation`;
@@ -123,7 +157,9 @@ document.getElementById("e-save").onclick=async()=>{
   const v=document.getElementById("e-v").value.trim();
   const msg=document.getElementById("e-msg");
   if(!/^\d+\.\d+\.\d+$/.test(v)){ msg.className="msg err"; msg.textContent="Version must look like 1.2.0"; return; }
-  const lines=id=>document.getElementById(id).value.split("\n").map(x=>x.trim()).filter(Boolean);
+  // keep leading spaces and dashes: they mark a sub-point
+  const lines=id=>document.getElementById(id).value.split("\n")
+    .map(x=>x.replace(/\s+$/,"")).filter(x=>x.trim());
   const sections=[["New","e-new"],["Improved","e-imp"],["Fixed","e-fix"]]
     .map(([h,id])=>({h, items:lines(id)})).filter(s=>s.items.length);
   if(!sections.length){ msg.className="msg err"; msg.textContent="Write at least one item."; return; }
