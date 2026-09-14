@@ -175,6 +175,17 @@
   html[data-theme="dark"] .bom-table th{background:#15173a}
   .bom-table th .rz{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:6}
   .bom-table th .rz:hover{background:var(--orange);opacity:.5}
+  .fb-rank{min-width:30px;height:30px;display:flex;align-items:center;justify-content:center;
+    background:var(--bg);border:1px solid var(--line);border-radius:50%;font-weight:800;font-size:12.5px;
+    color:var(--muted);flex-shrink:0;margin-top:2px}
+  .pb-opt{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-radius:9px;padding:9px 11px;cursor:pointer}
+  .pb-opt:hover{background:var(--bg)}
+  .pb-opt span{display:flex;flex-direction:column;gap:1px;font-size:13px}
+  .pb-opt i{font-style:normal;font-size:11.5px;color:var(--muted)}
+  .trail{display:flex;flex-direction:column;gap:2px}
+  .tr-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .tr-row:last-child{border-bottom:0}
+  .tr-when{min-width:120px;color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums;flex-shrink:0}
   .bom-table td.bom-cell{padding:3px 4px}
   .bom-table td.bom-cell.qty input{min-width:0;text-align:center;font-variant-numeric:tabular-nums;font-weight:600}
   .bom-table th:has(+th){}
@@ -490,6 +501,8 @@ async function route(){
   if(m){ await openRecord(m[1],true); return; }
   if(h==="#/admin" && may("admin","view")){ renderAdmin(); return; }
   if(h==="#/bom" && may("engineering","edit")){ renderBomEditor(); return; }
+  if(h==="#/history"){ renderHistory(); return; }
+  if(h==="#/feedback"){ renderFeedback(); return; }
   if(h==="#/lines"){ renderLines(); return; }
   if(h==="#/new"){ renderEditor(null); return; }
   renderHome();
@@ -527,6 +540,8 @@ function shell(inner){
       <a id="homeBtn" class="brand-home">Home</a>
       <a class="brand-home" href="planning.html">Planning<span id="qBadge" style="display:none;margin-left:6px;background:var(--orange);color:#fff;border-radius:99px;padding:0 7px;font-size:11px;font-weight:800"></span></a>
       ${may("engineering","edit")?'<a id="navBom" class="brand-home">BOM editor</a>':''}
+      <a id="navHist" class="brand-home">History</a>
+      <a id="navFb" class="brand-home" title="Report an issue or request a feature">Feedback</a>
       ${may("admin","view")?'<a id="adminBtn" class="brand-home">Admin</a>':''}
       <a class="brand-home" id="themeBtn" title="Light / dark">${document.documentElement.dataset.theme==="dark"?"\u2600":"\u263E"}</a>
       <div class="who">${esc(SESSION.user.email)}<br>${ROLE?`<span class="role-tag">${esc(ROLE)}</span> \u00b7 `:""}<a id="signout">Sign out</a></div>
@@ -543,10 +558,286 @@ function wireShell(){
   const tb=document.getElementById("themeBtn");
   if(tb) tb.onclick=toggleTheme;
   const nb=document.getElementById("navBom"); if(nb) nb.onclick=e=>{ e.preventDefault(); renderBomEditor(); };
+  const nh=document.getElementById("navHist"); if(nh) nh.onclick=e=>{ e.preventDefault(); renderHistory(); };
+  const nf=document.getElementById("navFb");   if(nf) nf.onclick=e=>{ e.preventDefault(); renderFeedback(); };
   updateQueueBadge();
 }
 
 /* ---------------- home: new + search + filter + recent ---------------- */
+/* ================= feedback: report an issue or request a feature ========= */
+const FB_SEV=["Critical","High","Medium","Low"];
+const FB_STATUS=["Open","Planned","In progress","Done","Declined"];
+const FB_PAGES=["Production console","Planning board","Warehouse queue","Assembly queue",
+                "BOM editor","Dashboard","QR / MO view","Changelog","Other"];
+
+function reportModal(defaultPage){
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:560px"><div class="mh">Report an issue or request a feature<span class="x">&times;</span></div>
+    <div class="mb">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <label class="pb-opt" style="flex:1"><input type="radio" name="fbK" value="issue" checked>
+          <span><b>Something is wrong</b><i>A bug or a problem</i></span></label>
+        <label class="pb-opt" style="flex:1"><input type="radio" name="fbK" value="feature">
+          <span><b>Something is missing</b><i>A feature request</i></span></label>
+      </div>
+      <div class="field"><label>Which page</label><select id="fbPage">
+        ${FB_PAGES.map(p=>`<option ${p===defaultPage?"selected":""}>${esc(p)}</option>`).join("")}</select></div>
+      <div class="field"><label>Short title</label><input id="fbTitle" maxlength="140" placeholder="One line describing it"></div>
+      <div class="field"><label>Detail</label><textarea id="fbDetail" rows="4" placeholder="What happened, or what you need it to do"></textarea></div>
+      <div class="field"><label>How urgent is it for you</label><select id="fbSev">
+        <option value="Critical">Critical, I cannot do my job</option>
+        <option value="High">High, it is slowing me down a lot</option>
+        <option value="Medium" selected>Medium, it is annoying</option>
+        <option value="Low">Low, would be nice to have</option>
+      </select></div>
+    </div>
+    <div class="mf"><button class="btn ghost" id="fbCancel">Cancel</button><button class="btn primary" id="fbGo">Send</button></div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.querySelector("#fbCancel").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  bg.querySelector("#fbGo").onclick=async()=>{
+    const title=bg.querySelector("#fbTitle").value.trim();
+    if(!title){ banner("Give it a short title first."); return; }
+    const go=bg.querySelector("#fbGo"); go.disabled=true; go.textContent="Sending\u2026";
+    const { error }=await db.rpc("submit_feedback",{
+      p_kind:bg.querySelector('input[name="fbK"]:checked').value,
+      p_page:bg.querySelector("#fbPage").value,
+      p_title:title,
+      p_detail:bg.querySelector("#fbDetail").value.trim()||null,
+      p_severity:bg.querySelector("#fbSev").value });
+    if(error){ banner(error.message); go.disabled=false; go.textContent="Send"; return; }
+    close(); banner("Thanks. Your report is on the list.",true);
+  };
+}
+
+let FBFILTER="open";
+async function renderFeedback(){
+  setHash("#/feedback");
+  document.body.classList.remove("wide");
+  root.innerHTML=shell(`
+    <button class="btn link" id="back">&larr; All records</button>
+    <h1>Issues and requests</h1>
+    <p class="sub">Ranked automatically: work in progress first, then by how urgent the reporter said it is, then by how long it has been waiting.</p>
+    <div class="toolbar" style="margin-bottom:12px">
+      <button class="btn primary" id="fbNew">Report something</button>
+      <select id="fbFilter" style="max-width:190px">
+        <option value="open">Open items</option>
+        <option value="all">Everything</option>
+        <option value="issue">Issues only</option>
+        <option value="feature">Requests only</option>
+        <option value="mine">Raised by me</option>
+        <option value="done">Closed</option>
+      </select>
+    </div>
+    <div class="card"><div id="fbList"><div class="spinner"></div></div></div>`);
+  wireShell();
+  document.getElementById("back").onclick=renderHome;
+  document.getElementById("fbNew").onclick=()=>reportModal("Other");
+  const fsel=document.getElementById("fbFilter");
+  fsel.value=FBFILTER;
+  fsel.onchange=()=>{ FBFILTER=fsel.value; loadFb(); };
+  loadFb();
+}
+
+async function loadFb(){
+  const box=document.getElementById("fbList");
+  if(!box) return;
+  box.innerHTML='<div class="spinner"></div>';
+  const { data, error }=await db.from("feedback_ranked").select("*")
+    .order("rank_score",{ascending:true}).order("created_at",{ascending:true}).limit(500);
+  if(error){ box.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
+  const me=SESSION&&SESSION.user?SESSION.user.email:"";
+  const rows=(data||[]).filter(f=>{
+    if(FBFILTER==="open")    return !["Done","Declined"].includes(f.status);
+    if(FBFILTER==="done")    return ["Done","Declined"].includes(f.status);
+    if(FBFILTER==="issue")   return f.kind==="issue"   && !["Done","Declined"].includes(f.status);
+    if(FBFILTER==="feature") return f.kind==="feature" && !["Done","Declined"].includes(f.status);
+    if(FBFILTER==="mine")    return f.created_by===me;
+    return true;
+  });
+  if(!rows.length){ box.innerHTML='<div class="empty">Nothing here. Use Report something to add the first one.</div>'; return; }
+  const isAdmin=may("admin","edit");
+  const sevTone=s=>s==="Critical"?"hold":(s==="High"?"warn":(s==="Medium"?"info":""));
+  const stTone=s=>s==="Done"?"ok":(s==="Declined"?"":(s==="In progress"?"info":(s==="Planned"?"warn":"hold")));
+  const ago=t=>{ const d=Math.floor((Date.now()-new Date(t))/86400000);
+    return d<=0?"today":(d===1?"1 day":(d<14?d+" days":Math.floor(d/7)+" weeks")); };
+  box.innerHTML=rows.map((f,i)=>`
+    <div class="qrow">
+      <div class="fb-rank">${i+1}</div>
+      <div class="info">
+        <div class="t">${esc(f.title)}
+          <span class="chip" data-tone="${sevTone(f.severity)}">${esc(f.severity)}</span>
+          <span class="chip" data-tone="${stTone(f.status)}">${esc(f.status)}</span>
+          <span class="chip">${f.kind==="feature"?"Request":"Issue"}</span></div>
+        ${f.detail?`<div class="m" style="margin-top:4px">${esc(f.detail)}</div>`:""}
+        <div class="m" style="color:var(--muted);margin-top:4px">
+          ${f.page?esc(f.page)+" \u00b7 ":""}${esc(f.created_by||"someone")} \u00b7 ${ago(f.created_at)} ago
+          ${f.admin_note?` \u00b7 <b>Note:</b> ${esc(f.admin_note)}`:""}</div>
+      </div>
+      <div class="act">
+        ${isAdmin?`<select data-fbs="${f.id}" style="max-width:135px">
+          ${FB_STATUS.map(s=>`<option ${s===f.status?"selected":""}>${s}</option>`).join("")}</select>`:""}
+        ${(isAdmin||f.created_by===me)?`<button class="btn ghost sm" data-fbd="${f.id}" title="Remove">&times;</button>`:""}
+      </div>
+    </div>`).join("");
+
+  box.querySelectorAll("[data-fbs]").forEach(sel=>sel.onchange=async()=>{
+    const note=sel.value==="Declined"?prompt("Why is this being declined? (optional)"):null;
+    const { error }=await db.rpc("set_feedback_status",{ p_id:sel.dataset.fbs, p_status:sel.value, p_note:note });
+    if(error){ banner(error.message); return; }
+    loadFb();
+  });
+  box.querySelectorAll("[data-fbd]").forEach(b=>b.onclick=async()=>{
+    if(!confirm("Remove this report?")) return;
+    const { error }=await db.rpc("delete_feedback",{ p_id:b.dataset.fbd });
+    if(error){ banner(error.message); return; }
+    loadFb();
+  });
+}
+
+/* ================= history: searchable archive + audit trail ============== */
+let HISTQ="", HISTFROM="", HISTTO="", HISTROWS=[];
+async function renderHistory(){
+  setHash("#/history");
+  document.body.classList.add("wide");
+  const today=new Date().toISOString().slice(0,10);
+  const back=new Date(Date.now()-90*86400000).toISOString().slice(0,10);
+  if(!HISTFROM) HISTFROM=back;
+  if(!HISTTO) HISTTO=today;
+  root.innerHTML=shell(`
+    <button class="btn link" id="back">&larr; All records</button>
+    <h1>History</h1>
+    <p class="sub">Every production record, with the full trail of who changed what. Search, narrow by date, then export.</p>
+    <div class="toolbar" style="margin-bottom:12px">
+      <div class="chipsearch" id="hSearchBox" style="flex:1;min-width:200px"><input id="hSearch" placeholder="Serial, SO, MO, model or customer"></div>
+      <label class="m" style="display:flex;align-items:center;gap:6px">From <input type="date" id="hFrom" value="${HISTFROM}"></label>
+      <label class="m" style="display:flex;align-items:center;gap:6px">To <input type="date" id="hTo" value="${HISTTO}"></label>
+      <button class="btn primary" id="hGo">Search</button>
+      <button class="btn ghost" id="hCsv" disabled>Export CSV</button>
+      <button class="btn ghost" id="hXls" disabled>Export Excel</button>
+    </div>
+    <div class="card"><div id="hList"><div class="empty">Set a date range and press Search.</div></div></div>`);
+  wireShell();
+  document.getElementById("back").onclick=renderHome;
+  const run=()=>{
+    HISTFROM=document.getElementById("hFrom").value;
+    HISTTO=document.getElementById("hTo").value;
+    HISTQ=document.getElementById("hSearch").value.trim();
+    loadHist();
+  };
+  document.getElementById("hGo").onclick=run;
+  document.getElementById("hSearch").addEventListener("keydown",e=>{ if(e.key==="Enter") run(); });
+  document.getElementById("hCsv").onclick=()=>exportHist("csv");
+  document.getElementById("hXls").onclick=()=>exportHist("xlsx");
+  if(HISTROWS.length) drawHist();
+}
+
+async function loadHist(){
+  const box=document.getElementById("hList");
+  box.innerHTML='<div class="spinner"></div>';
+  let q=db.from("history_records").select("*");
+  if(HISTFROM) q=q.gte("production_date",HISTFROM);
+  if(HISTTO)   q=q.lte("production_date",HISTTO);
+  if(HISTQ){
+    const like=`%${HISTQ.replace(/[%_]/g,m=>"\\"+m)}%`;
+    q=q.or(["serial","so_number","mo_number","model","customer","customer_reference"]
+            .map(c=>`${c}.ilike.${like}`).join(","));
+  }
+  const { data, error }=await q.order("production_date",{ascending:false})
+                               .order("id",{ascending:true}).limit(5000);
+  if(error){ box.innerHTML=`<div class="empty">Could not load: ${esc(error.message)}</div>`; return; }
+  HISTROWS=data||[];
+  drawHist();
+}
+
+function drawHist(){
+  const box=document.getElementById("hList");
+  if(!box) return;
+  document.getElementById("hCsv").disabled=!HISTROWS.length;
+  document.getElementById("hXls").disabled=!HISTROWS.length;
+  if(!HISTROWS.length){ box.innerHTML='<div class="empty">Nothing in that range.</div>'; return; }
+  const tone=s=>s==="Completed"?"ok":(s==="Hold"?"hold":(s==="QC"?"warn":"info"));
+  box.innerHTML=`<div class="tbl-wrap bom-wrap"><table class="bom-table"><thead><tr>
+      <th style="min-width:120px">Serial</th><th style="min-width:100px">Date</th>
+      <th style="min-width:110px">SO</th><th style="min-width:110px">MO</th>
+      <th style="min-width:170px">Model</th><th style="min-width:170px">Customer</th>
+      <th style="min-width:70px">Qty</th><th style="min-width:100px">Status</th>
+      <th style="min-width:90px">Trail</th></tr></thead><tbody>
+    ${HISTROWS.map(r=>`<tr>
+      <td><b>${esc(r.serial||"")}</b></td>
+      <td>${esc(r.production_date||"")}</td>
+      <td>${esc(r.so_number||"")}</td>
+      <td>${esc(r.mo_number||"")}</td>
+      <td>${esc(r.model||"")}<div class="meta">${esc(r.product_name||"")}</div></td>
+      <td>${esc(r.customer||"")}<div class="meta">${esc(r.customer_reference||r.plan_c_ref||"")}</div></td>
+      <td style="text-align:center">${r.planned_qty==null?"":esc(r.planned_qty)}</td>
+      <td><span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"")}</span></td>
+      <td><button class="btn ghost sm" data-trail="${r.id}">View</button></td>
+    </tr>`).join("")}</tbody></table></div>
+    <div class="meta" style="padding:8px 10px;border-top:1px solid var(--line)">
+      ${HISTROWS.length.toLocaleString()} record${HISTROWS.length==1?"":"s"}${HISTROWS.length>=5000?" (capped at 5,000; narrow the dates)":""}</div>`;
+  box.querySelectorAll("[data-trail]").forEach(b=>b.onclick=()=>trailModal(b.dataset.trail));
+}
+
+async function trailModal(id){
+  const rec=HISTROWS.find(r=>r.id===id);
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:640px"><div class="mh">Trail for ${esc(rec?rec.serial:"record")}<span class="x">&times;</span></div>
+    <div class="mb" id="trBody"><div class="spinner"></div></div>
+    <div class="mf"><button class="btn ghost" id="trClose">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.querySelector("#trClose").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  const body=bg.querySelector("#trBody");
+  // the record's own trail, plus the plan it came from
+  const ids=[id]; if(rec&&rec.plan_id) ids.push(rec.plan_id);
+  let events=[];
+  for(const rid of ids){
+    const { data }=await db.rpc("record_history",{ p_record_id:rid });
+    (data||[]).forEach(e=>events.push(e));
+  }
+  events.sort((a,b)=>new Date(b.at)-new Date(a.at));
+  if(!events.length){ body.innerHTML='<div class="empty">No recorded changes for this one.</div>'; return; }
+  const label=a=>({material_issuance_approved:"Material issued",
+    material_issuance_rejected:"Returned by warehouse", stock_confirmed:"Stock confirmed",
+    repushed_to_warehouse:"Re-pushed to warehouse", pulled_back:"Pulled back"}[a]||a.replace(/_/g," "));
+  body.innerHTML=`<div class="trail">${events.map(e=>`
+    <div class="tr-row">
+      <div class="tr-when">${esc(String(e.at).slice(0,16).replace("T"," "))}</div>
+      <div><b>${esc(label(e.action))}</b>
+        <div class="m" style="color:var(--muted)">${esc(e.actor||"")}</div>
+        ${e.details?`<div class="m">${esc(JSON.stringify(e.details))}</div>`:""}</div>
+    </div>`).join("")}</div>`;
+}
+
+function exportHist(kind){
+  if(!HISTROWS.length) return;
+  const cols=["serial","production_date","so_number","mo_number","model","product_name",
+              "customer","customer_reference","planned_qty","status","record_kind","line",
+              "bom_driver","bom_driver_qty","bom_led","bom_led_qty","bom_em","bom_em_qty",
+              "bom_housing","bom_housing_qty","bom_stock_status","needs_fabrication",
+              "fabrication_stage","planned_date","created_by","created_at",
+              "warehouse_actioned_by","stock_confirmed_by"];
+  const head=cols.map(c=>c.replace(/_/g," ").replace(/\b\w/g,m=>m.toUpperCase()));
+  const body=HISTROWS.map(r=>cols.map(c=>r[c]==null?"":r[c]));
+  const stamp=`${HISTFROM||"all"}_to_${HISTTO||"now"}`;
+  if(kind==="csv"){
+    const q=v=>{ const s=String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+    const csv=[head.map(q).join(","),...body.map(r=>r.map(q).join(","))].join("\r\n");
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}));
+    a.download=`ProTrace_history_${stamp}.csv`; a.click();
+  } else {
+    const ws=XLSX.utils.aoa_to_sheet([head,...body]);
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"History");
+    XLSX.writeFile(wb,`ProTrace_history_${stamp}.xlsx`);
+  }
+}
+
 async function renderHome(){
   setHash("#/");
   document.body.classList.remove("wide");
