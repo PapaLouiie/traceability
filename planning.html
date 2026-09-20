@@ -163,9 +163,13 @@
   .wh-bv.miss{color:var(--hold);font-style:italic;font-weight:500}
   .wh-b{cursor:pointer}
   .wh-b.empty{opacity:.6;cursor:default}
+  .wh-b.fab{border-color:#3457b2}
+  .wh-b.fab .wh-bl{color:#3457b2}
   .wh-b .wh-bl i{font-style:normal;color:var(--orange);font-weight:800}
   .wh-b .wh-av{margin-top:3px;align-self:flex-start}
   .wh-conf{display:flex;align-items:center;gap:9px;margin-top:8px;flex-wrap:wrap}
+  .req{font-size:10px;font-weight:700;letter-spacing:.3px;color:var(--orange);text-transform:uppercase;margin-left:6px}
+  input.needsval{outline:2px solid var(--orange);background:var(--orange-soft)}
   .pb-opt{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-radius:9px;
     padding:9px 11px;cursor:pointer}
   .pb-opt:hover{background:var(--bg)}
@@ -819,7 +823,8 @@ const LIST_COLS="id,odoo_so,sap_so,product_name,c_ref,customer,contact,sales_per
   "warehouse_reasons,warehouse_note,warehouse_actioned_at,warehouse_actioned_by,"+
   "bom_driver,bom_led,bom_em,bom_housing,bom_remarks,plan_remarks,cargo_remarks,cargo_eta,"+
   "bom_driver_qty,bom_led_qty,bom_em_qty,bom_housing_qty,"+
-  "bom_driver_avail,bom_led_avail,bom_em_avail,bom_housing_avail,stock_confirmed_at,stock_confirmed_by";
+  "bom_driver_avail,bom_led_avail,bom_em_avail,bom_housing_avail,stock_confirmed_at,stock_confirmed_by,"+
+  "bom_fabricated,bom_fabricated_qty,bom_fabricated_avail";
 let ATTMAP={};   // plan_id -> attachment count
 async function loadAttCounts(){
   try{
@@ -1770,10 +1775,10 @@ function acceptErr(msg){
 function drawWarehouse(v){
   const rows=filtered().filter(p=>p.plan_status==="Warehouse");
   const canAct=may("warehouse","edit");
-  const bomCell=(p,lbl,key,val,qty)=>{
+  const bomCell=(p,lbl,key,val,qty,isFab)=>{
     const has=!!(val&&String(val).trim());
     const checked=p[key+"_avail"]===true?"checked":"";
-    return `<label class="wh-b${has?"":" empty"}" title="${has?"Tick when this item is available":"No BOM value set"}">
+    return `<label class="wh-b${has?"":" empty"}${isFab?" fab":""}" title="${has?"Tick when this item is available":"No BOM value set"}">
       <span class="wh-bl">${lbl}${qty?` <i>x${esc(qty)}</i>`:""}</span>
       <span class="wh-bv${has?"":" miss"}">${has?esc(val):"not set"}</span>
       ${has&&canAct?`<input type="checkbox" class="wh-av" data-av="${p.id}" data-k="${key}" ${checked}>`:""}
@@ -1798,6 +1803,7 @@ function drawWarehouse(v){
         <div class="wh-bom">
           ${bomCell(p,"Driver","bom_driver",p.bom_driver,p.bom_driver_qty)}${bomCell(p,"LED","bom_led",p.bom_led,p.bom_led_qty)}
           ${bomCell(p,"EM","bom_em",p.bom_em,p.bom_em_qty)}${bomCell(p,"Housing","bom_housing",p.bom_housing,p.bom_housing_qty)}
+          ${p.needs_fabrication?bomCell(p,"Fabricated","bom_fabricated",p.bom_fabricated,p.bom_fabricated_qty,true):""}
         </div>
         ${canAct?`<div class="wh-conf"><button class="btn ghost sm" data-conf="${p.id}">Confirm stock from ticks</button>
           <span class="m" style="color:var(--muted)">Sets In Stock, Partial Stock or Not available automatically</span></div>`:""}
@@ -1844,7 +1850,8 @@ function drawWarehouse(v){
     b.disabled=true; b.textContent="Confirming\u2026"; busy(true);
     const { data, error }=await db.rpc("confirm_bom_stock",{
       p_id:id, p_driver:tick("bom_driver"), p_led:tick("bom_led"),
-      p_em:tick("bom_em"), p_housing:tick("bom_housing") });
+      p_em:tick("bom_em"), p_housing:tick("bom_housing"),
+      p_fabricated:tick("bom_fabricated") });
     busy(false);
     if(error){ banner(error.message); b.disabled=false; b.textContent="Confirm stock from ticks"; return; }
     banner(`Stock confirmed: ${data&&data.bom_stock_status?data.bom_stock_status:"updated"}.`,true);
@@ -2164,7 +2171,7 @@ function fieldsOf(p){
   const keys=["odoo_so","sap_so","contact","sales_person","region","product_name","c_ref","so_qty",
     "planned_date","model","customer","customer_reference","light_type","voltage","planned_qty",
     "record_kind","needs_fabrication","bom_driver","bom_led","bom_em","bom_housing",
-    "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty",
+    "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty","bom_fabricated","bom_fabricated_qty",
     "odoo_variant_name","odoo_variant_id","line","bom_stock_status","cargo_eta","plan_indicator",
     "plan_remarks","estimated_ready_week","wh_no_stock","sort_order"];
   const o={}; keys.forEach(k=>{ if(p&&p[k]!=null) o[k]=p[k]; }); return o;
@@ -2259,6 +2266,10 @@ async function planModal(pLite){
         <div class="field"><label>BOM: EM</label>
           <div style="display:flex;gap:6px"><input id="p-bom_em" value="${esc(g("bom_em"))}" style="flex:1">
           <input id="p-bom_em_qty" type="number" min="0" step="any" value="${esc(g("bom_em_qty"))}" placeholder="Qty" style="width:82px" title="Quantity per unit"></div></div>
+        <div class="field fabonly" id="p-fabrow" style="${p&&p.needs_fabrication?"":"display:none"}">
+          <label>BOM: Fabricated item <span class="req">required for fabricated plans</span></label>
+          <div style="display:flex;gap:6px"><input id="p-bom_fabricated" value="${esc(g("bom_fabricated"))}" placeholder="What is being fabricated" style="flex:1">
+          <input id="p-bom_fabricated_qty" type="number" min="0" step="any" value="${esc(g("bom_fabricated_qty"))}" placeholder="Qty" style="width:82px"></div></div>
         <div class="field"><label>BOM: Housing</label>
           <div style="display:flex;gap:6px"><input id="p-bom_housing" value="${esc(g("bom_housing"))}" style="flex:1">
           <input id="p-bom_housing_qty" type="number" min="0" step="any" value="${esc(g("bom_housing_qty"))}" placeholder="Qty" style="width:82px" title="Quantity per unit"></div></div>
@@ -2371,6 +2382,8 @@ async function planModal(pLite){
       bom_driver_qty:numOrNull("bom_driver_qty"), bom_led_qty:numOrNull("bom_led_qty"),
       bom_em_qty:numOrNull("bom_em_qty"), bom_housing_qty:numOrNull("bom_housing_qty"),
       needs_fabrication:bg.querySelector("#p-needs_fabrication").value==="true",
+      bom_fabricated:val("bom_fabricated")||null,
+      bom_fabricated_qty:numOrNull("bom_fabricated_qty"),
       record_kind:bg.querySelector("#p-record_kind").value,
       bom_stock_status:val("bom_stock_status"), cargo_eta:val("cargo_eta"),
       cargo_received:val("cargo_received"), cargo_remarks:val("cargo_remarks"),
@@ -2380,7 +2393,17 @@ async function planModal(pLite){
       plan_remarks:val("plan_remarks"),
       wh_no_stock:[...bg.querySelectorAll(".wh:checked")].map(x=>x.value) };
   };
+  const fabFilled=()=>{
+    const sel=bg.querySelector("#p-needs_fabrication");
+    if(!sel || sel.value!=="true") return true;
+    const el=bg.querySelector("#p-bom_fabricated");
+    if(el && el.value.trim()) return true;
+    if(el){ el.focus(); el.classList.add("needsval"); setTimeout(()=>el.classList.remove("needsval"),1600); }
+    pmsg("This plan needs fabrication, so name the fabricated item in the BOM section. The warehouse checks its stock from there.");
+    return false;
+  };
   bg.querySelector("#p-save").onclick=async()=>{
+    if(!fabFilled()) return;
     busy(true);
     const { data, error }=await db.rpc("upsert_planned_record",{ p_id:p?p.id:null, p_fields:collect() });
     busy(false);
@@ -2389,6 +2412,7 @@ async function planModal(pLite){
   };
   const pushBtn=bg.querySelector("#p-push");
   if(pushBtn) pushBtn.onclick=async()=>{
+    if(!fabFilled()) return;
     busy(true);
     const { error:e1 }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:collect() });
     if(e1){ busy(false); pmsg(e1.message); return; }
@@ -2397,8 +2421,15 @@ async function planModal(pLite){
     if(error){ pmsg(error.message); return; }
     banner("Plan pushed to the warehouse queue for material issuance.",true); close(); await load();
   };
+  const fabSel=bg.querySelector("#p-needs_fabrication");
+  const fabRow=bg.querySelector("#p-fabrow");
+  if(fabSel&&fabRow){
+    const syncFab=()=>{ fabRow.style.display=fabSel.value==="true"?"":"none"; };
+    fabSel.addEventListener("change",syncFab); syncFab();
+  }
   const repushBtn=bg.querySelector("#p-repush");
   if(repushBtn) repushBtn.onclick=async()=>{
+    if(!fabFilled()) return;
     busy(true);
     const { error:e1 }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:collect() });
     if(e1){ busy(false); pmsg(e1.message); return; }
@@ -2459,7 +2490,7 @@ async function planModal(pLite){
     const f={};
     ["model","light_type","voltage","planned_qty","planned_date","record_kind","needs_fabrication",
      "bom_driver","bom_led","bom_em","bom_housing","bom_remarks","bom_stock_status",
-     "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty",
+     "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty","bom_fabricated","bom_fabricated_qty","bom_fabricated","bom_fabricated_qty",
      "cargo_eta","cargo_received","cargo_remarks","plan_indicator","plan_remarks",
      "estimated_ready_week","wh_no_stock","stock_allocations"]
       .forEach(k=>{ if(SIB[k]!=null) f[k]=SIB[k]; });
