@@ -1563,6 +1563,15 @@ async function fnToken(){
   }catch(e){}
   return SESSION&&SESSION.access_token;
 }
+function dupMsg(m){
+  m=String(m||"");
+  if(!/duplicate key|unique constraint/i.test(m)) return null;
+  if(/uq_production_records_plan/.test(m))
+    return "This plan has already been accepted into production. Open the existing record instead of creating another.";
+  if(/uq_production_records_natural|production_date_so_number_model/.test(m))
+    return "A record already exists for this date, SO, model and customer reference. If these really are separate lines, ask sales to give each line its own C.Ref on the SO in Odoo.";
+  return "That would duplicate an existing record.";
+}
 function banner(msg,ok){
   const b=document.getElementById("banner"); if(!b) return;
   b.textContent=msg; b.className="banner show "+(ok?"ok":"err");
@@ -2199,6 +2208,23 @@ async function saveRecord(){
   if(!payload.planned_qty)
     return banner("Quantity is required so entries can be checked against it.");
 
+  // No customer reference means the database constraint cannot catch a
+  // duplicate here, so check for one and let the user decide.
+  if(!payload.customer_reference && payload.production_date && payload.model){
+    const { data:sim }=await db.rpc("find_similar_records",{
+      p_date:payload.production_date, p_so:payload.so_number,
+      p_model:payload.model, p_exclude:current?current.id:null });
+    if(sim && sim.length){
+      const list=sim.slice(0,5).map(r=>`  \u2022 ${r.serial}${r.line?" (line "+r.line+")":""} \u2014 ${r.status}${r.customer_reference?" \u2014 C.Ref "+r.customer_reference:" \u2014 no C.Ref"}`).join("\n");
+      const ok=confirm(
+        `${sim.length} record${sim.length==1?"":"s"} already exist${sim.length==1?"s":""} for this date, SO and model:\n\n${list}${sim.length>5?"\n  ...":""}\n\n`+
+        `This one has no customer reference, so it cannot be told apart automatically.\n\n`+
+        `Check the SO in Odoo, or ask sales to give each line its own C.Ref.\n\n`+
+        `Save anyway?`);
+      if(!ok) return;
+    }
+  }
+
   // BOM completeness: warn, but let the user proceed
   const missing=[];
   if(!payload.bom_driver) missing.push("Driver");
@@ -2215,7 +2241,7 @@ async function saveRecord(){
   if(!current){
     const { data, error }=await db.from("production_records").insert({...payload, created_by:SESSION.user.email}).select().single();
     btn.disabled=false; btn.textContent=label;
-    if(error){ banner(error.message.includes("duplicate")?"A record with this date, SO and model already exists.":"Could not save: "+error.message); return; }
+    if(error){ banner(dupMsg(error.message)||("Could not save: "+error.message)); return; }
     current=data;
     setHash("#/record/"+data.id);
     const qi=document.getElementById("qrimg");
@@ -2234,7 +2260,7 @@ async function saveRecord(){
     btn.disabled=false; btn.textContent=label;
     if(error){ banner(/fetch/i.test(error.message||"")
         ?"Network error reaching the database. Check your connection, then try again."
-        :"Could not save changes: "+error.message); return; }
+        :(dupMsg(error.message)||("Could not save changes: "+error.message))); return; }
     current=data; banner("Changes saved.",true); renderAudit(); updateBomChip();
     const qi=document.getElementById("qrimg");
     if(qi) qi.className="kind-"+(data.record_kind||"Production");
