@@ -183,6 +183,11 @@
   .pb-opt span{display:flex;flex-direction:column;gap:1px;font-size:13px}
   .pb-opt i{font-style:normal;font-size:11.5px;color:var(--muted)}
   .trail{display:flex;flex-direction:column;gap:2px}
+  table.chg{border-collapse:collapse;margin-top:6px;font-size:12.5px;width:100%}
+  table.chg td{padding:3px 8px 3px 0;vertical-align:top;border-top:1px solid var(--line);overflow-wrap:anywhere}
+  table.chg td:first-child{color:var(--muted);white-space:nowrap;width:1%}
+  .iss{margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px}
+  .iss-r{display:grid;grid-template-columns:80px 1fr 60px 90px;gap:8px;font-size:12.5px;padding:2px 0}
   .tr-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
   .tr-row:last-child{border-bottom:0}
   .tr-when{min-width:120px;color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums;flex-shrink:0}
@@ -717,6 +722,7 @@ async function renderHistory(){
       <button class="btn primary" id="hGo">Search</button>
       <button class="btn ghost" id="hCsv" disabled>Export CSV</button>
       <button class="btn ghost" id="hXls" disabled>Export Excel</button>
+      <button class="btn ghost" id="hLog" title="Every change in the date range, one row each">Export change log</button>
     </div>
     <div class="card"><div id="hList"><div class="empty">Set a date range and press Search.</div></div></div>`);
   wireShell();
@@ -731,6 +737,7 @@ async function renderHistory(){
   document.getElementById("hSearch").addEventListener("keydown",e=>{ if(e.key==="Enter") run(); });
   document.getElementById("hCsv").onclick=()=>exportHist("csv");
   document.getElementById("hXls").onclick=()=>exportHist("xlsx");
+  document.getElementById("hLog").onclick=exportChangeLog;
   if(HISTROWS.length) drawHist();
 }
 
@@ -774,44 +781,143 @@ function drawHist(){
       <td>${esc(r.customer||"")}<div class="meta">${esc(r.customer_reference||r.plan_c_ref||"")}</div></td>
       <td style="text-align:center">${r.planned_qty==null?"":esc(r.planned_qty)}</td>
       <td><span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"")}</span></td>
-      <td><button class="btn ghost sm" data-trail="${r.id}">View</button></td>
+      <td><button class="btn ghost sm" data-trail="${r.id}">Full story</button></td>
     </tr>`).join("")}</tbody></table></div>
     <div class="meta" style="padding:8px 10px;border-top:1px solid var(--line)">
       ${HISTROWS.length.toLocaleString()} record${HISTROWS.length==1?"":"s"}${HISTROWS.length>=5000?" (capped at 5,000; narrow the dates)":""}</div>`;
   box.querySelectorAll("[data-trail]").forEach(b=>b.onclick=()=>trailModal(b.dataset.trail));
 }
 
+const FIELD_LABELS={plan_status:"Plan status",status:"Status",bom_stock_status:"Stock status",
+  planned_qty:"Planned qty",planned_date:"Planned date",production_date:"Production date",
+  bom_driver:"Driver",bom_led:"LED",bom_em:"EM",bom_housing:"Housing",bom_fabricated:"Fabricated item",
+  bom_driver_qty:"Driver qty",bom_led_qty:"LED qty",bom_em_qty:"EM qty",bom_housing_qty:"Housing qty",
+  bom_fabricated_qty:"Fabricated qty",bom_driver_avail:"Driver available",bom_led_avail:"LED available",
+  bom_em_avail:"EM available",bom_housing_avail:"Housing available",bom_fabricated_avail:"Fabricated available",
+  bom_remarks:"BOM remarks",plan_remarks:"Planning remarks",warehouse_reasons:"Return reasons",
+  warehouse_note:"Warehouse note",needs_fabrication:"Needs fabrication",fabrication_stage:"Fabrication stage",
+  model:"Model",customer_reference:"Customer ref",c_ref:"Customer ref",line:"Line",odoo_mo:"MO",
+  mo_number:"MO",so_number:"SO",odoo_state:"Delivery state",return_reason:"Return reason",
+  issued_bom:"Material issued"};
+const fLabel=f=>FIELD_LABELS[f]||String(f||"").replace(/_/g," ").replace(/^\w/,m=>m.toUpperCase());
+const EVENT_LABELS={created:"Created",material_issued:"Material issued",
+  accepted_into_production:"Accepted into production"};
+// long internal values (json, ids) are summarised rather than dumped
+function fmtVal(f,v){
+  if(v==null||v==="") return '<i style="color:var(--muted)">empty</i>';
+  if(f==="issued_bom"||String(v).startsWith("{")){
+    try{ return issuedHtml(JSON.parse(v)); }catch(e){}
+  }
+  if(String(v).startsWith("[")){ try{ return esc(JSON.parse(v).join(", ")); }catch(e){} }
+  if(v==="true") return "Yes"; if(v==="false") return "No";
+  return esc(String(v).length>140?String(v).slice(0,140)+"\u2026":v);
+}
+function issuedHtml(o){
+  if(!o||!o.items) return esc(JSON.stringify(o));
+  return `<div class="iss">${o.stock_status_at_issue?`<div class="m">Stock at issue: <b>${esc(o.stock_status_at_issue)}</b>${o.stock_status_at_issue!=="In Stock"?' <span class="chip" data-tone="warn">not fully in stock</span>':""}</div>`:""}
+    ${o.items.map(i=>`<div class="iss-r"><span>${esc(i.slot)}</span><b>${esc(i.item||"")}</b><span>x${i.qty_issued==null?"?":esc(i.qty_issued)}</span><span>${i.confirmed_available===true?"available":(i.confirmed_available===false?"not available":"unchecked")}</span></div>`).join("")}</div>`;
+}
+
 async function trailModal(id){
   const rec=HISTROWS.find(r=>r.id===id);
   const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
-  bg.innerHTML=`<div class="modal" style="max-width:640px"><div class="mh">Trail for ${esc(rec?rec.serial:"record")}<span class="x">&times;</span></div>
+  bg.innerHTML=`<div class="modal" style="max-width:760px"><div class="mh">Full story: ${esc(rec?rec.serial:"record")}<span class="x">&times;</span></div>
     <div class="mb" id="trBody"><div class="spinner"></div></div>
-    <div class="mf"><button class="btn ghost" id="trClose">Close</button></div></div>`;
+    <div class="mf"><button class="btn ghost" id="trCsv">Export this story</button><button class="btn ghost" id="trClose">Close</button></div></div>`;
   document.body.appendChild(bg);
   const close=()=>bg.remove();
   bg.querySelector(".x").onclick=close;
   bg.querySelector("#trClose").onclick=close;
   bg.onclick=e=>{ if(e.target===bg) close(); };
   const body=bg.querySelector("#trBody");
-  // the record's own trail, plus the plan it came from
   const ids=[id]; if(rec&&rec.plan_id) ids.push(rec.plan_id);
-  let events=[];
-  for(const rid of ids){
-    const { data }=await db.rpc("record_history",{ p_record_id:rid });
-    (data||[]).forEach(e=>events.push(e));
-  }
-  events.sort((a,b)=>new Date(b.at)-new Date(a.at));
-  if(!events.length){ body.innerHTML='<div class="empty">No recorded changes for this one.</div>'; return; }
-  const label=a=>({material_issuance_approved:"Material issued",
-    material_issuance_rejected:"Returned by warehouse", stock_confirmed:"Stock confirmed",
-    repushed_to_warehouse:"Re-pushed to warehouse", pulled_back:"Pulled back"}[a]||a.replace(/_/g," "));
-  body.innerHTML=`<div class="trail">${events.map(e=>`
+  const [fc,snap,aud]=await Promise.all([
+    db.from("history_changes").select("*").in("record_id",ids).order("at",{ascending:true}).limit(5000),
+    db.from("record_snapshots").select("id,table_name,record_id,event,actor,at").in("record_id",ids).order("at",{ascending:true}),
+    Promise.all(ids.map(r=>db.rpc("record_history",{ p_record_id:r })))
+  ]);
+  // group field changes made by one person in one save into a single step
+  const steps=[];
+  (fc.data||[]).forEach(c=>{
+    const key=c.actor+"|"+String(c.at).slice(0,19)+"|"+c.source+"|"+(c.event||"");
+    let st=steps.find(x=>x.key===key);
+    if(!st){ st={key,at:c.at,actor:c.actor,source:c.source,event:c.event,changes:[]}; steps.push(st); }
+    if(c.field) st.changes.push(c);
+    else if(c.event==="material_issued") st.issued=c.new_value;
+  });
+  (snap.data||[]).forEach(s=>{ if(s.event!=="material_issued"&&s.event!=="created")
+    steps.push({at:s.at,actor:s.actor,source:s.table_name==="planned_records"?"Plan":"Production record",
+      event:s.event,changes:[],snapId:s.id}); });
+  // older events logged before full tracking existed
+  if(!(fc.data||[]).length) aud.forEach(a=>(a.data||[]).forEach(e=>steps.push(
+    {at:e.at,actor:e.actor,source:"Log",event:e.action,changes:[],details:e.details})));
+  steps.sort((a,b)=>new Date(a.at)-new Date(b.at));
+  if(!steps.length){ body.innerHTML='<div class="empty">Nothing recorded yet. Full tracking starts from the date it was switched on.</div>'; return; }
+  body.innerHTML=`<div class="trail">${steps.map(st=>`
     <div class="tr-row">
-      <div class="tr-when">${esc(String(e.at).slice(0,16).replace("T"," "))}</div>
-      <div><b>${esc(label(e.action))}</b>
-        <div class="m" style="color:var(--muted)">${esc(e.actor||"")}</div>
-        ${e.details?`<div class="m">${esc(JSON.stringify(e.details))}</div>`:""}</div>
+      <div class="tr-when">${esc(String(st.at).slice(0,16).replace("T"," "))}<div style="margin-top:2px">${esc(st.source||"")}</div></div>
+      <div style="flex:1;min-width:0">
+        <b>${esc(EVENT_LABELS[st.event]||(st.event&&st.event!=="changed"?st.event.replace(/_/g," "):(st.changes.length?"Updated":"Change")))}</b>
+        <span class="m" style="color:var(--muted)"> by ${esc(st.actor||"system")}</span>
+        ${st.issued?fmtVal("issued_bom",st.issued):""}
+        ${st.changes.length?`<table class="chg"><tbody>${st.changes.map(c=>`<tr><td>${esc(fLabel(c.field))}</td><td>${fmtVal(c.field,c.old_value)}</td><td>\u2192</td><td>${fmtVal(c.field,c.new_value)}</td></tr>`).join("")}</tbody></table>`:""}
+        ${st.details?`<div class="m">${esc(JSON.stringify(st.details))}</div>`:""}
+        ${st.snapId?`<button class="btn link" data-snap="${st.snapId}" style="padding:0;font-size:12px">View the full card at this moment</button>`:""}
+      </div>
     </div>`).join("")}</div>`;
+  body.querySelectorAll("[data-snap]").forEach(b=>b.onclick=async()=>{
+    const { data }=await db.from("record_snapshots").select("data").eq("id",b.dataset.snap).maybeSingle();
+    if(!data) return;
+    const d=data.data||{};
+    b.outerHTML=`<table class="chg" style="margin-top:6px"><tbody>${Object.keys(d).filter(k=>d[k]!=null&&d[k]!==""&&!/^(id|sort_order)$/.test(k))
+      .map(k=>`<tr><td>${esc(fLabel(k))}</td><td colspan="3">${fmtVal(k,typeof d[k]==="object"?JSON.stringify(d[k]):String(d[k]))}</td></tr>`).join("")}</tbody></table>`;
+  });
+  bg.querySelector("#trCsv").onclick=()=>exportChanges(fc.data||[],`ProTrace_story_${rec?rec.serial:id}`);
+}
+
+// one row per change, the file for retracing exactly what happened
+function exportChanges(rows,name,kind){
+  const head=["When","Who","Event","Source","SO","Serial","Model","Product","Customer","Field","From","To"];
+  const flat=v=>{ if(v==null) return ""; if(String(v).startsWith("{")){ try{ const o=JSON.parse(v);
+      if(o.items) return `Stock at issue: ${o.stock_status_at_issue||"?"}; `+o.items.map(i=>`${i.slot} ${i.item||""} x${i.qty_issued??"?"} (${i.confirmed_available===true?"available":(i.confirmed_available===false?"not available":"unchecked")})`).join("; ");
+    }catch(e){} } return String(v); };
+  const body=rows.map(r=>[String(r.at).slice(0,19).replace("T"," "),r.actor||"",
+    EVENT_LABELS[r.event]||(r.event||"changed").replace(/_/g," "),r.source||"",r.so||"",r.serial||"",
+    r.model||"",r.product_name||"",r.customer||"",r.field?fLabel(r.field):"",flat(r.old_value),flat(r.new_value)]);
+  if(kind==="xlsx"){
+    const ws=XLSX.utils.aoa_to_sheet([head,...body]); const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Change log"); XLSX.writeFile(wb,name+".xlsx"); return;
+  }
+  const q=v=>{ const s=String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+  const csv=[head.map(q).join(","),...body.map(r=>r.map(q).join(","))].join("\r\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}));
+  a.download=name+".csv"; a.click();
+}
+
+// every change across the date range, optionally narrowed by the search box
+async function exportChangeLog(){
+  const btn=document.getElementById("hLog");
+  btn.disabled=true; btn.textContent="Gathering\u2026";
+  const from=document.getElementById("hFrom").value, to=document.getElementById("hTo").value;
+  const term=document.getElementById("hSearch").value.trim();
+  let all=[], page=0; const B=1000;
+  for(;;){
+    let q=db.from("history_changes").select("*");
+    if(from) q=q.gte("at",from+"T00:00:00");
+    if(to)   q=q.lte("at",to+"T23:59:59");
+    if(term){ const like=`%${term.replace(/[%_]/g,m=>"\\"+m)}%`;
+      q=q.or(["so","serial","model","customer","product_name"].map(c=>`${c}.ilike.${like}`).join(",")); }
+    const { data, error }=await q.order("at",{ascending:true}).order("id",{ascending:true}).range(page*B,page*B+B-1);
+    if(error){ banner("Could not export: "+error.message); break; }
+    all=all.concat(data||[]);
+    if(!data||data.length<B||all.length>=100000) break;
+    page++;
+  }
+  btn.disabled=false; btn.textContent="Export change log";
+  if(!all.length){ banner("No changes recorded in that range."); return; }
+  exportChanges(all,`ProTrace_change_log_${from||"all"}_to_${to||"now"}`,"xlsx");
+  if(all.length>=100000) banner("Stopped at 100,000 changes. Narrow the dates for the rest.");
 }
 
 function exportHist(kind){
@@ -820,10 +926,16 @@ function exportHist(kind){
               "customer","customer_reference","planned_qty","status","record_kind","line",
               "bom_driver","bom_driver_qty","bom_led","bom_led_qty","bom_em","bom_em_qty",
               "bom_housing","bom_housing_qty","bom_stock_status","needs_fabrication",
-              "fabrication_stage","planned_date","created_by","created_at",
-              "warehouse_actioned_by","stock_confirmed_by"];
+              "fabrication_stage","bom_fabricated","bom_fabricated_qty","bom_remarks","plan_remarks",
+              "planned_date","created_by","created_at","foreman","qc_checker",
+              "stock_confirmed_by","stock_confirmed_at","warehouse_approved_by","warehouse_approved_at",
+              "issued_bom"];
   const head=cols.map(c=>c.replace(/_/g," ").replace(/\b\w/g,m=>m.toUpperCase()));
-  const body=HISTROWS.map(r=>cols.map(c=>r[c]==null?"":r[c]));
+  const body=HISTROWS.map(r=>cols.map(c=>{
+    const v=r[c]; if(v==null) return "";
+    if(c==="issued_bom"&&typeof v==="object"&&v.items)
+      return `Stock at issue: ${v.stock_status_at_issue||"?"}; `+v.items.map(i=>`${i.slot} ${i.item||""} x${i.qty_issued??"?"}`).join("; ");
+    return typeof v==="object"?JSON.stringify(v):v; }));
   const stamp=`${HISTFROM||"all"}_to_${HISTTO||"now"}`;
   if(kind==="csv"){
     const q=v=>{ const s=String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
