@@ -186,6 +186,14 @@
   table.chg{border-collapse:collapse;margin-top:6px;font-size:12.5px;width:100%}
   table.chg td{padding:3px 8px 3px 0;vertical-align:top;border-top:1px solid var(--line);overflow-wrap:anywhere}
   table.chg td:first-child{color:var(--muted);white-space:nowrap;width:1%}
+  .st-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:12px}
+  .st-sec{border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
+  .st-sec.wide{margin-bottom:12px}
+  .st-sec h4{margin:0 0 8px;font-size:11px;letter-spacing:1.1px;text-transform:uppercase;color:var(--navy);
+    border-left:3px solid var(--orange);padding-left:8px}
+  .st-sec dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:12.5px}
+  .st-sec dt{color:var(--muted);white-space:nowrap}
+  .st-sec dd{margin:0;overflow-wrap:anywhere;font-weight:600}
   .iss{margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px}
   .iss-r{display:grid;grid-template-columns:80px 1fr 60px 90px;gap:8px;font-size:12.5px;padding:2px 0}
   .tr-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
@@ -818,61 +826,229 @@ function issuedHtml(o){
     ${o.items.map(i=>`<div class="iss-r"><span>${esc(i.slot)}</span><b>${esc(i.item||"")}</b><span>x${i.qty_issued==null?"?":esc(i.qty_issued)}</span><span>${i.confirmed_available===true?"available":(i.confirmed_available===false?"not available":"unchecked")}</span></div>`).join("")}</div>`;
 }
 
+const fmtTs=t=>t?String(t).slice(0,16).replace("T"," "):"";
+function dur(ms){
+  if(ms==null||isNaN(ms)) return null;
+  if(ms<0) return "before production start";
+  const m=Math.round(ms/60000);
+  if(m<60) return m+" min";
+  const h=m/60; if(h<24) return (Math.round(h*10)/10)+" h";
+  const d=Math.floor(h/24), rh=Math.round(h-d*24);
+  return d+" day"+(d==1?"":"s")+(rh?" "+rh+" h":"");
+}
+const isoWeekOf=d=>{ if(!d) return ""; const x=new Date(d+"T00:00:00Z"); if(isNaN(x)) return "";
+  const t=new Date(Date.UTC(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate()));
+  const day=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-day+3);
+  const j=new Date(Date.UTC(t.getUTCFullYear(),0,4));
+  return "W"+String(1+Math.round(((t-j)/86400000-3+((j.getUTCDay()+6)%7))/7)).padStart(2,"0"); };
+
+// Turn raw status changes into named lifecycle events. Changes saved together
+// share an actor and a second, which is how a return is paired with its reasons.
+function deriveLifecycle(changes){
+  const plan=changes.filter(c=>c.source==="Plan");
+  const keyOf=c=>(c.actor||"")+"|"+String(c.at).slice(0,19);
+  const groups={}; plan.forEach(c=>{ (groups[keyOf(c)]=groups[keyOf(c)]||[]).push(c); });
+  const out=[];
+  plan.filter(c=>c.field==="plan_status").forEach(c=>{
+    const grp=groups[keyOf(c)]||[];
+    const nv=f=>{ const x=grp.find(y=>y.field===f); return x?x.new_value:null; };
+    const from=c.old_value, to=c.new_value;
+    const byWarehouse=!!nv("warehouse_actioned_at");
+    let kind="other", label=`Status changed: ${from||"none"} \u2192 ${to}`;
+    if(to==="Warehouse"){ kind="push"; label=(from==="Returned to Engineering"||from==="Returned")?"Re-pushed to warehouse":"Pushed to warehouse"; }
+    else if(to==="Pushed"&&from==="Warehouse"){ kind="issue"; label="Material issued, sent to assembly"; }
+    else if(to==="Pushed"){ kind="push"; label="Sent to assembly queue"; }
+    else if(to==="Returned to Engineering"){ kind="return"; label=byWarehouse?"Returned to engineering by the warehouse":"Pulled back to engineering"; }
+    else if(to==="Returned"){ kind="return"; label=from==="Pushed"?"Returned to planning by assembly":(byWarehouse?"Returned to planning by the warehouse":"Returned to planning"); }
+    else if(to==="Draft"&&(from==="Warehouse"||from==="Pushed")){ kind="return"; label="Pulled back to planning"; }
+    else if(to==="Accepted"){ kind="accept"; label="Accepted into production"; }
+    let reasons=nv("warehouse_reasons");
+    try{ if(reasons&&reasons.startsWith("[")) reasons=JSON.parse(reasons).join(", "); }catch(e){}
+    out.push({at:c.at,actor:c.actor,kind,label,from,to,reasons,note:nv("warehouse_note")||nv("return_reason")});
+  });
+  return out.sort((a,b)=>new Date(a.at)-new Date(b.at));
+}
+
 async function trailModal(id){
-  const rec=HISTROWS.find(r=>r.id===id);
+  const rec=HISTROWS.find(r=>r.id===id)||{};
   const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
-  bg.innerHTML=`<div class="modal" style="max-width:760px"><div class="mh">Full story: ${esc(rec?rec.serial:"record")}<span class="x">&times;</span></div>
+  bg.innerHTML=`<div class="modal" style="max-width:880px"><div class="mh">Full story: ${esc(rec.serial||"record")}<span class="x">&times;</span></div>
     <div class="mb" id="trBody"><div class="spinner"></div></div>
-    <div class="mf"><button class="btn ghost" id="trCsv">Export this story</button><button class="btn ghost" id="trClose">Close</button></div></div>`;
+    <div class="mf"><button class="btn ghost" id="trXls">Export this story</button><button class="btn ghost" id="trClose">Close</button></div></div>`;
   document.body.appendChild(bg);
   const close=()=>bg.remove();
   bg.querySelector(".x").onclick=close;
   bg.querySelector("#trClose").onclick=close;
   bg.onclick=e=>{ if(e.target===bg) close(); };
   const body=bg.querySelector("#trBody");
-  const ids=[id]; if(rec&&rec.plan_id) ids.push(rec.plan_id);
-  const [fc,snap,aud]=await Promise.all([
+
+  const ids=[id]; if(rec.plan_id) ids.push(rec.plan_id);
+  const [fcR,snapR,wR,plR,audR,ccR]=await Promise.all([
     db.from("history_changes").select("*").in("record_id",ids).order("at",{ascending:true}).limit(5000),
     db.from("record_snapshots").select("id,table_name,record_id,event,actor,at").in("record_id",ids).order("at",{ascending:true}),
-    Promise.all(ids.map(r=>db.rpc("record_history",{ p_record_id:r })))
+    db.from("worker_entries").select("qty,conveyor,start_time,finish_time,work_type,total_mins,cycle_time,remarks").eq("record_id",id).order("created_at",{ascending:true}),
+    rec.plan_id?db.from("planned_records").select("*").eq("id",rec.plan_id).maybeSingle():Promise.resolve({data:null}),
+    Promise.all(ids.map(r=>db.rpc("record_history",{ p_record_id:r }))),
+    db.from("ccrs").select("*").eq("record_id",id).order("created_at",{ascending:true})
   ]);
-  // group field changes made by one person in one save into a single step
+  const fc=fcR.data||[], workers=wR.data||[], plan=plR.data||{}, ccrs=ccR.data||[];
+  const life=deriveLifecycle(fc);
+  const recCh=fc.filter(c=>c.source==="Production record");
+  const planCh=fc.filter(c=>c.source==="Plan");
+
+  // ---------- derived facts ----------
+  const produced=workers.reduce((a,w)=>a+(Number(w.qty)||0),0);
+  const mins=workers.reduce((a,w)=>a+(Number(w.total_mins)||0),0);
+  const conveyors=[...new Set(workers.map(w=>w.conveyor).filter(Boolean))];
+  const firstPush=life.find(e=>e.kind==="push");
+  const issueEv=[...life].reverse().find(e=>e.kind==="issue");
+  const returns=life.filter(e=>e.kind==="return");
+  const completed=[...recCh].reverse().find(c=>c.field==="status"&&c.new_value==="Completed");
+  const created=planCh.find(c=>c.event==="created");
+  const dateMoves=planCh.filter(c=>c.field==="planned_date"&&c.old_value);
+  const qtyMoves=planCh.filter(c=>c.field==="planned_qty"&&c.old_value);
+  const issued=rec.issued_bom||plan.issued_bom||null;
+  const plannedDate=rec.planned_date||plan.planned_date;
+
+  // quality: when each issue surfaced relative to production, and how long it stayed open
+  const firstStart=workers.map(w=>w.start_time).filter(Boolean).sort()[0]||null;
+  const prodStart=firstStart||rec.created_at||null;
+  const qIssues=ccrs.map(c=>{
+    const raised=c.created_at, res=c.resolved_at||(c.status==="Resolved"?c.updated_at:null);
+    return {...c,
+      raisedAfter:prodStart&&raised?dur(new Date(raised)-new Date(prodStart)):null,
+      toResolve:raised&&res?dur(new Date(res)-new Date(raised)):null,
+      openFor:raised&&!res&&c.status!=="Resolved"?dur(Date.now()-new Date(raised)):null,
+      resolvedAt:res};
+  });
+  const resolvedTimes=qIssues.filter(q=>q.resolvedAt).map(q=>new Date(q.resolvedAt)-new Date(q.created_at));
+  const openIssues=qIssues.filter(q=>q.status!=="Resolved");
+  const affectedTot=qIssues.reduce((a,q)=>a+(Number(q.affected_qty)||0),0);
+
+  const facts=[
+    ["Order",[
+      ["SO",rec.so_number||plan.odoo_so||plan.sap_so],["MO",rec.mo_number||plan.odoo_mo],
+      ["Serial",rec.serial],["Model",rec.model||plan.model],
+      ["Odoo product",rec.product_name||plan.product_name],["Customer",rec.customer||plan.customer],
+      ["Customer ref",rec.customer_reference||rec.plan_c_ref||plan.c_ref],
+      ["Sales person",plan.sales_person],["Record type",rec.record_kind],
+      ["Fabrication",rec.needs_fabrication||plan.needs_fabrication?`Yes${(rec.fabrication_stage||plan.fabrication_stage)?" \u00b7 "+(rec.fabrication_stage||plan.fabrication_stage):""}`:"No"]]],
+    ["Quantities",[
+      ["SO quantity",plan.so_qty],["Planned quantity",rec.planned_qty??plan.planned_qty],
+      ["Produced (worker entries)",workers.length?`${produced} across ${workers.length} entr${workers.length==1?"y":"ies"}`:"No entries"],
+      ["Time logged",mins?`${Math.round(mins)} min${produced?` \u00b7 ${Math.round(mins/produced*10)/10} min per unit`:""}`:null],
+      ["Quantity changes",qtyMoves.length?qtyMoves.map(c=>`${c.old_value} \u2192 ${c.new_value} (${fmtTs(c.at)}, ${c.actor})`).join("; "):null]]],
+    ["Planning",[
+      ["Plan created",created?`${fmtTs(created.at)} by ${created.actor}`:(plan.created_at?`${fmtTs(plan.created_at)} by ${plan.created_by||"?"}`:null)],
+      ["Planned date",plannedDate?`${plannedDate} (${isoWeekOf(plannedDate)})`:null],
+      ["Rescheduled",dateMoves.length?`${dateMoves.length} time${dateMoves.length==1?"":"s"}: `+dateMoves.map(c=>`${c.old_value} \u2192 ${c.new_value}`).join(", "):null],
+      ["First pushed to warehouse",firstPush?`${fmtTs(firstPush.at)} by ${firstPush.actor}`:null],
+      ["Planning remarks",rec.plan_remarks||plan.plan_remarks]]],
+    ["Warehouse",[
+      ["Stock status",plan.bom_stock_status||rec.bom_stock_status],
+      ["Stock confirmed",(rec.stock_confirmed_at||plan.stock_confirmed_at)?`${fmtTs(rec.stock_confirmed_at||plan.stock_confirmed_at)} by ${rec.stock_confirmed_by||plan.stock_confirmed_by}`:null],
+      ["Material issued",(rec.warehouse_approved_at||plan.warehouse_approved_at)?`${fmtTs(rec.warehouse_approved_at||plan.warehouse_approved_at)} by ${rec.warehouse_approved_by||plan.warehouse_approved_by}`:(issueEv?`${fmtTs(issueEv.at)} by ${issueEv.actor}`:null)]]],
+    ["Production",[
+      ["Accepted into production",rec.created_at?`${fmtTs(rec.created_at)} by ${rec.created_by||"?"}`:null],
+      ["Production date",rec.production_date?`${rec.production_date} (${isoWeekOf(rec.production_date)})`:null],
+      ["Accepted to line",rec.line],
+      ["Conveyors worked",conveyors.length?conveyors.join(", "):null],
+      ["Foreman",rec.foreman],["QC checker",rec.qc_checker],
+      ["Current status",rec.status],
+      ["Completed",completed?`${fmtTs(completed.at)} by ${completed.actor}`:(rec.status==="Completed"?"Yes, time not recorded":null)]]],
+    ["Quality",[
+      ["Quality issues",qIssues.length?`${qIssues.length} raised, ${openIssues.length} open`:"None"],
+      ["Units affected",affectedTot?String(affectedTot):null],
+      ["First issue raised",qIssues.length?`${fmtTs(qIssues[0].created_at)}${qIssues[0].raisedAfter?` (${qIssues[0].raisedAfter} after production started)`:""}`:null],
+      ["Average time to resolve",resolvedTimes.length?dur(resolvedTimes.reduce((a,b)=>a+b,0)/resolvedTimes.length):null],
+      ["Longest open",openIssues.length?dur(Math.max(...openIssues.map(q=>Date.now()-new Date(q.created_at)))):null]]],
+    ["Returns",[
+      ["Times returned",String(returns.length)],
+      ...returns.map((r,i)=>[`Return ${i+1}`,`${r.label} \u00b7 ${fmtTs(r.at)} by ${r.actor}${r.reasons?` \u00b7 reasons: ${r.reasons}`:""}${r.note?` \u00b7 "${r.note}"`:""}`])]]
+  ];
+
+  const bomRows=[["Driver","bom_driver"],["LED","bom_led"],["EM","bom_em"],["Housing","bom_housing"],["Fabricated","bom_fabricated"]]
+    .map(([l,k])=>[l,rec[k]||plan[k],rec[k+"_qty"]??plan[k+"_qty"],plan[k+"_avail"]??rec[k+"_avail"]])
+    .filter(r=>r[1]);
+
+  const section=(title,pairs)=>{ const rows=pairs.filter(p=>p[1]!=null&&p[1]!=="");
+    return rows.length?`<div class="st-sec"><h4>${esc(title)}</h4><dl>${rows.map(p=>`<dt>${esc(p[0])}</dt><dd>${esc(p[1])}</dd>`).join("")}</dl></div>`:""; };
+
+  // ---------- step-by-step timeline ----------
   const steps=[];
-  (fc.data||[]).forEach(c=>{
-    const key=c.actor+"|"+String(c.at).slice(0,19)+"|"+c.source+"|"+(c.event||"");
+  fc.forEach(c=>{
+    const key=(c.actor||"")+"|"+String(c.at).slice(0,19)+"|"+c.source+"|"+(c.event||"");
     let st=steps.find(x=>x.key===key);
     if(!st){ st={key,at:c.at,actor:c.actor,source:c.source,event:c.event,changes:[]}; steps.push(st); }
-    if(c.field) st.changes.push(c);
-    else if(c.event==="material_issued") st.issued=c.new_value;
+    if(c.field) st.changes.push(c); else if(c.event==="material_issued") st.issued=c.new_value;
   });
-  (snap.data||[]).forEach(s=>{ if(s.event!=="material_issued"&&s.event!=="created")
-    steps.push({at:s.at,actor:s.actor,source:s.table_name==="planned_records"?"Plan":"Production record",
-      event:s.event,changes:[],snapId:s.id}); });
-  // older events logged before full tracking existed
-  if(!(fc.data||[]).length) aud.forEach(a=>(a.data||[]).forEach(e=>steps.push(
-    {at:e.at,actor:e.actor,source:"Log",event:e.action,changes:[],details:e.details})));
+  steps.forEach(st=>{ const sc=st.changes.find(c=>c.field==="plan_status");
+    if(sc){ const ev=life.find(e=>e.at===sc.at&&e.to===sc.new_value); if(ev) st.title=ev.label; } });
+  (snapR.data||[]).forEach(sn=>{ if(sn.event==="accepted_into_production")
+    steps.push({at:sn.at,actor:sn.actor,source:"Plan",event:sn.event,changes:[],snapId:sn.id,title:"Accepted into production"}); });
+  if(!fc.length) audR.forEach(a=>(a.data||[]).forEach(e=>steps.push({at:e.at,actor:e.actor,source:"Log",event:e.action,changes:[],details:e.details})));
   steps.sort((a,b)=>new Date(a.at)-new Date(b.at));
-  if(!steps.length){ body.innerHTML='<div class="empty">Nothing recorded yet. Full tracking starts from the date it was switched on.</div>'; return; }
-  body.innerHTML=`<div class="trail">${steps.map(st=>`
-    <div class="tr-row">
-      <div class="tr-when">${esc(String(st.at).slice(0,16).replace("T"," "))}<div style="margin-top:2px">${esc(st.source||"")}</div></div>
-      <div style="flex:1;min-width:0">
-        <b>${esc(EVENT_LABELS[st.event]||(st.event&&st.event!=="changed"?st.event.replace(/_/g," "):(st.changes.length?"Updated":"Change")))}</b>
-        <span class="m" style="color:var(--muted)"> by ${esc(st.actor||"system")}</span>
-        ${st.issued?fmtVal("issued_bom",st.issued):""}
-        ${st.changes.length?`<table class="chg"><tbody>${st.changes.map(c=>`<tr><td>${esc(fLabel(c.field))}</td><td>${fmtVal(c.field,c.old_value)}</td><td>\u2192</td><td>${fmtVal(c.field,c.new_value)}</td></tr>`).join("")}</tbody></table>`:""}
-        ${st.details?`<div class="m">${esc(JSON.stringify(st.details))}</div>`:""}
-        ${st.snapId?`<button class="btn link" data-snap="${st.snapId}" style="padding:0;font-size:12px">View the full card at this moment</button>`:""}
-      </div>
-    </div>`).join("")}</div>`;
+
+  body.innerHTML=`
+    <div class="st-grid">${facts.map(([t,p])=>section(t,p)).join("")}</div>
+    ${bomRows.length?`<div class="st-sec wide"><h4>BOM</h4><table class="chg"><tbody>
+      <tr><td>Item</td><td><b>Part</b></td><td><b>Qty</b></td><td><b>Warehouse check</b></td></tr>
+      ${bomRows.map(r=>`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td>${r[2]==null?"":esc(r[2])}</td><td>${r[3]===true?"available":(r[3]===false?"not available":"not checked")}</td></tr>`).join("")}
+      </tbody></table>${(rec.bom_remarks||plan.bom_remarks)?`<div class="m" style="margin-top:6px"><b>BOM remarks:</b> ${esc(rec.bom_remarks||plan.bom_remarks)}</div>`:""}</div>`:""}
+    ${issued?`<div class="st-sec wide"><h4>Material issued</h4>${issuedHtml(typeof issued==="string"?JSON.parse(issued):issued)}</div>`:""}
+    ${workers.length?`<div class="st-sec wide"><h4>Production entries</h4><table class="chg"><tbody>
+      <tr><td>Conveyor</td><td><b>Qty</b></td><td><b>Start</b></td><td><b>Finish</b></td><td><b>Type</b></td><td><b>Minutes</b></td></tr>
+      ${workers.map(w=>`<tr><td>${esc(w.conveyor||"")}</td><td>${esc(w.qty??"")}</td><td>${esc(fmtTs(w.start_time))}</td><td>${esc(fmtTs(w.finish_time))}</td><td>${esc(w.work_type||"")}</td><td>${w.total_mins==null?"":esc(Math.round(w.total_mins))}</td></tr>`).join("")}
+      </tbody></table></div>`:""}
+    ${qIssues.length?`<div class="st-sec wide"><h4>Quality issues and CCRs</h4><div class="tbl-wrap"><table class="chg"><tbody>
+      <tr><td>Type</td><td><b>Description</b></td><td><b>Units</b></td><td><b>Raised</b></td><td><b>After production start</b></td><td><b>Status</b></td><td><b>Resolved</b></td><td><b>Time to resolve</b></td></tr>
+      ${qIssues.map(q=>`<tr>
+        <td>${esc(q.issue_type||"")}</td>
+        <td>${esc(q.description||"")}</td>
+        <td>${q.affected_qty==null?"":esc(q.affected_qty)}</td>
+        <td>${esc(fmtTs(q.created_at))}<div class="meta">${esc(q.created_by||"")}</div></td>
+        <td>${esc(q.raisedAfter||"")}</td>
+        <td><span class="chip" data-tone="${q.status==="Resolved"?"ok":"hold"}">${esc(q.status||"Open")}</span></td>
+        <td>${q.resolvedAt?`${esc(fmtTs(q.resolvedAt))}<div class="meta">${esc(q.resolved_by||"")}</div>`:""}</td>
+        <td>${q.toResolve?esc(q.toResolve):(q.openFor?`<span style="color:var(--hold)">open ${esc(q.openFor)}</span>`:"")}</td>
+      </tr>`).join("")}</tbody></table></div></div>`:""}
+    <div class="st-sec wide"><h4>Every change, in order</h4>
+    ${steps.length?`<div class="trail">${steps.map(st=>`
+      <div class="tr-row">
+        <div class="tr-when">${esc(fmtTs(st.at))}<div style="margin-top:2px">${esc(st.source||"")}</div></div>
+        <div style="flex:1;min-width:0">
+          <b>${esc(st.title||EVENT_LABELS[st.event]||(st.event&&st.event!=="changed"?st.event.replace(/_/g," "):"Updated"))}</b>
+          <span class="m" style="color:var(--muted)"> by ${esc(st.actor||"system")}</span>
+          ${st.issued?fmtVal("issued_bom",st.issued):""}
+          ${st.changes.length?`<table class="chg"><tbody>${st.changes.map(c=>`<tr><td>${esc(fLabel(c.field))}</td><td>${fmtVal(c.field,c.old_value)}</td><td>\u2192</td><td>${fmtVal(c.field,c.new_value)}</td></tr>`).join("")}</tbody></table>`:""}
+          ${st.details?`<div class="m">${esc(JSON.stringify(st.details))}</div>`:""}
+          ${st.snapId?`<button class="btn link" data-snap="${st.snapId}" style="padding:0;font-size:12px">View the full card at this moment</button>`:""}
+        </div>
+      </div>`).join("")}</div>`:'<div class="empty">No detailed changes recorded. Full tracking covers changes made after it was switched on.</div>'}</div>`;
+
   body.querySelectorAll("[data-snap]").forEach(b=>b.onclick=async()=>{
     const { data }=await db.from("record_snapshots").select("data").eq("id",b.dataset.snap).maybeSingle();
-    if(!data) return;
-    const d=data.data||{};
+    if(!data) return; const d=data.data||{};
     b.outerHTML=`<table class="chg" style="margin-top:6px"><tbody>${Object.keys(d).filter(k=>d[k]!=null&&d[k]!==""&&!/^(id|sort_order)$/.test(k))
       .map(k=>`<tr><td>${esc(fLabel(k))}</td><td colspan="3">${fmtVal(k,typeof d[k]==="object"?JSON.stringify(d[k]):String(d[k]))}</td></tr>`).join("")}</tbody></table>`;
   });
-  bg.querySelector("#trCsv").onclick=()=>exportChanges(fc.data||[],`ProTrace_story_${rec?rec.serial:id}`);
+
+  // export: summary, BOM, production entries and every change, one sheet each
+  bg.querySelector("#trXls").onclick=()=>{
+    const wb=XLSX.utils.book_new();
+    const sum=[["Section","Detail","Value"]];
+    facts.forEach(([t,p])=>p.forEach(x=>{ if(x[1]!=null&&x[1]!=="") sum.push([t,x[0],String(x[1])]); }));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sum),"Summary");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["Item","Part","Qty","Warehouse check"],
+      ...bomRows.map(r=>[r[0],r[1],r[2]??"",r[3]===true?"available":(r[3]===false?"not available":"not checked")])]),"BOM");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["Conveyor","Qty","Start","Finish","Type","Minutes","Remarks"],
+      ...workers.map(w=>[w.conveyor||"",w.qty??"",fmtTs(w.start_time),fmtTs(w.finish_time),w.work_type||"",w.total_mins==null?"":Math.round(w.total_mins),w.remarks||""])]),"Production");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["Type","Description","Units affected","Raised","Raised by","After production start","Status","Resolved","Resolved by","Time to resolve","Open for"],
+      ...qIssues.map(q=>[q.issue_type||"",q.description||"",q.affected_qty??"",fmtTs(q.created_at),q.created_by||"",q.raisedAfter||"",q.status||"",fmtTs(q.resolvedAt),q.resolved_by||"",q.toResolve||"",q.openFor||""])]),"Quality");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["When","Who","Source","Field","From","To"],
+      ...fc.map(c=>[fmtTs(c.at),c.actor||"",c.source||"",c.field?fLabel(c.field):(EVENT_LABELS[c.event]||c.event||""),c.old_value??"",c.new_value??""])]),"Changes");
+    XLSX.writeFile(wb,`ProTrace_story_${rec.serial||id}.xlsx`);
+  };
 }
 
 // one row per change, the file for retracing exactly what happened
