@@ -822,7 +822,7 @@ function fmtVal(f,v){
 }
 function issuedHtml(o){
   if(!o||!o.items) return esc(JSON.stringify(o));
-  return `<div class="iss">${o.stock_status_at_issue?`<div class="m">Stock at issue: <b>${esc(o.stock_status_at_issue)}</b>${o.stock_status_at_issue!=="In Stock"?' <span class="chip" data-tone="warn">not fully in stock</span>':""}</div>`:""}
+  return `<div class="iss">${o.reconstructed?'<div class="m" style="color:var(--muted);margin-bottom:4px">Rebuilt from the current BOM. It may differ from what was actually issued if the BOM was edited afterwards.</div>':""}${o.stock_status_at_issue?`<div class="m">Stock at issue: <b>${esc(o.stock_status_at_issue)}</b>${o.stock_status_at_issue!=="In Stock"?' <span class="chip" data-tone="warn">not fully in stock</span>':""}</div>`:""}
     ${o.items.map(i=>`<div class="iss-r"><span>${esc(i.slot)}</span><b>${esc(i.item||"")}</b><span>x${i.qty_issued==null?"?":esc(i.qty_issued)}</span><span>${i.confirmed_available===true?"available":(i.confirmed_available===false?"not available":"unchecked")}</span></div>`).join("")}</div>`;
 }
 
@@ -864,7 +864,7 @@ function deriveLifecycle(changes){
     else if(to==="Accepted"){ kind="accept"; label="Accepted into production"; }
     let reasons=nv("warehouse_reasons");
     try{ if(reasons&&reasons.startsWith("[")) reasons=JSON.parse(reasons).join(", "); }catch(e){}
-    out.push({at:c.at,actor:c.actor,kind,label,from,to,reasons,note:nv("warehouse_note")||nv("return_reason")});
+    out.push({at:c.at,actor:c.actor,kind,label,from,to,reasons,note:nv("warehouse_note")||nv("return_reason"),rebuilt:!!c.reconstructed});
   });
   return out.sort((a,b)=>new Date(a.at)-new Date(b.at));
 }
@@ -955,7 +955,7 @@ async function trailModal(id){
       ["Conveyors worked",conveyors.length?conveyors.join(", "):null],
       ["Foreman",rec.foreman],["QC checker",rec.qc_checker],
       ["Current status",rec.status],
-      ["Completed",completed?`${fmtTs(completed.at)} by ${completed.actor}`:(rec.status==="Completed"?"Yes, time not recorded":null)]]],
+      ["Completed",completed?`${fmtTs(completed.at)} by ${completed.actor}${completed.event==="completed_estimate"?" (estimated from the record's last update)":""}`:(rec.status==="Completed"?"Yes, time not recorded":null)]]],
     ["Quality",[
       ["Quality issues",qIssues.length?`${qIssues.length} raised, ${openIssues.length} open`:"None"],
       ["Units affected",affectedTot?String(affectedTot):null],
@@ -964,7 +964,7 @@ async function trailModal(id){
       ["Longest open",openIssues.length?dur(Math.max(...openIssues.map(q=>Date.now()-new Date(q.created_at)))):null]]],
     ["Returns",[
       ["Times returned",String(returns.length)],
-      ...returns.map((r,i)=>[`Return ${i+1}`,`${r.label} \u00b7 ${fmtTs(r.at)} by ${r.actor}${r.reasons?` \u00b7 reasons: ${r.reasons}`:""}${r.note?` \u00b7 "${r.note}"`:""}`])]]
+      ...returns.map((r,i)=>[`Return ${i+1}`,`${r.label} \u00b7 ${fmtTs(r.at)} by ${r.actor}${r.reasons?` \u00b7 reasons: ${r.reasons}`:""}${r.note?` \u00b7 "${r.note}"`:""}${r.rebuilt?" (rebuilt from older records)":""}`])]]
   ];
 
   const bomRows=[["Driver","bom_driver"],["LED","bom_led"],["EM","bom_em"],["Housing","bom_housing"],["Fabricated","bom_fabricated"]]
@@ -980,6 +980,7 @@ async function trailModal(id){
     const key=(c.actor||"")+"|"+String(c.at).slice(0,19)+"|"+c.source+"|"+(c.event||"");
     let st=steps.find(x=>x.key===key);
     if(!st){ st={key,at:c.at,actor:c.actor,source:c.source,event:c.event,changes:[]}; steps.push(st); }
+    if(c.reconstructed) st.rebuilt=true;
     if(c.field) st.changes.push(c); else if(c.event==="material_issued") st.issued=c.new_value;
   });
   steps.forEach(st=>{ const sc=st.changes.find(c=>c.field==="plan_status");
@@ -989,7 +990,9 @@ async function trailModal(id){
   if(!fc.length) audR.forEach(a=>(a.data||[]).forEach(e=>steps.push({at:e.at,actor:e.actor,source:"Log",event:e.action,changes:[],details:e.details})));
   steps.sort((a,b)=>new Date(a.at)-new Date(b.at));
 
+  const anyRebuilt=fc.some(c=>c.reconstructed);
   body.innerHTML=`
+    ${anyRebuilt?`<div class="banner show" style="display:block;margin-bottom:12px">Parts of this history were rebuilt from older records, and are marked <b>rebuilt</b>. Reschedules, quantity changes and BOM edits made before full tracking started were never recorded and cannot be shown.</div>`:""}
     <div class="st-grid">${facts.map(([t,p])=>section(t,p)).join("")}</div>
     ${bomRows.length?`<div class="st-sec wide"><h4>BOM</h4><table class="chg"><tbody>
       <tr><td>Item</td><td><b>Part</b></td><td><b>Qty</b></td><td><b>Warehouse check</b></td></tr>
@@ -1019,6 +1022,7 @@ async function trailModal(id){
         <div style="flex:1;min-width:0">
           <b>${esc(st.title||EVENT_LABELS[st.event]||(st.event&&st.event!=="changed"?st.event.replace(/_/g," "):"Updated"))}</b>
           <span class="m" style="color:var(--muted)"> by ${esc(st.actor||"system")}</span>
+          ${st.rebuilt?'<span class="chip" title="Rebuilt from older records after full tracking was switched on. The before-values may be approximate." style="margin-left:6px">rebuilt</span>':""}
           ${st.issued?fmtVal("issued_bom",st.issued):""}
           ${st.changes.length?`<table class="chg"><tbody>${st.changes.map(c=>`<tr><td>${esc(fLabel(c.field))}</td><td>${fmtVal(c.field,c.old_value)}</td><td>\u2192</td><td>${fmtVal(c.field,c.new_value)}</td></tr>`).join("")}</tbody></table>`:""}
           ${st.details?`<div class="m">${esc(JSON.stringify(st.details))}</div>`:""}
@@ -1045,21 +1049,21 @@ async function trailModal(id){
       ...workers.map(w=>[w.conveyor||"",w.qty??"",fmtTs(w.start_time),fmtTs(w.finish_time),w.work_type||"",w.total_mins==null?"":Math.round(w.total_mins),w.remarks||""])]),"Production");
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["Type","Description","Units affected","Raised","Raised by","After production start","Status","Resolved","Resolved by","Time to resolve","Open for"],
       ...qIssues.map(q=>[q.issue_type||"",q.description||"",q.affected_qty??"",fmtTs(q.created_at),q.created_by||"",q.raisedAfter||"",q.status||"",fmtTs(q.resolvedAt),q.resolved_by||"",q.toResolve||"",q.openFor||""])]),"Quality");
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["When","Who","Source","Field","From","To"],
-      ...fc.map(c=>[fmtTs(c.at),c.actor||"",c.source||"",c.field?fLabel(c.field):(EVENT_LABELS[c.event]||c.event||""),c.old_value??"",c.new_value??""])]),"Changes");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["When","Who","Source","Field","From","To","Rebuilt"],
+      ...fc.map(c=>[fmtTs(c.at),c.actor||"",c.source||"",c.field?fLabel(c.field):(EVENT_LABELS[c.event]||c.event||""),c.old_value??"",c.new_value??"",c.reconstructed?"Yes":""])]),"Changes");
     XLSX.writeFile(wb,`ProTrace_story_${rec.serial||id}.xlsx`);
   };
 }
 
 // one row per change, the file for retracing exactly what happened
 function exportChanges(rows,name,kind){
-  const head=["When","Who","Event","Source","SO","Serial","Model","Product","Customer","Field","From","To"];
+  const head=["When","Who","Event","Source","SO","Serial","Model","Product","Customer","Field","From","To","Rebuilt"];
   const flat=v=>{ if(v==null) return ""; if(String(v).startsWith("{")){ try{ const o=JSON.parse(v);
       if(o.items) return `Stock at issue: ${o.stock_status_at_issue||"?"}; `+o.items.map(i=>`${i.slot} ${i.item||""} x${i.qty_issued??"?"} (${i.confirmed_available===true?"available":(i.confirmed_available===false?"not available":"unchecked")})`).join("; ");
     }catch(e){} } return String(v); };
   const body=rows.map(r=>[String(r.at).slice(0,19).replace("T"," "),r.actor||"",
     EVENT_LABELS[r.event]||(r.event||"changed").replace(/_/g," "),r.source||"",r.so||"",r.serial||"",
-    r.model||"",r.product_name||"",r.customer||"",r.field?fLabel(r.field):"",flat(r.old_value),flat(r.new_value)]);
+    r.model||"",r.product_name||"",r.customer||"",r.field?fLabel(r.field):"",flat(r.old_value),flat(r.new_value),r.reconstructed?"Yes":""]);
   if(kind==="xlsx"){
     const ws=XLSX.utils.aoa_to_sheet([head,...body]); const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,ws,"Change log"); XLSX.writeFile(wb,name+".xlsx"); return;
