@@ -167,6 +167,12 @@
   .wh-b.fab .wh-bl{color:#3457b2}
   .wh-b .wh-bl i{font-style:normal;color:var(--orange);font-weight:800}
   .wh-b .wh-av{margin-top:3px;align-self:flex-start}
+  .qstrip{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 12px;
+    margin-bottom:12px;font-size:12.5px;color:var(--muted)}
+  .qstrip b{color:var(--ink);font-weight:800}
+  .qstrip.warn{background:var(--warn-bg);border-color:#f2dcae;color:var(--warn)}
+  .qstrip.warn b{color:var(--warn)}
   .wh-conf{display:flex;align-items:center;gap:9px;margin-top:8px;flex-wrap:wrap}
   .req{font-size:10px;font-weight:700;letter-spacing:.3px;color:var(--orange);text-transform:uppercase;margin-left:6px}
   input.needsval{outline:2px solid var(--orange);background:var(--orange-soft)}
@@ -562,8 +568,15 @@ const may=(s,w)=>{ const p=PERMS[s]; if(!p) return true; return w==="edit"?!!p.e
         const tb=document.querySelector(".toolbar");
         tb.parentNode.insertBefore(bar, tb);
       }
+      const by={}; PLANS.filter(isBacklog).forEach(p=>{ by[p.plan_status]=(by[p.plan_status]||0)+1; });
+      const LBL={Draft:"in planning",Warehouse:"at the warehouse",
+        "Returned to Engineering":"returned to engineering",Pushed:"in the assembly queue",
+        Returned:"returned to planning"};
+      const where=Object.keys(by).sort((a,b)=>by[b]-by[a])
+        .map(k=>`${by[k]} ${LBL[k]||k}`).join(", ");
       bar.innerHTML=`<b>${n} plan(s) are planned before this week</b> and are still open:
         missed, not yet accepted, or not returned.
+        <span style="display:block;font-size:11.5px;margin-top:3px;opacity:.85">Where they are: ${esc(where)}. Showing the backlog filters every view, so a view holding none of them will look empty.</span>
         <button class="btn orange sm" id="bl-show">${BACKLOGF?"Show all plans":"Show backlog"}</button>`;
       bar.querySelector("#bl-show").onclick=()=>{ BACKLOGF=!BACKLOGF; draw(); refreshBacklogBar(); };
     }catch(e){}
@@ -1083,12 +1096,18 @@ async function load(){
         _ac.style.display=_c.length?"inline-flex":"none";
         _ac.textContent=`AI: ${fmt(_c.length)} cancelled`; }
     }
-    const wt=document.querySelector('#tabs button[data-v="warehouse"]');
-    if(wt){ const wn=PLANS.filter(p=>p.plan_status==="Warehouse").length;
-      wt.textContent="Warehouse queue"+(wn?` (${wn})`:""); }
-    const qt=document.querySelector('#tabs button[data-v="queue"]');
-    if(qt){ const n=PLANS.filter(p=>p.plan_status==="Pushed").length;
-      qt.textContent="Assembly queue"+(n?` (${n})`:""); }
+    // the badge shows what the queue will actually display, with the full
+    // count beside it when filters are holding some back
+    const badge=(sel,label,status)=>{
+      const el=document.querySelector(sel); if(!el) return;
+      const tot=PLANS.filter(p=>p.plan_status===status).length;
+      let vis=tot;
+      try{ vis=filtered().filter(p=>p.plan_status===status).length; }catch(e){}
+      el.textContent=label+(tot?(vis===tot?` (${tot})`:` (${vis} of ${tot})`):"");
+      el.title=vis===tot?"":`${tot-vis} hidden by the filters above`;
+    };
+    badge('#tabs button[data-v="warehouse"]',"Warehouse queue","Warehouse");
+    badge('#tabs button[data-v="queue"]',"Assembly queue","Pushed");
   }catch(error){
     if(isJwtErr(error)&&await recoverSession()) return load();
     document.getElementById("view").innerHTML=`<div class="empty">Could not load plans: ${esc(error.message)}</div>`;
@@ -1771,6 +1790,53 @@ function acceptErr(msg){
     return "A production record already exists for this date, SO and model. Open it in the console instead of accepting again.";
   return msg;
 }
+/* ---------------- queue count strip ----------------
+   The tab badge counts every plan in a status; the queue body only
+   shows what survives the toolbar filters. When those two numbers
+   differ the strip says why, and offers one click to see the rest. */
+function queueStrip(status, shown){
+  const all=PLANS.filter(p=>p.plan_status===status);
+  const seen=new Set(shown.map(p=>p.id));
+  const hidden=all.filter(p=>!seen.has(p.id));
+  const fmtn=n=>Number(n||0).toLocaleString("en-US");
+  if(!hidden.length){
+    return all.length?`<div class="qstrip"><b>${fmtn(all.length)}</b> waiting</div>`:"";
+  }
+  // one reason per plan, first match wins, so the parts add up to the whole
+  const q=(SEARCHCTL?SEARCHCTL.get():"").trim();
+  const reasons=[];
+  const take=(label,test)=>{
+    const hit=hidden.filter(p=>!p._why&&test(p));
+    hit.forEach(p=>p._why=label);
+    if(hit.length) reasons.push([label,hit.length]);
+  };
+  hidden.forEach(p=>{ delete p._why; });
+  take("delivered in Odoo",  p=>DNF==="hidedone"   && p.odoo_state==="done");
+  take("cancelled in Odoo",  p=>CANCELF==="hide"   && p.odoo_state==="cancel");
+  take("not in the backlog", p=>BACKLOGF           && !isBacklog(p));
+  take("another week",       p=>WEEKF              && isoWeekStr(p.planned_date)!==WEEKF);
+  take("the search term",    p=>!!q);
+  take("another filter",     p=>true);
+
+  return `<div class="qstrip warn">
+    <div><b>${fmtn(shown.length)}</b> of <b>${fmtn(all.length)}</b> shown
+      &middot; ${fmtn(hidden.length)} hidden by ${reasons.map(r=>`${fmtn(r[1])} ${esc(r[0])}`).join(", ")}</div>
+    <button class="btn ghost sm" id="qsAll">Show all ${fmtn(all.length)}</button>
+  </div>`;
+}
+function wireQueueStrip(v){
+  const b=v.querySelector("#qsAll");
+  if(!b) return;
+  b.onclick=()=>{
+    DNF="";      const d=document.getElementById("dnFilter");     if(d) d.value="";
+    CANCELF="";  const c=document.getElementById("cancelFilter"); if(c) c.value="";
+    WEEKF="";    const w=document.getElementById("weekFilter");   if(w) w.value="";
+    BACKLOGF=false;
+    if(SEARCHCTL&&SEARCHCTL.get()){ SEARCHCTL.set([]); const qi=document.getElementById("q"); if(qi) qi.value=""; }
+    draw(); if(typeof refreshBacklogBar==="function") refreshBacklogBar();
+  };
+}
+
 /* ---------------- warehouse material issuance queue ---------------- */
 function drawWarehouse(v){
   const rows=filtered().filter(p=>p.plan_status==="Warehouse");
@@ -1790,7 +1856,7 @@ function drawWarehouse(v){
       <button class="btn primary" id="wAppSel" disabled>Approve selected (0)</button>
       <button class="btn danger" id="wRejSel" disabled>Reject selected (0)</button>
     </div>`:"";
-  v.innerHTML=bulkBar+(rows.length?rows.map(p=>`
+  v.innerHTML=queueStrip("Warehouse",rows)+bulkBar+(rows.length?rows.map(p=>`
     <div class="qrow">
       ${canAct?`<input type="checkbox" class="wSel" data-wsel="${p.id}" style="margin-top:4px">`:""}
       <div class="info">
@@ -1817,7 +1883,10 @@ function drawWarehouse(v){
         ${may("planning","edit")?`<button class="btn ghost sm" data-pull="${p.id}" title="Pull this plan back out of the queue">Pull back</button>`:""}
       </div>
     </div>`).join("")
-  :`<div class="empty">Nothing waiting on the warehouse. Pushed plans arrive here for material issuance before assembly.</div>`);
+  :`<div class="empty">${PLANS.some(p=>p.plan_status==="Warehouse")
+      ?"Every plan in this queue is hidden by the filters above. Use Show all to see them."
+      :"Nothing waiting on the warehouse. Pushed plans arrive here for material issuance before assembly."}</div>`);
+  wireQueueStrip(v);
   if(!canAct) return;
 
   const selCount=()=>[...v.querySelectorAll(".wSel:checked")].length;
@@ -2004,7 +2073,7 @@ function drawQueue(v){
       <button class="btn primary" id="qAccSel" disabled>Accept selected (0)</button>
       <button class="btn danger" id="qRetSel" disabled>Return selected (0)</button>
     </div>`:"";
-  v.innerHTML=bulkBar+(rows.length?rows.map(p=>`
+  v.innerHTML=queueStrip("Pushed",rows)+bulkBar+(rows.length?rows.map(p=>`
     <div class="qrow">
       ${canAccept?`<input type="checkbox" class="qSel" data-qsel="${p.id}" style="margin-top:4px">`:""}
       <div class="info">
@@ -2021,7 +2090,10 @@ function drawQueue(v){
         ${may("planning","edit")?`<button class="btn ghost sm" data-pull="${p.id}" title="Pull this plan back out of the queue">Pull back</button>`:""}
       </div>`:`<div class="act"><span class="chip" data-tone="info">Awaiting assembly</span>${may("planning","edit")?` <button class="btn ghost sm" data-pull="${p.id}">Pull back</button>`:""}</div>`}
     </div>`).join("")
-  :`<div class="empty">No pushed plans waiting. ${may("planning","edit")?"Push a ready plan from the kanban.":""}</div>`);
+  :`<div class="empty">${PLANS.some(p=>p.plan_status==="Pushed")
+      ?"Every plan in this queue is hidden by the filters above. Use Show all to see them."
+      :`No pushed plans waiting. ${may("planning","edit")?"Push a ready plan from the kanban.":""}`}</div>`);
+  wireQueueStrip(v);
   if(!canAccept) return;
   const selCount=()=>[...v.querySelectorAll(".qSel:checked")].length;
   const refreshSel=()=>{
