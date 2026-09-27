@@ -2248,6 +2248,28 @@ function fieldsOf(p){
     "plan_remarks","estimated_ready_week","wh_no_stock","sort_order"];
   const o={}; keys.forEach(k=>{ if(p&&p[k]!=null) o[k]=p[k]; }); return o;
 }
+/* Saves a plan through the main upsert, then sends the columns that
+   upsert_planned_record predates (BOM quantities, fabricated item) to
+   their companion. Returns { data, error } like a single rpc call. */
+async function savePlanFields(id, fields){
+  const res=await db.rpc("upsert_planned_record",{ p_id:id, p_fields:fields });
+  if(res.error) return res;
+  const rowId=id||(res.data&&res.data.id);
+  const EXTRAS=["bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty",
+                "bom_fabricated","bom_fabricated_qty"];
+  const extra={};
+  EXTRAS.forEach(k=>{ if(k in fields) extra[k]=fields[k]==null?"":String(fields[k]); });
+  if(rowId && Object.keys(extra).length){
+    const ex=await db.rpc("upsert_plan_extras",{ p_id:rowId, p_fields:extra });
+    // the main save already succeeded, so report this separately rather
+    // than making it look as though nothing was saved
+    if(ex.error) return { data:ex.data||res.data, error:null,
+      partial:"Plan saved, but the BOM quantities did not: "+ex.error.message };
+    if(ex.data) return { data:ex.data, error:null };
+  }
+  return res;
+}
+
 async function planModal(pLite){
   let p=pLite;
   if(pLite&&pLite.id){
@@ -2477,17 +2499,18 @@ async function planModal(pLite){
   bg.querySelector("#p-save").onclick=async()=>{
     if(!fabFilled()) return;
     busy(true);
-    const { data, error }=await db.rpc("upsert_planned_record",{ p_id:p?p.id:null, p_fields:collect() });
+    const { data, error, partial }=await savePlanFields(p?p.id:null, collect());
     busy(false);
     if(error){ pmsg(error.message); return; }
-    p=data; banner("Plan saved.",true); close(); await load();
+    p=data; banner(partial||"Plan saved.", !partial); close(); await load();
   };
   const pushBtn=bg.querySelector("#p-push");
   if(pushBtn) pushBtn.onclick=async()=>{
     if(!fabFilled()) return;
     busy(true);
-    const { error:e1 }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:collect() });
+    const { error:e1, partial:pw }=await savePlanFields(p.id, collect());
     if(e1){ busy(false); pmsg(e1.message); return; }
+    if(pw) banner(pw);
     const { error }=await db.rpc("push_plan",{ p_id:p.id });
     busy(false);
     if(error){ pmsg(error.message); return; }
@@ -2503,8 +2526,9 @@ async function planModal(pLite){
   if(repushBtn) repushBtn.onclick=async()=>{
     if(!fabFilled()) return;
     busy(true);
-    const { error:e1 }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:collect() });
+    const { error:e1, partial:pw }=await savePlanFields(p.id, collect());
     if(e1){ busy(false); pmsg(e1.message); return; }
+    if(pw) banner(pw);
     const { error }=await db.rpc("repush_plan",{ p_id:p.id });
     busy(false);
     if(error){ pmsg(error.message); return; }
@@ -2562,12 +2586,13 @@ async function planModal(pLite){
     const f={};
     ["model","light_type","voltage","planned_qty","planned_date","record_kind","needs_fabrication",
      "bom_driver","bom_led","bom_em","bom_housing","bom_remarks","bom_stock_status",
-     "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty","bom_fabricated","bom_fabricated_qty","bom_fabricated","bom_fabricated_qty",
+     "bom_driver_qty","bom_led_qty","bom_em_qty","bom_housing_qty","bom_fabricated","bom_fabricated_qty",
      "cargo_eta","cargo_received","cargo_remarks","plan_indicator","plan_remarks",
      "estimated_ready_week","wh_no_stock","stock_allocations"]
       .forEach(k=>{ if(SIB[k]!=null) f[k]=SIB[k]; });
     busy(true);
-    const { error }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:f });
+    const { error, partial:pw }=await savePlanFields(p.id, f);
+    if(pw) banner(pw);
     busy(false);
     if(error){ pmsg(error.message); return; }
     banner("Planning copied from the cancelled version. Review it against the announced revision.",true);
@@ -2615,7 +2640,10 @@ async function planModal(pLite){
       busy(true);
       const { data:sib, error }=await db.rpc("split_plan",{ p_id:p.id, p_first_qty:k });
       if(error){ busy(false); smsg(error.message); return; }
-      if(sib&&sib.id){ try{ await db.rpc("copy_plan_meta",{ p_from:p.id, p_to:sib.id }); }catch(e){} }
+      if(sib&&sib.id){
+        try{ await db.rpc("copy_plan_meta",{ p_from:p.id, p_to:sib.id }); }catch(e){}
+        try{ await db.rpc("copy_plan_extras",{ p_from:p.id, p_to:sib.id }); }catch(e){}
+      }
       busy(false);
       sclose();
       banner(`Split done: this plan now has ${k} pieces, the new draft has ${sib.planned_qty}.`,true);
@@ -2625,8 +2653,9 @@ async function planModal(pLite){
   const compBtn=bg.querySelector("#p-complete");
   if(compBtn) compBtn.onclick=async()=>{
     busy(true);
-    const { error:e1 }=await db.rpc("upsert_planned_record",{ p_id:p.id, p_fields:collect() });
+    const { error:e1, partial:pw }=await savePlanFields(p.id, collect());
     if(e1){ busy(false); pmsg(e1.message); return; }
+    if(pw) banner(pw);
     const { error }=await db.rpc("complete_plan",{ p_id:p.id });
     busy(false);
     if(error){ pmsg(error.message); return; }
