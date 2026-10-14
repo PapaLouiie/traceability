@@ -230,6 +230,7 @@ function renderShell(){
       <h1 style="margin-top:34px">QR label compliance</h1>
       <p class="sub">Of completed records, how many have had the QR confirmed as stuck inside the product. Records marked as not needing a label are left out of the figures entirely.</p>
       <div class="stats" id="qrStats"></div>
+      <p class="sub" id="qrNote" style="margin-top:10px"></p>
       <div class="grid" id="qrGrid"></div>
 
       <a class="backlink" href="index.html">&larr; Back to console</a>
@@ -337,7 +338,8 @@ function renderQr(){
   }
   if(!QR || !QR.total){
     st.innerHTML="";
-    g.innerHTML=`<div class="card full"><div class="empty">No completed records in this range, so there is nothing to confirm yet.</div></div>`;
+    g.innerHTML=`<div class="card full"><div class="empty">No completed records in this range, so there is nothing to confirm yet.${
+      QR&&QR.policy_start?`<br><span style="font-size:12px">QR confirmation starts on ${esc(QR.policy_start)}.</span>`:""}</div></div>`;
     return;
   }
 
@@ -348,6 +350,11 @@ function renderQr(){
     cell(fmt(QR.not_applied),"Not applied",QRC.missing)+
     cell(fmt(QR.not_answered),"Not answered",QRC.pending)+
     cell(fmt(QR.not_required),"Not required");
+  const note=document.getElementById("qrNote");
+  if(note) note.innerHTML = QR.policy_start
+    ? `Counting records completed from ${esc(QR.policy_start)}, when QR confirmation started`+
+      (QR.before_policy?`. ${fmt(QR.before_policy)} earlier record${QR.before_policy==1?"":"s"} sit${QR.before_policy==1?"s":""} outside the rate.`:".")
+    : "";
 
   const b=QR.breakdowns||{};
   const reasons=QR.reasons||[];
