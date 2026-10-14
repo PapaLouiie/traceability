@@ -120,6 +120,15 @@
   html[data-theme="dark"] .mobadge{background:#12331f;color:#7fd8a0;border-color:#1d5232}
   .badge-sample{display:inline-block; font-size:10px; font-weight:800; letter-spacing:.5px; color:#fff;
     background:var(--orange); padding:1px 6px; border-radius:5px; vertical-align:middle}
+  .qrb.ok{background:var(--ok)} .qrb.no{background:var(--hold)}
+  .qrb.pend{background:var(--warn)} .qrb.nr{background:var(--muted)}
+  /* the panel is pulsed after a record is completed, so the question is
+     found even if the modal is dismissed */
+  @keyframes qrflash{0%{box-shadow:0 0 0 0 rgba(246,133,31,.55)}
+                     70%{box-shadow:0 0 0 12px rgba(246,133,31,0)}
+                     100%{box-shadow:0 0 0 0 rgba(246,133,31,0)}}
+  .qrconf.flash{animation:qrflash 1.1s ease-out 2}
+  @media (prefers-reduced-motion:reduce){.qrconf.flash{animation:none;outline:2px solid var(--orange)}}
   .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
   .chip-w{display:inline-flex; align-items:center; gap:6px; background:var(--orange-soft); color:#a55a12;
     border:1px solid #f3d3ad; border-radius:999px; padding:4px 6px 4px 11px; font-size:13px; font-weight:600}
@@ -1387,10 +1396,7 @@ async function loadList(q){
   list.innerHTML=countBar+data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
       <input type="checkbox" class="qr-sel" data-qr="${r.id}" title="Select for QR printing" onclick="event.stopPropagation()">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${
-  r.status==="Completed"&&!r.qr_not_required&&r.qr_applied!==true&&qrInPolicy(r)
-    ? `<span class="badge-sample" style="background:${r.qr_applied===false?"var(--hold)":"var(--warn)"}" title="${r.qr_applied===false?"Confirmed as not applied":"QR not confirmed yet"}">QR ${r.qr_applied===false?"\u2717":"?"}</span>`
-    : ""} ${tagsHTML(flags[r.id])}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${qrListBadge(r)} ${tagsHTML(flags[r.id])}</div>
         <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
       </div>
       <div class="r-right">
@@ -2607,7 +2613,7 @@ async function saveRecord(){
     document.querySelector("h1").textContent=data.serial;
     document.getElementById("save").textContent="Save changes";
     document.getElementById("printBtn").onclick=()=>printTag(current);
-    wireQrPanel();
+    refreshQrPanel();
     document.getElementById("addWorker").onclick=addWorker;
     loadWorkers(); renderAudit(); updateBomChip();
     banner("Record created. Serial "+data.serial+".",true);
@@ -3048,9 +3054,37 @@ function qrDue(r){
 /* Asked at the moment of completion, the only time the product is still in
    front of the person and a photo of the label is actually possible. The
    small delay lets the save banner show first. */
+function qrSpotlight(){
+  const box=document.getElementById("qrPanel"); if(!box) return;
+  try{ box.scrollIntoView({behavior:"smooth", block:"center"}); }catch(e){ box.scrollIntoView(); }
+  const panel=box.querySelector(".qrconf"); if(!panel) return;
+  panel.classList.remove("flash"); void panel.offsetWidth; panel.classList.add("flash");
+}
 function maybeAskQr(){
-  if(!qrDue(current) || !may("records","edit")) return;
-  setTimeout(()=>{ if(qrDue(current)) qrConfirmModal(current); }, 450);
+  if(!qrDue(current)) return;
+  // Scrolled to first, so closing the modal leaves the question on screen
+  // rather than somewhere further down the page.
+  qrSpotlight();
+  if(!may("records","edit")) return;
+  setTimeout(()=>{ if(qrDue(current)) qrConfirmModal(current); }, 650);
+}
+/* The QR state as a badge for the console list. Every completed record in
+   the policy period carries one, including the good case: a label that only
+   appears when something is wrong teaches people to read its absence as
+   "not checked yet" rather than "fine". */
+function qrListBadge(r){
+  if(!r || r.status!=="Completed") return "";
+  if(r.qr_not_required)
+    return `<span class="badge-sample qrb nr" title="Marked as not needing a QR label">QR n/a</span>`;
+  // An answer is shown whenever one exists, including on a record from
+  // before the policy that somebody confirmed anyway. Only the silence of
+  // an unanswered old record is left unbadged.
+  if(r.qr_applied===true)
+    return `<span class="badge-sample qrb ok" title="QR confirmed applied${r.qr_confirmed_by?" by "+esc(r.qr_confirmed_by):""}">QR \u2713</span>`;
+  if(r.qr_applied===false)
+    return `<span class="badge-sample qrb no" title="Confirmed as not applied${r.qr_reason?": "+esc(r.qr_reason):""}">QR \u2717</span>`;
+  if(!qrInPolicy(r)) return "";
+  return `<span class="badge-sample qrb pend" title="Nobody has confirmed the QR for this record yet">QR ?</span>`;
 }
 function qrStateChip(r){
   if(!r) return "";
