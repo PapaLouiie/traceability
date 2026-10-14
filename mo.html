@@ -154,6 +154,77 @@
   footer{max-width:560px; margin:26px auto 0; padding:0 16px; text-align:center;
     font-size:11px; letter-spacing:.4px; color:var(--muted)}
   footer b{color:var(--navy)}
+/* ---------------- phone layout ----------------
+   Appended last so it wins on source order. Everything here is inside a
+   width query, so nothing changes on a desktop.
+
+   The three problems being fixed, in the order they cost the most:
+     1. planning's header did not wrap, so the whole page scrolled sideways
+     2. the filter rows pushed real content off the first screen entirely
+     3. tab strips and toolbars clipped rather than scrolled                */
+
+@media(max-width:760px){
+  /* 1. header: wrap, shrink, and drop the parts that are only confirmation */
+  .head-in{flex-wrap:wrap !important; row-gap:6px; gap:6px !important; max-width:100% !important}
+  .brand-logo{height:26px}
+  .brand-tag{font-size:10px; letter-spacing:1.5px}
+  .brand-home, .nlcrep-btn{padding:5px 9px; font-size:11.5px}
+  .who{margin-left:auto; font-size:0; line-height:1; text-align:right}
+  .who .role-tag, .who a{font-size:11.5px}
+  .who br{display:none}
+  .who a{margin-left:8px}
+
+  /* 2. tab strips scroll instead of clipping, and keep a usable target size */
+  .tabs{overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    max-width:100%; flex-wrap:nowrap}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex:0 0 auto; white-space:nowrap}
+
+  /* 3. anything tappable gets a thumb sized target */
+  .btn, .toolbar select, .toolbar input:not([type=checkbox]){min-height:38px}
+  .btn.sm{min-height:32px}
+  input[type=checkbox], input[type=radio]{min-width:18px; min-height:18px}
+
+  /* 4. collapsible filters: the toolbar is hidden behind its own button
+        until asked for, so the list starts near the top of the screen */
+  .mfil{display:flex; align-items:center; gap:8px; margin:10px 0}
+  .mfil button{flex:1 1 auto}
+  .mfil .cnt{background:var(--orange); color:#fff; border-radius:9px;
+    padding:1px 7px; font-size:11px; font-weight:800}
+  .toolbar.mhide{display:none}
+  .toolbar.mshow{display:flex; background:var(--bg); border:1px solid var(--line);
+    border-radius:12px; padding:10px; margin-bottom:10px}
+  .toolbar.mshow select, .toolbar.mshow input:not([type=checkbox]){flex:1 1 46%; min-width:0}
+
+  /* 5. record rows stack rather than squeezing a right hand column */
+  .rec{flex-wrap:wrap; row-gap:4px}
+  .rec .sn{font-size:14px}
+  .rec .meta{font-size:11.5px}
+
+  /* 6. cards and modals use the full width they have */
+  .wrap{padding-left:10px; padding-right:10px}
+  .card .pad{padding:12px}
+  .modal{max-width:100% !important; width:100%; border-radius:14px}
+  .mh{font-size:15px; padding:12px 14px}
+  .mb{padding:14px}
+  .mf{padding:10px 14px; flex-wrap:wrap; gap:8px}
+  .mf .btn{flex:1 1 auto}
+
+  /* 7. the two startup banners are informative, not urgent: let them be
+        read without filling the screen */
+  .banner.show, .banner{font-size:12.5px}
+
+  /* 8. wide tables keep their own scroller rather than stretching the page */
+  .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  table{font-size:12px}
+}
+
+@media(max-width:420px){
+  .head-in{gap:5px !important}
+  .brand-home, .nlcrep-btn{padding:4px 7px; font-size:11px}
+  h1{font-size:20px}
+  .sub{font-size:12.5px}
+}
 </style>
 </head>
 <body>
@@ -602,6 +673,270 @@ function fail(title,sub){
   }
   else { await renderPublic(); }
 })();
+
+/* ---------------- Report an issue (shared, self installing) ----------------
+   One block, pasted unchanged into every page. It brings its own styles,
+   its own overlay and its own toast, and depends on nothing beyond `db`
+   and `esc`, because the pages do not all share the same helpers: mo.html
+   has no modal markup at all and three of the five have no banner().
+
+   Calling nlcReportInstall() puts the button in the header. The page name
+   it files against is worked out here, so no page has to pass anything. */
+const NLCREP_CSS = `
+.nlcrep-btn{display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  font-size:13px;font-weight:600;color:inherit;opacity:.9;text-decoration:none;
+  padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.28)}
+.nlcrep-btn:hover{opacity:1;background:rgba(255,255,255,.14)}
+.nlcrep-bg{position:fixed;inset:0;background:rgba(18,20,45,.55);z-index:9998;
+  display:flex;align-items:center;justify-content:center;padding:16px}
+.nlcrep-m{background:var(--card,#fff);color:var(--ink,#1c1e33);width:100%;max-width:560px;
+  max-height:92vh;overflow:auto;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.3);
+  font:14px/1.5 inherit}
+.nlcrep-h{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:14px 18px;border-bottom:1px solid var(--line,#e7e8f1);font-weight:800}
+.nlcrep-h span{cursor:pointer;font-size:22px;line-height:1;opacity:.6}
+.nlcrep-h span:hover{opacity:1}
+.nlcrep-b{padding:16px 18px}
+.nlcrep-f{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;
+  border-top:1px solid var(--line,#e7e8f1)}
+.nlcrep-k{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.nlcrep-k label{flex:1 1 170px;min-width:0;display:flex;gap:9px;align-items:flex-start;
+  border:1px solid var(--line,#e7e8f1);border-radius:10px;padding:11px 13px;cursor:pointer;
+  text-transform:none;letter-spacing:normal;margin:0;color:inherit;text-align:left}
+.nlcrep-k label:has(input:checked){border-color:var(--orange,#F6851F);background:var(--orange-soft,#fff2e6)}
+.nlcrep-k input{width:16px;height:16px;flex:none;padding:0;margin:2px 0 0;accent-color:var(--orange,#F6851F)}
+.nlcrep-k b{display:block;font-size:13.5px}
+.nlcrep-k i{font-style:normal;font-size:11.5px;color:var(--muted,#71749a)}
+.nlcrep-fld{margin-bottom:12px}
+.nlcrep-fld label{display:block;font-size:11px;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--muted,#71749a);margin-bottom:5px}
+.nlcrep-fld input,.nlcrep-fld select,.nlcrep-fld textarea{width:100%;padding:10px 12px;
+  font:inherit;font-size:15px;border:1px solid var(--line,#e7e8f1);border-radius:10px;
+  background:var(--card,#fbfbfe);color:var(--ink,#1c1e33)}
+.nlcrep-fld textarea{resize:vertical;line-height:1.45}
+.nlcrep-bn{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:9999;
+  background:#1f9d63;color:#fff;padding:11px 18px;border-radius:10px;font-size:13.5px;
+  font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:92vw}
+.nlcrep-bn.bad{background:#c0392b}
+@media(max-width:560px){.nlcrep-btn span{display:none}}
+`;
+
+function nlcRepToast(msg, ok){
+  const d = document.createElement("div");
+  d.className = "nlcrep-bn" + (ok ? "" : " bad");
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 4200);
+}
+
+function nlcRepPage(){
+  // planning.html names its own board view; everywhere else the file is enough
+  try{ if(typeof VIEW === "string" && VIEW)
+    return ({kanban:"Planning board", calendar:"Planning calendar", sheet:"Spreadsheet",
+             warehouse:"Warehouse queue", queue:"Assembly queue",
+             stats:"Planning analytics"})[VIEW] || "Planning board";
+  }catch(e){}
+  const f = (location.pathname.split("/").pop() || "index.html").toLowerCase();
+  return ({ "index.html":"Console", "":"Console", "dashboard.html":"Dashboard",
+            "mo.html":"Production report", "changelog.html":"Release notes",
+            "planning.html":"Planning board" })[f] || f;
+}
+
+function nlcReportModal(){
+  const page = nlcRepPage();
+  const bg = document.createElement("div");
+  bg.className = "nlcrep-bg";
+  bg.innerHTML = `<div class="nlcrep-m" role="dialog" aria-modal="true">
+    <div class="nlcrep-h">Report an issue or request a feature<span class="nlcrep-x">&times;</span></div>
+    <div class="nlcrep-b">
+      <div class="nlcrep-k">
+        <label><input type="radio" name="nlcrepK" value="issue" checked>
+          <span><b>Something is wrong</b><i>A bug or a problem</i></span></label>
+        <label><input type="radio" name="nlcrepK" value="feature">
+          <span><b>Something is missing</b><i>A feature request</i></span></label>
+      </div>
+      <div class="nlcrep-fld"><label>Short title</label>
+        <input id="nlcrepTitle" maxlength="140" placeholder="One line describing it"></div>
+      <div class="nlcrep-fld"><label>Detail</label>
+        <textarea id="nlcrepDetail" rows="4" placeholder="What happened, or what you need it to do"></textarea></div>
+      <div class="nlcrep-fld"><label>How urgent is it for you</label>
+        <select id="nlcrepSev">
+          <option value="Critical">Critical, I cannot do my job</option>
+          <option value="High">High, it is slowing me down a lot</option>
+          <option value="Medium" selected>Medium, it is annoying</option>
+          <option value="Low">Low, would be nice to have</option></select></div>
+      <div style="font-size:12px;color:var(--muted,#71749a)">Filed against: <b>${esc(page)}</b></div>
+    </div>
+    <div class="nlcrep-f">
+      <button class="btn ghost" id="nlcrepCancel" type="button">Cancel</button>
+      <button class="btn primary" id="nlcrepGo" type="button">Send</button>
+    </div></div>`;
+  document.body.appendChild(bg);
+
+  const close = () => { bg.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = e => { if(e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  bg.querySelector(".nlcrep-x").onclick = close;
+  bg.querySelector("#nlcrepCancel").onclick = close;
+  bg.onclick = e => { if(e.target === bg) close(); };
+  setTimeout(() => { const t = bg.querySelector("#nlcrepTitle"); if(t) t.focus(); }, 50);
+
+  bg.querySelector("#nlcrepGo").onclick = async () => {
+    const title = bg.querySelector("#nlcrepTitle").value.trim();
+    if(!title){ nlcRepToast("Give it a short title first.", false); return; }
+    const go = bg.querySelector("#nlcrepGo");
+    go.disabled = true; go.textContent = "Sending...";
+    const { error } = await db.rpc("submit_feedback", {
+      p_kind: bg.querySelector('input[name="nlcrepK"]:checked').value,
+      p_page: page,
+      p_title: title,
+      p_detail: bg.querySelector("#nlcrepDetail").value.trim() || null,
+      p_severity: bg.querySelector("#nlcrepSev").value });
+    if(error){
+      nlcRepToast(error.message, false);
+      go.disabled = false; go.textContent = "Send";
+      return;
+    }
+    close();
+    nlcRepToast("Thanks. Your report is on the list.", true);
+  };
+}
+
+function nlcReportInstall(){
+  if(!document.getElementById("nlcrep-css")){
+    const st = document.createElement("style");
+    st.id = "nlcrep-css"; st.textContent = NLCREP_CSS;
+    document.head.appendChild(st);
+  }
+  // headers are rendered after sign in, so this may be called before one
+  // exists; it is safe to call again
+  document.querySelectorAll(".head-in").forEach(h => {
+    if(h.querySelector(".nlcrep-btn")) return;
+    const a = document.createElement("a");
+    a.className = "nlcrep-btn";
+    a.title = "Report an issue or request a feature";
+    a.innerHTML = '⚠ <span>Report</span>';
+    a.onclick = e => { e.preventDefault(); nlcReportModal(); };
+    const who = h.querySelector(".who");
+    if(who) h.insertBefore(a, who); else h.appendChild(a);
+  });
+}
+
+/* Each page renders its header at a different moment (after sign in, after a
+   fetch, after a hash route). Rather than hooking five different render
+   paths, watch for the header appearing, then stop watching. Debounced to a
+   frame, because these pages redraw large lists and an observer that ran a
+   query on every mutation would be felt. */
+(function(){
+  let queued = false, obs = null;
+  const go = () => {
+    queued = false;
+    try{ nlcReportInstall(); }catch(e){ return; }
+    if(obs && document.querySelector(".nlcrep-btn")){ obs.disconnect(); obs = null; }
+  };
+  const queue = () => { if(queued) return; queued = true; requestAnimationFrame(go); };
+  if(document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", queue);
+  else queue();
+  try{
+    obs = new MutationObserver(queue);
+    obs.observe(document.documentElement, { childList:true, subtree:true });
+  }catch(e){}
+})();
+
+
+/* ---------------- phone behaviour (shared, self installing) ----------------
+   On a phone the filter toolbars take the whole first screen, so the list
+   people came for starts below the fold. This collapses any toolbar that
+   carries several filters behind a single button, and puts a count on that
+   button so a filter can never be left on without being visible.
+
+   Done here rather than in each render path because the pages rebuild their
+   toolbars constantly, and the markup differs on every screen. */
+const NLCM_Q = 760;
+
+function nlcmIsPhone(){ return window.innerWidth <= NLCM_Q; }
+
+function nlcmActive(tb){
+  let n = 0;
+  tb.querySelectorAll("select").forEach(s => {
+    // "all", "", and the first option are the resting state
+    if(s.selectedIndex > 0 && s.value && !/^(all|)$/i.test(s.value)) n++;
+  });
+  tb.querySelectorAll('input:not([type=checkbox]):not([type=radio])').forEach(i => {
+    if(i.value && i.value.trim()) n++;
+  });
+  return n;
+}
+
+function nlcmLabel(btn, tb, open){
+  const n = nlcmActive(tb);
+  btn.innerHTML = (open ? "Hide filters" : "Filters")
+    + (n ? ` <span class="cnt">${n}</span>` : "");
+}
+
+function nlcmSetup(){
+  if(!nlcmIsPhone()){
+    // back on a wide screen: undo everything so nothing is left hidden
+    document.querySelectorAll(".toolbar[data-mfil]").forEach(tb => {
+      const tabs = tb.parentNode.querySelector(":scope > .tabs[data-mlift]");
+      if(tabs){ delete tabs.dataset.mlift; tb.insertBefore(tabs, tb.firstChild); }
+      tb.classList.remove("mhide", "mshow");
+      delete tb.dataset.mfil;
+    });
+    document.querySelectorAll(".mfil").forEach(x => x.remove());
+    return;
+  }
+  document.querySelectorAll(".toolbar").forEach(tb => {
+    if(tb.dataset.mfil) return;
+    // only toolbars that are mostly filters; a row of action buttons stays put
+    const fields = tb.querySelectorAll("select, input:not([type=checkbox]):not([type=radio])").length;
+    if(fields < 3) return;
+    tb.dataset.mfil = "1";
+
+    // A view switcher inside a filter toolbar must not be collapsed with it:
+    // hiding the Kanban/Spreadsheet tabs would leave no way to change view.
+    // It is lifted out to sit above the filter button instead.
+    const tabs = tb.querySelector(":scope > .tabs");
+    if(tabs){ tabs.dataset.mlift = "1"; tb.parentNode.insertBefore(tabs, tb); }
+
+    const bar = document.createElement("div");
+    bar.className = "mfil";
+    const btn = document.createElement("button");
+    btn.className = "btn ghost";
+    btn.type = "button";
+    bar.appendChild(btn);
+    tb.parentNode.insertBefore(bar, tb);
+
+    let open = false;
+    const paint = () => {
+      tb.classList.toggle("mshow", open);
+      tb.classList.toggle("mhide", !open);
+      nlcmLabel(btn, tb, open);
+    };
+    btn.onclick = () => { open = !open; paint(); };
+    // the count has to follow what the filters actually say
+    tb.addEventListener("change", () => nlcmLabel(btn, tb, open));
+    tb.addEventListener("input",  () => nlcmLabel(btn, tb, open));
+    paint();
+  });
+}
+
+(function(){
+  let queued = false;
+  const queue = () => {
+    if(queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; try{ nlcmSetup(); }catch(e){} });
+  };
+  if(document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", queue);
+  else queue();
+  window.addEventListener("resize", queue);
+  try{ new MutationObserver(queue).observe(document.documentElement,
+        { childList:true, subtree:true }); }catch(e){}
+})();
+
 </script>
 </body>
 </html>
