@@ -792,6 +792,8 @@ function renderShell(){
   document.getElementById("themeBtn").onclick=toggleTheme;
   const fbB=document.getElementById("fbBtn");
   if(fbB) fbB.onclick=e=>{ e.preventDefault(); planReportModal(); };
+  (function(){ const tag=document.querySelector(".brand-tag");
+    if(tag && typeof NLC_BUILD==="string") tag.title="Build "+NLC_BUILD; })();
   document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
     document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); VIEW=b.dataset.v; draw(); });
@@ -2059,7 +2061,7 @@ function planReportModal(){
         <option value="High">High, it is slowing me down a lot</option>
         <option value="Medium" selected>Medium, it is annoying</option>
         <option value="Low">Low, would be nice to have</option></select></div>
-      <div class="m" style="color:var(--muted)">Filed against: <b>${esc(pageName)}</b></div>
+      <div class="m" style="color:var(--muted)">Filed against: <b>${esc(pageName)}</b>${typeof NLC_BUILD==="string"?` \u00b7 build ${esc(NLC_BUILD)}`:""}</div>
     </div>
     <div class="mf"><button class="btn ghost" id="fbCancel">Cancel</button><button class="btn primary" id="fbGo">Send</button></div></div>`;
   document.body.appendChild(bg);
@@ -2971,6 +2973,12 @@ function nlcmSetup(){
         { childList:true, subtree:true }); }catch(e){}
 })();
 
+
+const NLC_BUILD = "2026-10-14 18:12";
+/* Baked into the file at export, unlike APP_VERSION which comes from the
+   app_releases table and therefore reads the same before and after an
+   upload. This is how you tell which build a browser actually has. */
+try{ console.log("ProTrace build " + NLC_BUILD + " \u00b7 planning.html"); }catch(e){}
 </script>
 </body>
 </html>
