@@ -2239,6 +2239,7 @@ async function renderBomEditor(){
       </select>
       <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
       ${BOMSRC==="rejected"?`<button class="btn orange" id="bomRepush" disabled>Re-push to warehouse (0)</button>`:""}
+      ${BOMSRC==="plans"&&may("planning","edit")?`<button class="btn orange" id="bomPush" disabled title="Send the selected plans to the warehouse queue. Only plans with a planned date can go.">Push to warehouse (0)</button>`:""}
     </div>
     <div class="card"><div id="bomGrid"><div class="spinner"></div></div></div>`);
   wireShell();
@@ -2247,6 +2248,11 @@ async function renderBomEditor(){
 
   const isRejected=BOMSRC==="rejected";
   const isPlans=BOMSRC==="plans"||isRejected;
+  // Only draft and returned plans can go to the warehouse; the tab also
+  // carries plans already at the warehouse or in assembly, and offering a
+  // checkbox on those would just collect refusals.
+  const PUSHABLE=["Draft","Returned"];
+  const canPush=BOMSRC==="plans" && may("planning","edit");
   let data=[], error=null, truncated=false;
   const B=1000, CAP=30000;
   let from=0;
@@ -2360,12 +2366,15 @@ async function renderBomEditor(){
     const st=stEl?stEl.value:"live";
     const rows=data.filter(r=>rowVisible(r,q,only,wk,st));
     grid.innerHTML=`<div class="tbl-wrap bom-wrap"><table class="bom-table"><thead><tr>
-        ${isPlans?`${isRejected?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
+        ${isPlans?`${isRejected||canPush?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
         ${COLS.map(c=>`<th style="min-width:${isQty(c[0])?"74px":"140px"}">${c[1]}</th>`).join("")}
       </tr></thead><tbody>${
       rows.map(r=>`<tr>
-        ${isPlans?`${isRejected?`<td style="width:28px"><input type="checkbox" class="rpSel" data-rp="${r.id}"></td>`:""}
+        ${isPlans?`${isRejected?`<td style="width:28px"><input type="checkbox" class="rpSel" data-rp="${r.id}"></td>`
+                   :(canPush?`<td style="width:28px">${PUSHABLE.includes(r.plan_status)
+                       ?`<input type="checkbox" class="pushSel" data-push="${r.id}" data-date="${esc(r.planned_date||"")}" title="${r.planned_date?"Ready to push":"No planned date yet"}">`
+                       :""}</td>`:"")}
                    <td><b>${esc(r.odoo_so||r.sap_so||"")}</b><div class="meta">${esc(r.customer||"")}</div></td>
                    <td>${esc(r.product_name||r.model||"")}</td>
                    <td>${esc(r.c_ref||"")}</td>
@@ -2431,6 +2440,7 @@ async function renderBomEditor(){
       });
     });
     wireRepush();
+    wirePush();
   }
   function updateSaveBtn(){
     const n=Object.keys(dirty).length;
@@ -2455,6 +2465,49 @@ async function renderBomEditor(){
       weeks.map(w=>`<option value="${w}"${w===curW?" data-cur=\"1\"":""}>${w}${w===curW?" (this week)":""}</option>`).join("");
     sel.addEventListener("change",draw);
   })();
+  /* Bulk push from the Planning drafts tab. A plan with no planned date
+     cannot be scheduled by the warehouse and push_plan refuses it, so that
+     is checked here: the answer is one sentence naming the plans, rather
+     than a row of identical server errors. */
+  function wirePush(){
+    const btn=document.getElementById("bomPush");
+    if(!btn) return;
+    const boxes=[...document.querySelectorAll(".pushSel")];
+    const sync=()=>{ const n=boxes.filter(b=>b.checked).length;
+      btn.disabled=!n; btn.textContent=`Push to warehouse (${n})`; };
+    boxes.forEach(b=>b.onchange=sync);
+    sync();
+    btn.onclick=async()=>{
+      const picked=boxes.filter(b=>b.checked);
+      if(!picked.length) return;
+      if(Object.keys(dirty).length){
+        banner("Save your BOM changes first, then push."); return; }
+      const undated=picked.filter(b=>!b.dataset.date);
+      const ready=picked.filter(b=>b.dataset.date);
+      const nameOf=b=>{ const r=data.find(x=>x.id===b.dataset.push);
+                        return r?(r.odoo_so||r.sap_so||"(no SO)"):"(plan)"; };
+      if(undated.length){
+        const names=undated.slice(0,6).map(nameOf).join(", ");
+        if(!ready.length){
+          banner(`${undated.length===1?"That plan has":"Those "+undated.length+" plans have"} no planned date yet, `+
+                 `so the warehouse cannot schedule ${undated.length===1?"it":"them"}. Set the date in planning first. (${names}${undated.length>6?", ...":""})`);
+          return;
+        }
+        if(!confirm(`${undated.length} of ${picked.length} selected plans have no planned date:\n\n`+
+                    `  ${names}${undated.length>6?"\n  ...":""}\n\n`+
+                    `Push the other ${ready.length} now?`)) return;
+      }
+      btn.disabled=true; btn.textContent="Pushing\u2026";
+      let ok=0; const errs=[];
+      for(const b of ready){
+        const { error }=await db.rpc("push_plan",{ p_id:b.dataset.push });
+        if(error) errs.push(`${nameOf(b)}: ${error.message}`); else ok++;
+      }
+      if(errs.length) banner(`Pushed ${ok} of ${ready.length}. ${errs.slice(0,3).join(" | ")}${errs.length>3?` and ${errs.length-3} more`:""}`);
+      else banner(`Pushed ${ok} plan${ok===1?"":"s"} to the warehouse queue${undated.length?`. ${undated.length} left, with no planned date`:""}.`,true);
+      renderBomEditor();
+    };
+  }
   function wireRepush(){
     const btn=document.getElementById("bomRepush");
     if(!btn) return;
