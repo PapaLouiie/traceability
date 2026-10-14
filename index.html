@@ -528,6 +528,8 @@ function renderChips(){
   LIGHT_TYPES = (lt||[]).map(x=>x.name);
   try{ const { data:qr } = await db.from("qr_reasons").select("label").eq("active",true).order("sort");
     QR_REASONS = (qr||[]).map(x=>x.label); }catch(e){}
+  try{ const { data:qp } = await db.from("qr_policy").select("start_date").limit(1).single();
+    if(qp && qp.start_date) QR_POLICY_START = String(qp.start_date).slice(0,10); }catch(e){}
   try{ const { data:pm } = await db.rpc("my_permissions");
     (pm||[]).forEach(p=>PERMS[p.section]={view:p.can_view, edit:p.can_edit}); }catch(e){}
   try{ const { data:r0 } = await db.rpc("my_role"); ROLE=r0||""; }catch(e){}
@@ -1276,6 +1278,7 @@ function monthRange(year,month){
 let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
 let LAST_LIST=[]; const QRSEL=new Set(); let LPAGE=30;
 let QR_REASONS=[];
+let QR_POLICY_START="";
 let QPREV=null;
 async function updateQueueBadge(){
   const badge=document.getElementById("qBadge"); if(!badge) return;
@@ -1385,7 +1388,7 @@ async function loadList(q){
       <input type="checkbox" class="qr-sel" data-qr="${r.id}" title="Select for QR printing" onclick="event.stopPropagation()">
       <div>
         <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${
-  r.status==="Completed"&&!r.qr_not_required&&r.qr_applied!==true
+  r.status==="Completed"&&!r.qr_not_required&&r.qr_applied!==true&&qrInPolicy(r)
     ? `<span class="badge-sample" style="background:${r.qr_applied===false?"var(--hold)":"var(--warn)"}" title="${r.qr_applied===false?"Confirmed as not applied":"QR not confirmed yet"}">QR ${r.qr_applied===false?"\u2717":"?"}</span>`
     : ""} ${tagsHTML(flags[r.id])}</div>
         <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
@@ -2608,6 +2611,7 @@ async function saveRecord(){
     document.getElementById("addWorker").onclick=addWorker;
     loadWorkers(); renderAudit(); updateBomChip();
     banner("Record created. Serial "+data.serial+".",true);
+    maybeAskQr();
   } else {
     // update via POST RPC so proxies that block PATCH do not break saves
     const { data, error }=await db.rpc("update_production_record",{ p_id:current.id, p_fields:payload });
@@ -2616,6 +2620,7 @@ async function saveRecord(){
         ?"Network error reaching the database. Check your connection, then try again."
         :(dupMsg(error.message)||("Could not save changes: "+error.message))); return; }
     current=data; banner("Changes saved.",true); renderAudit(); updateBomChip();
+    refreshQrPanel(); maybeAskQr();
     const qi=document.getElementById("qrimg");
     if(qi) qi.className="kind-"+(data.record_kind||"Production");
     loadWorkers();
@@ -3030,6 +3035,23 @@ function shrinkImage(file, maxPx, quality){
   });
 }
 
+/* Records completed before the policy started cannot honestly be answered
+   now, so they are neither badged nor counted. qr_policy holds the date. */
+function qrInPolicy(r){
+  if(!r || !QR_POLICY_START) return true;
+  return String(r.production_date||"") >= QR_POLICY_START;
+}
+function qrDue(r){
+  return !!r && r.status==="Completed" && !r.qr_not_required
+      && r.qr_applied!==true && r.qr_applied!==false && qrInPolicy(r);
+}
+/* Asked at the moment of completion, the only time the product is still in
+   front of the person and a photo of the label is actually possible. The
+   small delay lets the save banner show first. */
+function maybeAskQr(){
+  if(!qrDue(current) || !may("records","edit")) return;
+  setTimeout(()=>{ if(qrDue(current)) qrConfirmModal(current); }, 450);
+}
 function qrStateChip(r){
   if(!r) return "";
   if(r.qr_not_required) return '<span class="chip">QR not required</span>';
@@ -3056,6 +3078,10 @@ function qrPanelHtml(r){
       <div class="m">${esc(r.qr_reason||"")}${r.qr_note?" · "+esc(r.qr_note):""}</div>
       <div class="m" style="color:var(--muted)">${esc(r.qr_confirmed_by||"")}${r.qr_confirmed_at?" · "+esc(String(r.qr_confirmed_at).slice(0,16).replace("T"," ")):""}</div></div>
       ${may_?'<button class="btn ghost sm" id="qrAgain">Change</button>':""}</div>`;
+  if(!qrInPolicy(r))
+    return `<div class="qrconf"><div><b>Completed before QR confirmation started.</b>
+      <div class="m">Not counted in the compliance rate.</div></div>
+      ${may_?'<button class="btn ghost sm" id="qrConfirm">Confirm anyway</button>':""}</div>`;
   return `<div class="qrconf warn"><div><b>Not confirmed yet.</b>
     <div class="m">Say whether the QR was printed and stuck inside the product.</div></div>
     ${may_?'<button class="btn orange sm" id="qrConfirm">Confirm now</button>':""}</div>`;
