@@ -3644,7 +3644,7 @@ function nlcReportModal(){
           <option value="High">High, it is slowing me down a lot</option>
           <option value="Medium" selected>Medium, it is annoying</option>
           <option value="Low">Low, would be nice to have</option></select></div>
-      <div style="font-size:12px;color:var(--muted,#71749a)">Filed against: <b>${esc(page)}</b></div>
+      <div style="font-size:12px;color:var(--muted,#71749a)">Filed against: <b>${esc(page)}</b>${typeof NLC_BUILD==="string"?` \u00b7 build ${esc(NLC_BUILD)}`:""}</div>
     </div>
     <div class="nlcrep-f">
       <button class="btn ghost" id="nlcrepCancel" type="button">Cancel</button>
@@ -3690,6 +3690,9 @@ function nlcReportInstall(){
   // headers are rendered after sign in, so this may be called before one
   // exists; it is safe to call again
   document.querySelectorAll(".head-in").forEach(h => {
+    // the build is worth seeing without opening the console
+    const tag = h.querySelector(".brand-tag");
+    if(tag && typeof NLC_BUILD === "string" && !tag.title) tag.title = "Build " + NLC_BUILD;
     if(h.querySelector(".nlcrep-btn")) return;
     const a = document.createElement("a");
     a.className = "nlcrep-btn";
@@ -3816,6 +3819,12 @@ function nlcmSetup(){
         { childList:true, subtree:true }); }catch(e){}
 })();
 
+
+const NLC_BUILD = "2026-10-14 18:12";
+/* Baked into the file at export, unlike APP_VERSION which comes from the
+   app_releases table and therefore reads the same before and after an
+   upload. This is how you tell which build a browser actually has. */
+try{ console.log("ProTrace build " + NLC_BUILD + " \u00b7 index.html"); }catch(e){}
 </script>
 </body>
 </html>
