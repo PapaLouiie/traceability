@@ -100,9 +100,10 @@
   .field{margin-bottom:12px}
   .field.full{grid-column:1 / -1}
   label{display:block; font-size:11px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); margin-bottom:5px}
-  input,select{width:100%; padding:10px 12px; font-size:15px; border:1px solid var(--line);
+  input,select,textarea{width:100%; padding:10px 12px; font-size:15px; border:1px solid var(--line);
     border-radius:10px; background:#fbfbfe; color:var(--ink); font-family:inherit}
-  input:focus,select:focus{outline:2px solid var(--orange); outline-offset:1px; border-color:transparent}
+  textarea{resize:vertical; line-height:1.45}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--orange); outline-offset:1px; border-color:transparent}
   .hint{font-size:12px; color:var(--muted); margin-top:5px}
   .hint b{color:var(--navy); font-variant-numeric:tabular-nums}
   .radios{display:flex; gap:14px; padding-top:4px}
@@ -148,6 +149,41 @@
     border-radius:50%; border:none; background:var(--navy); color:#fff; font-size:20px; cursor:pointer;
     box-shadow:0 6px 20px rgba(0,0,0,.3)}
   #toTop:hover{background:var(--orange)}
+  .qrconf{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+    background:var(--bg);font-size:13px}
+  .qrconf.ok{background:var(--ok-bg);border-color:#bfe6d0}
+  .qrconf.bad{background:var(--hold-bg);border-color:#f2c6c1}
+  .qrconf.warn{background:var(--warn-bg);border-color:#f2dcae}
+  .qrconf .m{font-size:11.5px;margin-top:2px}
+  /* these are <label> elements, so the global label rule would turn them into
+     uppercase 11px captions; everything it sets has to be put back here */
+  .qr-opt,.qr-r{text-transform:none;letter-spacing:normal;color:var(--ink);margin-bottom:0}
+  .qr-opt{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);
+    border-radius:10px;padding:11px 13px;cursor:pointer;text-align:left;min-width:0}
+  .qr-opt:hover{background:var(--bg)}
+  .qr-opt span{display:flex;flex-direction:column;gap:1px;font-size:13.5px;flex:1;min-width:0}
+  /* the global input rule makes every input a full width box, which would
+     turn these radios into blocks that push their own labels out of view */
+  .qr-opt input[type=radio],.qr-r input[type=radio]{width:16px;height:16px;flex:none;
+    padding:0;margin:2px 0 0;accent-color:var(--orange)}
+  .qr-r input[type=radio]{margin:0}
+  .qr-opt i{font-style:normal;font-size:11.5px;color:var(--muted)}
+  .qr-opt:has(input:checked){border-color:var(--orange);background:var(--orange-soft)}
+  .qr-r{display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 7px;
+    border-radius:7px;cursor:pointer}
+  .qr-r:hover{background:var(--bg)}
+  .qr-prev{display:flex;gap:11px;align-items:center;margin-top:10px;padding:9px;
+    border:1px solid var(--line);border-radius:10px}
+  .qr-prev img{width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none}
+  .qr-drop{display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center;
+    padding:20px 16px;border:2px dashed var(--line);border-radius:12px;background:var(--bg);
+    transition:border-color .15s, background .15s}
+  .qr-drop b{font-size:13.5px}
+  .qr-drop > span{font-size:11.5px;color:var(--muted)}
+  .qr-drop-b{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:3px}
+  .qr-drop > span.qr-drop-h{font-size:11px;opacity:.85}
+  .qr-drop.over{border-color:var(--orange);background:var(--orange-soft)}
   .qr-sel{width:16px; height:16px; accent-color:var(--orange); margin-right:4px; flex:none; align-self:center}
   .rec{display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); cursor:pointer}
   .rec:last-child{border-bottom:none}
@@ -490,6 +526,8 @@ function renderChips(){
   STAFF = staff||[];
   const { data:lt } = await db.from("light_types").select("name").order("name");
   LIGHT_TYPES = (lt||[]).map(x=>x.name);
+  try{ const { data:qr } = await db.from("qr_reasons").select("label").eq("active",true).order("sort");
+    QR_REASONS = (qr||[]).map(x=>x.label); }catch(e){}
   try{ const { data:pm } = await db.rpc("my_permissions");
     (pm||[]).forEach(p=>PERMS[p.section]={view:p.can_view, edit:p.can_edit}); }catch(e){}
   try{ const { data:r0 } = await db.rpc("my_role"); ROLE=r0||""; }catch(e){}
@@ -1167,6 +1205,13 @@ async function renderHome(){
         <option value="completed">Completed</option>
         <option value="all">All statuses</option>
       </select>
+      <select id="f-qr" style="max-width:185px" title="QR label confirmation">
+        <option value="">QR: all</option>
+        <option value="pending">Not confirmed yet</option>
+        <option value="applied">Confirmed applied</option>
+        <option value="missing">Confirmed not applied</option>
+        <option value="nr">Not required</option>
+      </select>
       <select id="f-kind" style="max-width:150px">
         <option value="">All pieces</option>
         <option value="Production">Production only</option>
@@ -1201,16 +1246,17 @@ async function renderHome(){
   searchCtl.set(HOME_TERMS);
   window.__homeSearch=searchCtl;
   document.getElementById("searchBtn").onclick=()=>{ searchCtl.commit(); loadList(searchCtl.get().trim()); };
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.status=document.getElementById("f-status").value; LPAGE=30; listFilter.sort=document.getElementById("f-sort").value; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.status=document.getElementById("f-status").value; listFilter.qr=document.getElementById("f-qr").value; LPAGE=30; listFilter.sort=document.getElementById("f-sort").value; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
   document.getElementById("f-week").onchange=applyFil;
   document.getElementById("f-tag").onchange=applyFil;
   document.getElementById("f-kind").onchange=applyFil;
   document.getElementById("f-status").onchange=applyFil;
+  document.getElementById("f-qr").onchange=applyFil;
   document.getElementById("f-sort").onchange=applyFil;
-  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-status").value=listFilter.status||"open"; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",status:"open",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-status").value="open"; document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-status").value=listFilter.status||"open"; document.getElementById("f-qr").value=listFilter.qr||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",status:"open",qr:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind","f-qr"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-status").value="open"; document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -1229,6 +1275,7 @@ function monthRange(year,month){
 
 let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
 let LAST_LIST=[]; const QRSEL=new Set(); let LPAGE=30;
+let QR_REASONS=[];
 let QPREV=null;
 async function updateQueueBadge(){
   const badge=document.getElementById("qBadge"); if(!badge) return;
@@ -1286,6 +1333,10 @@ async function loadList(q){
     if(tagIds){ qq=qq.in("id",tagIds); }
     if(excludeIds && excludeIds.length){ qq=qq.not("id","in","("+excludeIds.join(",")+")"); }
     if(listFilter.kind){ qq=qq.eq("record_kind",listFilter.kind); }
+    if(listFilter.qr==="pending")      qq=qq.is("qr_applied",null).eq("qr_not_required",false);
+    else if(listFilter.qr==="applied") qq=qq.eq("qr_applied",true);
+    else if(listFilter.qr==="missing") qq=qq.eq("qr_applied",false);
+    else if(listFilter.qr==="nr")      qq=qq.eq("qr_not_required",true);
     if(q){
       const terms=q.split(/[,\s]+/).filter(Boolean);
       const pats=terms.map(t=>`serial.ilike.%${t}%,so_number.ilike.%${t}%,mo_number.ilike.%${t}%,model.ilike.%${t}%,customer.ilike.%${t}%,customer_reference.ilike.%${t}%`).join(",");
@@ -1295,7 +1346,7 @@ async function loadList(q){
     else if(withStatus==="completed") qq=qq.eq("status","Completed");
     return qq;
   };
-  const query=mk("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty,needs_fabrication,fabrication_stage,mo_number,odoo_mo_id",null,stF==="all"?null:stF)
+  const query=mk("id,serial,production_date,so_number,model,customer,customer_reference,light_type,status,record_kind,planned_qty,needs_fabrication,fabrication_stage,mo_number,odoo_mo_id,qr_applied,qr_not_required",null,stF==="all"?null:stF)
     .order(scol,{ascending:sdir==="asc", nullsFirst:false}).range(0,LPAGE-1);
   const [{ data, error }, totRes, compRes]=await Promise.all([
     query,
@@ -1333,7 +1384,10 @@ async function loadList(q){
   list.innerHTML=countBar+data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
       <input type="checkbox" class="qr-sel" data-qr="${r.id}" title="Select for QR printing" onclick="event.stopPropagation()">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${tagsHTML(flags[r.id])}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${
+  r.status==="Completed"&&!r.qr_not_required&&r.qr_applied!==true
+    ? `<span class="badge-sample" style="background:${r.qr_applied===false?"var(--hold)":"var(--warn)"}" title="${r.qr_applied===false?"Confirmed as not applied":"QR not confirmed yet"}">QR ${r.qr_applied===false?"\u2717":"?"}</span>`
+    : ""} ${tagsHTML(flags[r.id])}</div>
         <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
       </div>
       <div class="r-right">
@@ -1680,12 +1734,13 @@ function renderEditor(rec){
     </div></div>
 
     <div id="afterCreate" class="${isNew?"hidden":""}">
-      <div class="card"><h2>Tag</h2><div class="pad"><div class="qrbox">
+      <div class="card"><h2>Tag <span id="qrChip" style="margin-left:auto">${qrStateChip(rec)}</span></h2><div class="pad"><div class="qrbox">
         <img id="qrimg" alt="QR" src="${rec&&rec.serial?qrURL(rec.serial):""}">
         <div>
           <div class="serial" id="serialTxt">${esc((rec&&rec.serial)||"")}</div>
           <p class="hint" style="margin:6px 0 12px">Print this and place it inside the product. Scanning always shows the live record.</p>
           <button class="btn orange sm" id="printBtn">Print tag</button>
+          <div id="qrPanel">${qrPanelHtml(rec)}</div>
         </div>
       </div></div></div>
 
@@ -1818,6 +1873,7 @@ function renderEditor(rec){
     const qi=document.getElementById("qrimg");
     if(qi) qi.className="kind-"+(r.record_kind||"Production");
     document.getElementById("printBtn").onclick=()=>printTag(current);
+    wireQrPanel();
     document.getElementById("addWorker").onclick=addWorker;
     document.getElementById("raiseCcr").onclick=raiseCcr;
     loadCcrs(); renderAudit();
@@ -2548,6 +2604,7 @@ async function saveRecord(){
     document.querySelector("h1").textContent=data.serial;
     document.getElementById("save").textContent="Save changes";
     document.getElementById("printBtn").onclick=()=>printTag(current);
+    wireQrPanel();
     document.getElementById("addWorker").onclick=addWorker;
     loadWorkers(); renderAudit(); updateBomChip();
     banner("Record created. Serial "+data.serial+".",true);
@@ -2949,6 +3006,238 @@ async function openDoc(path){
 }
 
 /* ---------------- print ---------------- */
+/* ================= QR label confirmation ================= */
+// Phone photos run 3 to 5 MB. A QR only has to be legible, so the image is
+// resized before upload: faster on factory wifi and far less storage.
+function shrinkImage(file, maxPx, quality){
+  return new Promise((resolve)=>{
+    if(!/^image\//.test(file.type)) return resolve(file);
+    const img=new Image(), url=URL.createObjectURL(file);
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      let {width:w, height:h}=img;
+      const scale=Math.min(1, maxPx/Math.max(w,h));
+      if(scale>=1 && file.size<600*1024) return resolve(file);
+      w=Math.round(w*scale); h=Math.round(h*scale);
+      const c=document.createElement("canvas"); c.width=w; c.height=h;
+      c.getContext("2d").drawImage(img,0,0,w,h);
+      c.toBlob(b=>resolve(b&&b.size<file.size?new File([b],
+        file.name.replace(/\.[^.]+$/,"")+".jpg",{type:"image/jpeg"}):file),
+        "image/jpeg", quality);
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); resolve(file); };
+    img.src=url;
+  });
+}
+
+function qrStateChip(r){
+  if(!r) return "";
+  if(r.qr_not_required) return '<span class="chip">QR not required</span>';
+  if(r.qr_applied===true)  return '<span class="chip" data-tone="ok">QR applied</span>';
+  if(r.qr_applied===false) return '<span class="chip" data-tone="hold">QR not applied</span>';
+  return '<span class="chip" data-tone="warn">QR not confirmed</span>';
+}
+
+function qrPanelHtml(r){
+  const may_=may("records","edit");
+  if(!r) return "";
+  if(r.qr_not_required)
+    return `<div class="qrconf"><div><b>Marked as not needing a QR label.</b>
+      ${r.qr_note?`<div class="m">${esc(r.qr_note)}</div>`:""}</div>
+      ${may_?'<button class="btn ghost sm" id="qrUndoNR">Undo</button>':""}</div>`;
+  if(r.qr_applied===true)
+    return `<div class="qrconf ok"><div><b>QR applied and confirmed.</b>
+      <div class="m">${esc(r.qr_confirmed_by||"")}${r.qr_confirmed_at?" · "+esc(String(r.qr_confirmed_at).slice(0,16).replace("T"," ")):""}</div></div>
+      <div style="display:flex;gap:6px">
+        ${r.qr_photo_path?'<button class="btn ghost sm" id="qrPhoto">View photo</button>':""}
+        ${may_?'<button class="btn ghost sm" id="qrAgain">Change</button>':""}</div></div>`;
+  if(r.qr_applied===false)
+    return `<div class="qrconf bad"><div><b>QR not applied.</b>
+      <div class="m">${esc(r.qr_reason||"")}${r.qr_note?" · "+esc(r.qr_note):""}</div>
+      <div class="m" style="color:var(--muted)">${esc(r.qr_confirmed_by||"")}${r.qr_confirmed_at?" · "+esc(String(r.qr_confirmed_at).slice(0,16).replace("T"," ")):""}</div></div>
+      ${may_?'<button class="btn ghost sm" id="qrAgain">Change</button>':""}</div>`;
+  return `<div class="qrconf warn"><div><b>Not confirmed yet.</b>
+    <div class="m">Say whether the QR was printed and stuck inside the product.</div></div>
+    ${may_?'<button class="btn orange sm" id="qrConfirm">Confirm now</button>':""}</div>`;
+}
+
+function wireQrPanel(){
+  const r=current; if(!r) return;
+  const go=id=>document.getElementById(id);
+  const c=go("qrConfirm"); if(c) c.onclick=()=>qrConfirmModal(r);
+  const a=go("qrAgain");   if(a) a.onclick=()=>qrConfirmModal(r);
+  const p=go("qrPhoto");   if(p) p.onclick=()=>openQrPhoto(r.qr_photo_path);
+  const u=go("qrUndoNR");
+  if(u) u.onclick=async()=>{
+    const { data, error }=await db.rpc("set_qr_not_required",{ p_id:r.id, p_flag:false });
+    if(error){ banner(error.message); return; }
+    current=data; refreshQrPanel();
+  };
+}
+
+function refreshQrPanel(){
+  const box=document.getElementById("qrPanel");
+  if(!box) return;
+  box.innerHTML=qrPanelHtml(current);
+  wireQrPanel();
+  const chip=document.getElementById("qrChip");
+  if(chip) chip.outerHTML=`<span id="qrChip">${qrStateChip(current)}</span>`;
+}
+
+async function openQrPhoto(path){
+  if(!path) return;
+  const { data, error }=await db.storage.from("qr-photos").createSignedUrl(path, 3600);
+  if(error){ banner("Could not open the photo: "+error.message); return; }
+  window.open(data.signedUrl, "_blank");
+}
+
+function qrConfirmModal(r){
+  const reasons=QR_REASONS.length?QR_REASONS:["Printer not available or out of labels",
+    "No serial generated for this record","Product already packed or shipped",
+    "No suitable surface on the product","Label printed but damaged or unreadable",
+    "Was not aware it was required"];
+  const m=modal(`QR label for ${r.serial||"this record"}`, `
+    <p class="hint" style="margin-top:0">Did you print the QR and stick it inside the product?</p>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <label class="qr-opt" style="flex:1 1 170px"><input type="radio" name="qrA" value="yes">
+        <span><b>Yes</b><i>a photo is required</i></span></label>
+      <label class="qr-opt" style="flex:1 1 170px"><input type="radio" name="qrA" value="no">
+        <span><b>No</b><i>tell us why</i></span></label>
+    </div>
+
+    <div id="qrYes" hidden style="display:none">
+      <div class="qr-drop" id="qrDrop">
+        <b>\u{1F4F7} Photo of the QR inside the product</b>
+        <span>Show the label where it sits in the product</span>
+        <div class="qr-drop-b">
+          <button class="btn ghost sm" id="qrCam" type="button">Take a photo</button>
+          <button class="btn ghost sm" id="qrPick" type="button">Choose a file</button>
+        </div>
+        <span class="qr-drop-h">or drag an image here, or paste one</span>
+        <input type="file" id="qrFileCam" accept="image/*" capture="environment" hidden>
+        <input type="file" id="qrFilePick" accept="image/*" hidden>
+      </div>
+      <div id="qrPrev"></div>
+    </div>
+
+    <div id="qrNo" hidden style="display:none">
+      <div class="field"><label>Reason</label>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${reasons.map((x,i)=>`<label class="qr-r"><input type="radio" name="qrR" value="${esc(x)}" id="qrr${i}"> ${esc(x)}</label>`).join("")}
+          <label class="qr-r"><input type="radio" name="qrR" value="Other" id="qrrOther"> Other</label>
+        </div></div>
+      <div class="field"><label id="qrNoteLbl">Note (optional)</label>
+        <textarea id="qrNote" rows="2" placeholder="Anything worth recording"></textarea></div>
+    </div>
+
+    <div class="msg" id="qrMsg"></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px">
+      <button class="btn link" id="qrNR" type="button">This product needs no QR</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn ghost" id="qrCancel" type="button">Cancel</button>
+        <button class="btn primary" id="qrSave" type="button" disabled>Save</button>
+      </div>
+    </div>`);
+
+  const el=m.el, q=id=>el.querySelector(id);
+  let photo=null;
+  const msg=t=>{ const b=q("#qrMsg"); b.className=t?"msg err":"msg"; b.textContent=t||""; };
+
+  const show=(node,on)=>{ node.hidden=!on; node.style.display=on?"block":"none"; };
+  const sync=()=>{
+    const ans=(el.querySelector('input[name="qrA"]:checked')||{}).value;
+    show(q("#qrYes"), ans==="yes");
+    show(q("#qrNo"),  ans==="no");
+    const reason=(el.querySelector('input[name="qrR"]:checked')||{}).value;
+    const otherNeedsText = reason==="Other" && !q("#qrNote").value.trim();
+    q("#qrNoteLbl").textContent = reason==="Other" ? "Describe the reason (required)" : "Note (optional)";
+    q("#qrSave").disabled = !( (ans==="yes" && photo) || (ans==="no" && reason && !otherNeedsText) );
+  };
+
+  el.querySelectorAll('input[name="qrA"]').forEach(x=>x.onchange=sync);
+  el.querySelectorAll('input[name="qrR"]').forEach(x=>x.onchange=sync);
+  q("#qrNote").oninput=sync;
+  async function takePhoto(f){
+    if(!f) return;
+    if(!/^image\//.test(f.type)){ msg("That is not an image file."); return; }
+    msg("");
+    gbusy(true);
+    photo=await shrinkImage(f, 1600, 0.75);
+    gbusy(false);
+    const kb=Math.round(photo.size/1024);
+    q("#qrPrev").innerHTML=`<div class="qr-prev"><img src="${URL.createObjectURL(photo)}" alt="">
+      <div><b>${esc(photo.name||"photo.jpg")}</b><div class="m">${kb} KB${photo!==f?` (resized from ${Math.round(f.size/1024)} KB)`:""}</div>
+      <button class="btn link" id="qrDrop2" type="button" style="padding:0">Use a different photo</button></div></div>`;
+    const d2=q("#qrDrop2"); if(d2) d2.onclick=()=>q("#qrFilePick").click();
+    sync();
+  }
+  q("#qrCam").onclick =()=>q("#qrFileCam").click();
+  q("#qrPick").onclick=()=>q("#qrFilePick").click();
+  q("#qrFileCam").onchange =()=>takePhoto(q("#qrFileCam").files[0]);
+  q("#qrFilePick").onchange=()=>takePhoto(q("#qrFilePick").files[0]);
+
+  // drag and drop, for a laptop
+  const drop=q("#qrDrop");
+  ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{
+    e.preventDefault(); e.stopPropagation(); drop.classList.add("over"); }));
+  ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{
+    e.preventDefault(); e.stopPropagation(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop",e=>{
+    const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f) takePhoto(f);
+  });
+
+  // paste, which is how a screenshot usually arrives on a laptop
+  const onPaste=e=>{
+    if(q("#qrYes").hidden) return;
+    const items=(e.clipboardData&&e.clipboardData.items)||[];
+    for(const it of items){
+      if(it.kind==="file" && /^image\//.test(it.type)){
+        const f=it.getAsFile(); if(f){ e.preventDefault(); takePhoto(f); return; }
+      }
+    }
+  };
+  document.addEventListener("paste", onPaste);
+
+  const closeAll=()=>{ document.removeEventListener("paste", onPaste); m.close(); };
+  q("#qrCancel").onclick=closeAll;
+  const x=el.querySelector(".x"); if(x) x.onclick=closeAll;
+
+  q("#qrNR").onclick=async()=>{
+    const why=prompt("Why does this product not need a QR label?");
+    if(why===null) return;
+    if(!why.trim()){ msg("Give a reason."); return; }
+    const { data, error }=await db.rpc("set_qr_not_required",{ p_id:r.id, p_flag:true, p_reason:why.trim() });
+    if(error){ msg(error.message); return; }
+    current=data; closeAll(); refreshQrPanel(); banner("Marked as not needing a QR label.",true);
+  };
+
+  q("#qrSave").onclick=async()=>{
+    const ans=(el.querySelector('input[name="qrA"]:checked')||{}).value;
+    const btn=q("#qrSave"); btn.disabled=true; btn.textContent="Saving…";
+    let path=null;
+    if(ans==="yes"){
+      path=`${r.id}/${Date.now()}_${(photo.name||"qr.jpg").replace(/[^\w.\-]/g,"_")}`;
+      gbusy(true);
+      const { error:up }=await db.storage.from("qr-photos").upload(path, photo, { upsert:false });
+      gbusy(false);
+      // the photo is the evidence, so a failed upload must not be recorded
+      // as a confirmed application
+      if(up){ msg("The photo did not upload, so nothing was saved: "+up.message);
+        btn.disabled=false; btn.textContent="Save"; return; }
+    }
+    const { data, error }=await db.rpc("set_qr_confirmation",{
+      p_id:r.id, p_applied:ans==="yes", p_photo_path:path,
+      p_reason: ans==="no" ? (el.querySelector('input[name="qrR"]:checked')||{}).value : null,
+      p_note: q("#qrNote").value.trim()||null });
+    if(error){ msg(error.message); btn.disabled=false; btn.textContent="Save"; return; }
+    current=data; closeAll(); refreshQrPanel();
+    banner(ans==="yes"?"QR confirmed as applied.":"Recorded as not applied.", ans==="yes");
+  };
+
+  sync();
+}
+
 function printTag(r){
   const isSample=(r.record_kind==="Sample");
   const bcol=isSample?"#F6851F":"#24275E";
