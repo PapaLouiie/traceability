@@ -2211,6 +2211,7 @@ function applyGating(){
 
 /* ---------------- BOM bulk editor ---------------- */
 let BOMSRC="plans";  // BOM-first workflow: planning drafts are the default source
+let BOMSORT="";      // "" keeps the order the rows arrived in
 async function renderBomEditor(){
   setHash("#/bom");
   document.body.classList.add("wide");
@@ -2237,6 +2238,15 @@ async function renderBomEditor(){
         <option value="cancel">Cancelled only</option>
         <option value="done">Delivered only</option>
       </select>
+      <select id="bomSort" style="max-width:200px" title="Order the rows">
+        <option value="">Default order</option>
+        <option value="so_asc">SO, low to high</option>
+        <option value="so_desc">SO, high to low</option>
+        <option value="week_asc">Week, earliest</option>
+        <option value="week_desc">Week, latest</option>
+        <option value="customer_asc">Client, A to Z</option>
+      </select>
+      <button class="btn ghost" id="bomReset" title="Clear every filter and go back to the default order">Reset</button>
       <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
       ${BOMSRC==="rejected"?`<button class="btn orange" id="bomRepush" disabled>Re-push to warehouse (0)</button>`:""}
       ${BOMSRC==="plans"&&may("planning","edit")?`<button class="btn orange" id="bomPush" disabled title="Send the selected plans to the warehouse queue. Only plans with a planned date can go.">Push to warehouse (0)</button>`:""}
@@ -2302,6 +2312,25 @@ async function renderBomEditor(){
   const orig={}; data.forEach(r=>{ orig[r.id]={}; COLS.forEach(([k])=>orig[r.id][k]=(r[k]===null||r[k]===undefined)?"":String(r[k])); });
 
   const rowWeekDate=r=>isPlans?r.planned_date:r.production_date;
+  /* Sorting the filtered rows, never the loaded set, so the order always
+     describes what is on screen. "" leaves them exactly as they arrived,
+     which is what Reset goes back to. SO compares numerically, so SO9 comes
+     before SO10 rather than after it. */
+  const rowSO=r=>String(isPlans?(r.odoo_so||r.sap_so||""):(r.so_number||""));
+  const cmpSO=(a,b)=>rowSO(a).localeCompare(rowSO(b),undefined,{numeric:true,sensitivity:"base"});
+  function bomSorted(rows){
+    const el=document.getElementById("bomSort");
+    const k=el?el.value:BOMSORT;
+    if(!k) return rows;
+    const out=rows.slice();
+    const wk=r=>rowWeekDate(r)||"";
+    if(k==="so_asc")            out.sort(cmpSO);
+    else if(k==="so_desc")      out.sort((a,b)=>cmpSO(b,a));
+    else if(k==="week_asc")     out.sort((a,b)=>(wk(a)||"9999").localeCompare(wk(b)||"9999"));
+    else if(k==="week_desc")    out.sort((a,b)=>(wk(b)||"").localeCompare(wk(a)||""));
+    else if(k==="customer_asc") out.sort((a,b)=>String(a.customer||"").localeCompare(String(b.customer||"")));
+    return out;
+  }
   function rowVisible(r,q,only,wk,st){
     if(isPlans && st){
       if(st==="live" && (r.odoo_state==="cancel"||r.odoo_state==="done")) return false;
@@ -2364,7 +2393,8 @@ async function renderBomEditor(){
     const wk=wkEl?wkEl.value:"";
     const stEl=document.getElementById("bomState");
     const st=stEl?stEl.value:"live";
-    const rows=data.filter(r=>rowVisible(r,q,only,wk,st));
+    let rows=data.filter(r=>rowVisible(r,q,only,wk,st));
+    rows=bomSorted(rows);
     grid.innerHTML=`<div class="tbl-wrap bom-wrap"><table class="bom-table"><thead><tr>
         ${isPlans?`${isRejected||canPush?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
@@ -2449,6 +2479,33 @@ async function renderBomEditor(){
   }
   const bomCtl=chipSearch("bomSearchBox","bomSearch",()=>draw(),true);
   document.getElementById("bomOnly").addEventListener("change",draw);
+  (function(){
+    const so=document.getElementById("bomSort");
+    if(so){ so.value=BOMSORT; so.addEventListener("change",()=>{ BOMSORT=so.value; draw(); }); }
+  })();
+  /* Reset puts every control back to how the screen opens: no search terms,
+     no filters, default order. Unsaved edits are left alone, since clearing
+     a filter is not a reason to throw away typing. */
+  (function(){
+    const rb=document.getElementById("bomReset");
+    if(!rb) return;
+    const DEF={ bomOnly:"", bomWeek:"", bomState:"live", bomSort:"" };
+    const atDefault=()=>bomCtl.get().length===0 &&
+      Object.entries(DEF).every(([id,v])=>{ const e=document.getElementById(id); return !e || e.value===v; });
+    const paint=()=>{ rb.disabled=atDefault(); rb.title=rb.disabled
+      ? "Already showing everything in the default order"
+      : "Clear every filter and go back to the default order"; };
+    rb.onclick=()=>{
+      bomCtl.set([]);
+      Object.entries(DEF).forEach(([id,v])=>{ const e=document.getElementById(id); if(e) e.value=v; });
+      BOMSORT="";
+      draw(); paint();
+    };
+    document.querySelector(".toolbar").addEventListener("change",paint);
+    document.querySelector(".toolbar").addEventListener("input",paint);
+    document.getElementById("bomSearch").addEventListener("keyup",()=>setTimeout(paint,0));
+    paint();
+  })();
   (function(){ const el=document.getElementById("bomState");
     if(!el) return;
     if(!isPlans){ el.style.display="none"; return; }
