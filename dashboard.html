@@ -173,6 +173,13 @@ const PAL=["#24275E","#F6851F","#3457b2","#1f9d63","#c0392b","#8e44ad","#c9820b"
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt=n=>(n==null?"0":Number(n).toLocaleString());
 let SESSION=null, DATA=null, RANGE={from:"",to:""};
+let QR=null, QRERR=null;
+// Status colours, not categorical ones: these encode state, not identity.
+// Green applied, red not applied, slate for not answered. Slate is
+// deliberate: an unanswered record is unknown, not a failure, and it also
+// separates far better than amber under protanopia (delta E 11.4 against
+// the green, where amber managed only 6.8).
+const QRC={ applied:"#1f9d63", missing:"#c0392b", pending:"#71749a" };
 const cfgs={}, insts={}, META={};
 
 (async function(){
@@ -219,6 +226,12 @@ function renderShell(){
       </div>
       <div class="stats" id="stats"></div>
       <div class="grid" id="grid"></div>
+
+      <h1 style="margin-top:34px">QR label compliance</h1>
+      <p class="sub">Of completed records, how many have had the QR confirmed as stuck inside the product. Records marked as not needing a label are left out of the figures entirely.</p>
+      <div class="stats" id="qrStats"></div>
+      <div class="grid" id="qrGrid"></div>
+
       <a class="backlink" href="index.html">&larr; Back to console</a>
     </div>`;
   document.getElementById("signout").onclick=async()=>{ await db.auth.signOut(); location.reload(); };
@@ -231,11 +244,16 @@ function renderShell(){
 async function load(){
   document.getElementById("grid").innerHTML=`<div class="card full"><div class="spinner"></div></div>`;
   document.getElementById("stats").innerHTML="";
-  const { data, error }=await db.rpc("dashboard_data",{ p_from:RANGE.from||null, p_to:RANGE.to||null });
+  const [{ data, error }, qrRes]=await Promise.all([
+    db.rpc("dashboard_data",{ p_from:RANGE.from||null, p_to:RANGE.to||null }),
+    db.rpc("qr_compliance_summary",{ p_from:RANGE.from||null, p_to:RANGE.to||null })
+  ]);
+  QR = qrRes && !qrRes.error ? qrRes.data : null;
+  QRERR = qrRes && qrRes.error ? qrRes.error.message : null;
   if(error){
     if(isJwtErr(error)&&await recoverSession()) return location.reload();
     document.getElementById("grid").innerHTML=`<div class="card full"><div class="empty">Could not load data: ${esc(error.message)}</div></div>`; return; }
-  DATA=data; renderStats(); renderCharts();
+  DATA=data; renderStats(); renderCharts(); renderQr();
 }
 
 function renderStats(){
@@ -305,6 +323,88 @@ function renderModel(sort){
   else rows.sort((a,b)=>b.units-a.units);
   rows=rows.slice(0,14);
   make("model", hbarCfg(rows.map(m=>m.model), rows.map(m=>m.avg_cycle), PAL[5], "Min/unit"));
+}
+
+/* ================= QR label compliance ================= */
+function renderQr(){
+  const st=document.getElementById("qrStats"), g=document.getElementById("qrGrid");
+  if(!st||!g) return;
+  if(QRERR){
+    st.innerHTML="";
+    g.innerHTML=`<div class="card full"><div class="empty">Could not load compliance data: ${esc(QRERR)}<br>
+      <span style="font-size:12px">If this says the function is missing, batch 38 has not been run yet.</span></div></div>`;
+    return;
+  }
+  if(!QR || !QR.total){
+    st.innerHTML="";
+    g.innerHTML=`<div class="card full"><div class="empty">No completed records in this range, so there is nothing to confirm yet.</div></div>`;
+    return;
+  }
+
+  const cell=(v,l,tone)=>`<div class="stat"><b${tone?` style="color:${tone}"`:""}>${v}</b><span>${l}</span></div>`;
+  st.innerHTML=
+    cell(QR.rate==null?"n/a":QR.rate+"%","Confirmed applied")+
+    cell(fmt(QR.applied),"Applied",QRC.applied)+
+    cell(fmt(QR.not_applied),"Not applied",QRC.missing)+
+    cell(fmt(QR.not_answered),"Not answered",QRC.pending)+
+    cell(fmt(QR.not_required),"Not required");
+
+  const b=QR.breakdowns||{};
+  const reasons=QR.reasons||[];
+  g.innerHTML=
+    (reasons.length?card("qr_reason","Why the QR was not applied"):"")+
+    card("qr_month","Confirmation by month")+
+    card("qr_line","By line")+
+    card("qr_foreman","By foreman")+
+    (b.customer&&b.customer.length?card("qr_customer","By customer"):"")+
+    (b.model&&b.model.length?card("qr_model","By model"):"");
+
+  if(reasons.length)
+    make("qr_reason", hbarCfg(reasons.map(r=>r.reason), reasons.map(r=>r.count), QRC.missing, "Records"));
+  if(b.month)    make("qr_month",    stackCfg(b.month));
+  if(b.line)     make("qr_line",     stackCfg(b.line.slice(0,12)));
+  if(b.foreman)  make("qr_foreman",  stackCfg(b.foreman.slice(0,12)));
+  if(b.customer&&b.customer.length) make("qr_customer", stackCfg(b.customer.slice(0,10)));
+  if(b.model&&b.model.length)       make("qr_model",    stackCfg(b.model.slice(0,10)));
+
+  g.querySelectorAll("[data-expand]").forEach(x=>x.onclick=()=>expand(x.dataset.expand));
+
+  const rowsOf=k=>(b[k]||[]).map(r=>({ ...r, rate:r.rate==null?0:r.rate }));
+  const m=(t,k,lbl)=>({ title:t, kind:"bar", rows:rowsOf(k), label:"key",
+    metrics:[{key:"applied",name:"Applied"},{key:"not_applied",name:"Not applied"},
+             {key:"not_answered",name:"Not answered"},{key:"total",name:"Total"},
+             {key:"rate",name:"Rate %"}], color:QRC.applied, sortable:k!=="month" });
+  META.qr_month   = m("Confirmation by month","month");
+  META.qr_line    = m("By line","line");
+  META.qr_foreman = m("By foreman","foreman");
+  if(b.customer) META.qr_customer = m("By customer","customer");
+  if(b.model)    META.qr_model    = m("By model","model");
+  if(reasons.length) META.qr_reason={ title:"Why the QR was not applied", kind:"hbar",
+    rows:reasons, label:"reason", metrics:[{key:"count",name:"Records"}],
+    color:QRC.missing, sortable:true };
+}
+
+// Stacked counts rather than a bare percentage: a line with 2 records at 0%
+// and one with 200 at 0% are not the same problem, and a rate alone hides
+// which is which. The 2px surface gap keeps the segments legible.
+function stackCfg(rows){
+  const o=baseOpts();
+  o.scales.x.stacked=true; o.scales.y.stacked=true;
+  o.plugins.legend={display:true, position:"bottom",
+    labels:{boxWidth:10, boxHeight:10, font:{size:11}, usePointStyle:true, pointStyle:"rectRounded"}};
+  o.plugins.tooltip={ callbacks:{ afterTitle:items=>{
+      const r=rows[items[0].dataIndex];
+      return r&&r.rate!=null ? r.rate+"% applied, "+r.total+" record"+(r.total==1?"":"s") : "";
+  }}};
+  const seg=(label,key,color)=>({ label, data:rows.map(r=>r[key]||0),
+    backgroundColor:color, borderColor:"rgba(0,0,0,0)", borderWidth:2,
+    borderRadius:4, borderSkipped:false });
+  return { type:"bar",
+    data:{ labels:rows.map(r=>r.key),
+           datasets:[ seg("Applied","applied",QRC.applied),
+                      seg("Not applied","not_applied",QRC.missing),
+                      seg("Not answered","not_answered",QRC.pending) ] },
+    options:o };
 }
 
 /* ---------- config builders ---------- */
@@ -415,6 +515,16 @@ function insights(){
   if(tot){ const done=(st.find(x=>/complete|closed/i.test(x.status))||{}).records||0;
     const open=(st.find(x=>/open/i.test(x.status))||{}).records||0;
     out.push(`By status, ${Math.round(done/tot*100)}% of records are completed and ${Math.round(open/tot*100)}% remain open.`); }
+  if(QR && QR.total){
+    out.push(`On QR labels, ${QR.rate==null?"no":QR.rate+"%"} of ${fmt(QR.total)} completed record${QR.total==1?"":"s"} ${QR.rate==null?"have been":"were"} confirmed as having the label stuck inside the product: `+
+      `${fmt(QR.applied)} applied, ${fmt(QR.not_applied)} confirmed not applied, ${fmt(QR.not_answered)} still unanswered`+
+      (QR.not_required?`, with ${fmt(QR.not_required)} marked as not needing one.`:"."));
+    const rs=QR.reasons||[];
+    if(rs.length) out.push(`The most common reason given for not applying a label was "${rs[0].reason}" (${fmt(rs[0].count)} record${rs[0].count==1?"":"s"}).`);
+    const wl=(QR.breakdowns&&QR.breakdowns.line||[]).filter(x=>x.total>=3&&x.rate!=null);
+    if(wl.length>1){ const worst=wl.reduce((a,b)=>a.rate<b.rate?a:b);
+      out.push(`${worst.key} had the lowest confirmation rate among lines at ${worst.rate}% of ${fmt(worst.total)} records.`); }
+  }
   const bm=d.by_month;
   if(bm.length>1){ const f=bm[0], l=bm[bm.length-1];
     const dir=l.units>f.units?"risen":l.units<f.units?"fallen":"held steady";
