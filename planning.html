@@ -358,6 +358,83 @@
   #shTable td .attbtn{margin:0 auto;display:inline-flex;align-items:center}
   .colf th{padding:4px 6px;text-transform:none;letter-spacing:0}
   .colf input,.colf select{border-radius:7px}
+  .navgrp{display:inline-flex;align-items:center;gap:6px;margin-left:auto;margin-right:10px}
+  .navgrp .navb{min-width:30px;padding:0 9px;font-size:16px;line-height:1}
+  .navgrp .navb:disabled{opacity:.35;cursor:default}
+  .navpos{font-size:11.5px;color:var(--muted);white-space:nowrap;max-width:230px;
+    overflow:hidden;text-overflow:ellipsis;text-transform:none;letter-spacing:normal}
+  @media(max-width:600px){.navpos{max-width:90px}}
+/* ---------------- phone layout ----------------
+   Appended last so it wins on source order. Everything here is inside a
+   width query, so nothing changes on a desktop.
+
+   The three problems being fixed, in the order they cost the most:
+     1. planning's header did not wrap, so the whole page scrolled sideways
+     2. the filter rows pushed real content off the first screen entirely
+     3. tab strips and toolbars clipped rather than scrolled                */
+
+@media(max-width:760px){
+  /* 1. header: wrap, shrink, and drop the parts that are only confirmation */
+  .head-in{flex-wrap:wrap !important; row-gap:6px; gap:6px !important; max-width:100% !important}
+  .brand-logo{height:26px}
+  .brand-tag{font-size:10px; letter-spacing:1.5px}
+  .brand-home, .nlcrep-btn{padding:5px 9px; font-size:11.5px}
+  .who{margin-left:auto; font-size:0; line-height:1; text-align:right}
+  .who .role-tag, .who a{font-size:11.5px}
+  .who br{display:none}
+  .who a{margin-left:8px}
+
+  /* 2. tab strips scroll instead of clipping, and keep a usable target size */
+  .tabs{overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    max-width:100%; flex-wrap:nowrap}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex:0 0 auto; white-space:nowrap}
+
+  /* 3. anything tappable gets a thumb sized target */
+  .btn, .toolbar select, .toolbar input:not([type=checkbox]){min-height:38px}
+  .btn.sm{min-height:32px}
+  input[type=checkbox], input[type=radio]{min-width:18px; min-height:18px}
+
+  /* 4. collapsible filters: the toolbar is hidden behind its own button
+        until asked for, so the list starts near the top of the screen */
+  .mfil{display:flex; align-items:center; gap:8px; margin:10px 0}
+  .mfil button{flex:1 1 auto}
+  .mfil .cnt{background:var(--orange); color:#fff; border-radius:9px;
+    padding:1px 7px; font-size:11px; font-weight:800}
+  .toolbar.mhide{display:none}
+  .toolbar.mshow{display:flex; background:var(--bg); border:1px solid var(--line);
+    border-radius:12px; padding:10px; margin-bottom:10px}
+  .toolbar.mshow select, .toolbar.mshow input:not([type=checkbox]){flex:1 1 46%; min-width:0}
+
+  /* 5. record rows stack rather than squeezing a right hand column */
+  .rec{flex-wrap:wrap; row-gap:4px}
+  .rec .sn{font-size:14px}
+  .rec .meta{font-size:11.5px}
+
+  /* 6. cards and modals use the full width they have */
+  .wrap{padding-left:10px; padding-right:10px}
+  .card .pad{padding:12px}
+  .modal{max-width:100% !important; width:100%; border-radius:14px}
+  .mh{font-size:15px; padding:12px 14px}
+  .mb{padding:14px}
+  .mf{padding:10px 14px; flex-wrap:wrap; gap:8px}
+  .mf .btn{flex:1 1 auto}
+
+  /* 7. the two startup banners are informative, not urgent: let them be
+        read without filling the screen */
+  .banner.show, .banner{font-size:12.5px}
+
+  /* 8. wide tables keep their own scroller rather than stretching the page */
+  .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  table{font-size:12px}
+}
+
+@media(max-width:420px){
+  .head-in{gap:5px !important}
+  .brand-home, .nlcrep-btn{padding:4px 7px; font-size:11px}
+  h1{font-size:20px}
+  .sub{font-size:12.5px}
+}
 </style>
 </head>
 <body>
@@ -690,10 +767,12 @@ function renderShell(){
           <option value="without">Without MO</option>
         </select>
         <select id="sortSel" style="max-width:150px">
-          <option value="recent">Sort: recent</option>
+          <option value="recent">Last modified, newest</option>
+          <option value="oldest">Last modified, oldest</option>
           <option value="week_asc">Week, earliest</option>
           <option value="week_desc">Week, latest</option>
-          <option value="so">Odoo SO</option>
+          <option value="so">SO, low to high</option>
+          <option value="so_desc">SO, high to low</option>
           <option value="customer">Client</option>
           <option value="qty_desc">Qty, high to low</option>
         </select>
@@ -1142,9 +1221,14 @@ function filtered(){
   }
   rows=rows.slice();
   const dt=p=>new Date(p.updated_at||p.created_at);
+  // numeric aware, so SO9 sorts before SO10 instead of after it
+  const soCmp=(a,b)=>String(a.odoo_so||a.sap_so||"").localeCompare(
+                     String(b.odoo_so||b.sap_so||""), undefined, {numeric:true, sensitivity:"base"});
   if(SORTSEL==="week_asc") rows.sort((a,b)=>(a.planned_date||"9999").localeCompare(b.planned_date||"9999"));
   else if(SORTSEL==="week_desc") rows.sort((a,b)=>(b.planned_date||"").localeCompare(a.planned_date||""));
-  else if(SORTSEL==="so") rows.sort((a,b)=>(a.odoo_so||"").localeCompare(b.odoo_so||""));
+  else if(SORTSEL==="so")      rows.sort((a,b)=>soCmp(a,b));
+  else if(SORTSEL==="so_desc") rows.sort((a,b)=>soCmp(b,a));
+  else if(SORTSEL==="oldest")  rows.sort((a,b)=>dt(a)-dt(b));
   else if(SORTSEL==="customer") rows.sort((a,b)=>(a.customer||"").localeCompare(b.customer||""));
   else if(SORTSEL==="qty_desc") rows.sort((a,b)=>(b.planned_qty||0)-(a.planned_qty||0));
   else rows.sort((a,b)=>dt(b)-dt(a));
@@ -1540,7 +1624,7 @@ function drawSheet(v){
       <span class="sub" style="margin:0">Selected:</span>
       <select id="shWeek" style="max-width:190px">${weekOptions("")}</select>
       <button class="btn ghost" id="shSetWeek" disabled>Set week (0)</button>
-      <button class="btn orange" id="shPush" disabled>Push (0)</button>
+      <button class="btn orange" id="shPush" disabled title="Send the selected plans to the warehouse queue for material issuance">Push to warehouse (0)</button>
       <span style="border-left:1px solid var(--line);height:24px"></span>
       <select id="shFabSel" style="max-width:120px"><option value="">Fab: keep</option><option value="true">Fab: Yes</option><option value="false">Fab: No</option></select>
       <select id="shStockSel" style="max-width:170px"><option value="">Stock: keep</option><option>In Stock</option><option>Partial Stock</option><option>Cargo/PO Item</option></select>
@@ -1587,7 +1671,7 @@ function drawSheet(v){
           return `<td class="cell"><select data-id="${p.id}" data-col="${k}" data-wk="${esc(val)}">${weekOptionsBase()}</select></td>`;
         if(ty.startsWith("select:")){
           const opts=ty.slice(7).split(",");
-          const lab=o=>k==="needs_fabrication"?(o==="true"?"Yes":"No"):(o||"\u2014");
+          const lab=o=>k==="needs_fabrication"?(o==="true"?"Yes":"No"):(o||"-");
           return `<td class="cell"><select data-id="${p.id}" data-col="${k}">${opts.map(o=>`<option value="${esc(o)}" ${String(val)===o?"selected":""}>${esc(lab(o))}</option>`).join("")}</select></td>`;
         }
         return `<td class="cell"><input type="${ty}" data-id="${p.id}" data-col="${k}" value="${esc(val)}"></td>`;
@@ -1624,7 +1708,7 @@ function drawSheet(v){
     const nd=Object.keys(dirty).length, ns=selected.size;
     saveBtn.disabled=!nd; saveBtn.textContent=`Save changes (${nd})`;
     setWeekBtn.disabled=!ns; setWeekBtn.textContent=`Set week (${ns})`;
-    pushBtn.disabled=!ns; pushBtn.textContent=`Push (${ns})`;
+    pushBtn.disabled=!ns; pushBtn.textContent=`Push to warehouse (${ns})`;
     if(applyBtn){ applyBtn.disabled=!ns; applyBtn.textContent=`Apply to (${ns})`; }
     const moB=v.querySelector("#shMO");
     if(moB){ moB.disabled=!ns; moB.textContent=`\u2699 Create MOs (${ns})`; }
@@ -1771,16 +1855,37 @@ function drawSheet(v){
     await load();
   };
   pushBtn.onclick=async()=>{
+    const picked=[...selected].map(id=>PLANS.find(x=>x.id===id)).filter(Boolean);
+    // A plan with no planned date cannot be scheduled by the warehouse, and
+    // push_plan refuses it. Caught here so the answer is one clear sentence
+    // and a way forward, rather than a row of identical server errors.
+    const undated=picked.filter(p=>!p.planned_date);
+    const ready=picked.filter(p=>p.planned_date);
+    if(undated.length){
+      const names=undated.slice(0,6).map(p=>p.odoo_so||p.sap_so||"(no SO)").join(", ");
+      if(!ready.length){
+        banner(`${undated.length===1?"That plan has":"Those "+undated.length+" plans have"} no planned date yet. `+
+               `Set a week with the selector beside this button, then push. (${names}${undated.length>6?", ...":""})`);
+        return;
+      }
+      const go=confirm(
+        `${undated.length} of ${picked.length} selected plan${picked.length===1?"":"s"} ${undated.length===1?"has":"have"} no planned date:\n\n`+
+        `  ${names}${undated.length>6?"\n  ...":""}\n\n`+
+        `The warehouse cannot schedule those. Push the other ${ready.length} now and leave ${undated.length===1?"it":"them"} selected?`);
+      if(!go) return;
+    }
     pushBtn.disabled=true; pushBtn.textContent="Pushing\u2026"; busy(true);
     let ok=0; const errs=[];
-    for(const id of selected){
-      const { error }=await db.rpc("push_plan",{ p_id:id });
-      if(error){ const p=PLANS.find(x=>x.id===id); errs.push(`${p?.odoo_so||"plan"}: ${error.message}`); }
+    for(const p of ready){
+      const { error }=await db.rpc("push_plan",{ p_id:p.id });
+      if(error) errs.push(`${p.odoo_so||p.sap_so||"plan"}: ${error.message}`);
       else ok++;
     }
     busy(false);
-    if(errs.length) banner(`Pushed ${ok}. Not pushed: ${errs.join(" | ")}`);
-    else banner(`Pushed ${ok} plan${ok==1?"":"s"} to the warehouse queue.`,true);
+    if(errs.length)
+      banner(`Pushed ${ok} of ${ready.length}. ${errs.length} refused: ${errs.slice(0,3).join(" | ")}${errs.length>3?` and ${errs.length-3} more`:""}`);
+    else
+      banner(`Pushed ${ok} plan${ok===1?"":"s"} to the warehouse queue${undated.length?`. ${undated.length} left unpushed, with no planned date`:""}.`,true);
     await load();
   };
 }
@@ -2270,6 +2375,70 @@ async function savePlanFields(id, fields){
   return res;
 }
 
+/* ---------------- moving between cards ----------------
+   The order is read from the page rather than recomputed, so it always
+   matches what is on screen: the current filters, the current sort, and
+   in the kanban the columns in the order they are laid out. Reaching the
+   end of one column therefore continues into the next by itself. */
+function navIds(){
+  const seen=new Set(), out=[];
+  document.querySelectorAll("[data-id]").forEach(el=>{
+    const id=el.dataset.id;
+    if(!id || seen.has(id)) return;
+    if(el.closest(".modal")) return;              // the open card is not a list
+    if(!PLANS.some(x=>x.id===id)) return;         // only plans, not other widgets
+    seen.add(id); out.push(id);
+  });
+  return out;
+}
+function navSection(id){
+  const el=document.querySelector(`[data-id="${id}"]`);
+  const col=el&&el.closest(".kb-col");
+  if(!col) return "";
+  // the column heading is a chip plus a count plus a fold control, so the
+  // chip alone is the part worth showing
+  const chip=col.querySelector("h3 .chip");
+  if(chip) return chip.textContent.trim();
+  if(col.dataset.week) return "Week "+col.dataset.week;
+  return (col.dataset.st||"").trim();
+}
+function navHtml(id){
+  const ids=navIds(), i=ids.indexOf(id);
+  if(i<0 || ids.length<2) return "";
+  const sec=navSection(id);
+  return `<span class="navgrp">
+    <button class="btn ghost sm navb" id="navPrev" type="button" title="Previous card (left arrow)"${i===0?" disabled":""}>\u2039</button>
+    <span class="navpos" title="${esc(sec)}">${i+1} / ${ids.length}${sec?" \u00b7 "+esc(sec):""}</span>
+    <button class="btn ghost sm navb" id="navNext" type="button" title="Next card (right arrow)"${i===ids.length-1?" disabled":""}>\u203a</button>
+  </span>`;
+}
+function wireNav(bg, id, open){
+  const ids=navIds(), i=ids.indexOf(id);
+  if(i<0) return;
+  const goTo=k=>{
+    if(k<0 || k>=ids.length) return;
+    const nxt=PLANS.find(x=>x.id===ids[k]);
+    if(!nxt) return;
+    bg.remove();
+    open(nxt);
+  };
+  const prev=bg.querySelector("#navPrev"), next=bg.querySelector("#navNext");
+  if(prev) prev.onclick=()=>goTo(i-1);
+  if(next) next.onclick=()=>goTo(i+1);
+  const onKey=e=>{
+    const t=e.target, tag=(t&&t.tagName||"").toLowerCase();
+    // arrow keys belong to whatever is being typed in
+    if(tag==="input"||tag==="select"||tag==="textarea"||(t&&t.isContentEditable)) return;
+    if(e.key==="ArrowLeft"){ e.preventDefault(); goTo(i-1); }
+    else if(e.key==="ArrowRight"){ e.preventDefault(); goTo(i+1); }
+  };
+  document.addEventListener("keydown",onKey);
+  // the listener has to go when the card does, however it is closed
+  new MutationObserver((m,o)=>{
+    if(!document.body.contains(bg)){ document.removeEventListener("keydown",onKey); o.disconnect(); }
+  }).observe(document.body,{childList:true});
+}
+
 async function planModal(pLite){
   let p=pLite;
   if(pLite&&pLite.id){
@@ -2298,6 +2467,7 @@ async function planModal(pLite){
       ${p?`<span class="chip" data-tone="${STONE[p.plan_status]}" style="margin-left:10px">${p.plan_status}</span>`:""}
       ${p&&p.odoo_state&&p.odoo_state!=="cancel"?`<span class="chip" data-tone="${p.odoo_state==='done'?'':'info'}" style="margin-left:6px">DN: ${esc(DNLABEL[p.odoo_state]||p.odoo_state)}</span>`:""}
       ${p&&p.afp===true?'<span class="chip" data-tone="ok" style="margin-left:6px">AFP</span>':(p&&p.afp===false?'<span class="chip" data-tone="hold" style="margin-left:6px">Not AFP</span>':"")}
+      ${p&&p.id?navHtml(p.id):""}
       <span class="x">&times;</span></div>
     <div class="mb">
       ${SIB?`<div class="banner show" style="display:block;background:var(--info-bg);color:var(--info)">
@@ -2394,6 +2564,7 @@ async function planModal(pLite){
                  ?`<button class="btn orange" id="p-repush">Fix and re-push to warehouse</button>`
                  :`<button class="btn orange" id="p-push">Push to warehouse</button>`)}
         <button class="btn ghost" id="p-split">Split qty</button>
+        <button class="btn ghost" id="p-unsplit" type="button" hidden style="display:none">Merge split back</button>
         ${p?`<button class="btn ghost" id="p-att" type="button">\ud83d\udcce Attachments${ATTMAP[p.id]?" ("+ATTMAP[p.id]+")":""}</button>`:""}
         ${p&&canEdit?(p.odoo_mo
           ?`${moLink(p,`<span class="chip" data-tone="ok" title="Draft MO created in Odoo. Click to open it.">MO: ${esc(p.odoo_mo)}</span>`)} <button class="btn ghost sm" id="p-mo-re" type="button" title="Recreate the MO (if it was deleted in Odoo)">\u27f3</button>`
@@ -2413,6 +2584,7 @@ async function planModal(pLite){
   const close=()=>bg.remove();
   bg.querySelector(".x").onclick=close;
   bg.onclick=e=>{ if(e.target===bg) close(); };
+  if(p&&p.id) wireNav(bg, p.id, planModal);
   const stockSel=bg.querySelector("#p-bom_stock_status");
   stockSel.onchange=()=>{
     const showCargo=stockSel.value==="Cargo/PO Item"
@@ -2598,6 +2770,42 @@ async function planModal(pLite){
     banner("Planning copied from the cancelled version. Review it against the announced revision.",true);
     close(); planModal({id:p.id});
   };
+  /* Merge split back. The pairing lives in audit_log, so the page asks the
+     database which plan this one is paired with rather than guessing from
+     the SO, and only shows the button when a merge is actually possible. */
+  const unsplitBtn=bg.querySelector("#p-unsplit");
+  if(unsplitBtn && p && p.id && may("planning","edit")){
+    (async()=>{
+      const { data:info, error }=await db.rpc("split_pairing",{ p_id:p.id });
+      if(error || !info || !info.found) return;
+      unsplitBtn.hidden=false; unsplitBtn.style.display="";
+      if(!info.can_merge){
+        unsplitBtn.disabled=true;
+        unsplitBtn.title=info.why||"This split cannot be merged back.";
+        unsplitBtn.textContent="Merge split back";
+        return;
+      }
+      unsplitBtn.title=`Put the two halves back together as one plan of ${info.total_qty}`;
+      unsplitBtn.textContent=`Merge split back (${info.keep_qty} + ${info.merge_qty})`;
+      unsplitBtn.onclick=async()=>{
+        const mine=info.merge_id!==p.id;
+        const ok=confirm(
+          `Merge this split back into one plan?\n\n`+
+          `  SO ${info.keep_so||"(none)"}\n`+
+          `  ${info.keep_qty} + ${info.merge_qty} becomes ${info.total_qty}\n\n`+
+          (mine?`The other half (${info.merge_qty} pcs, ${info.merge_status}) is removed.`
+               :`This card is the half being removed; the ${info.keep_qty} pc plan survives with ${info.total_qty}.`)+
+          `\n\nAny attachments move across. This cannot be undone.`);
+        if(!ok) return;
+        unsplitBtn.disabled=true; busy(true);
+        const { error:e2 }=await db.rpc("unsplit_plan",{ p_id:p.id });
+        busy(false);
+        if(e2){ unsplitBtn.disabled=false; pmsg(e2.message); return; }
+        banner(`Merged back into one plan of ${info.total_qty}.`,true);
+        close(); await load();
+      };
+    })();
+  }
   const splitBtn=bg.querySelector("#p-split");
   if(splitBtn) splitBtn.onclick=async()=>{
     // read the quantity fresh from the database so the split always works
@@ -2670,6 +2878,99 @@ async function planModal(pLite){
     banner("Plan deleted.",true); close(); await load();
   };
 }
+
+/* ---------------- phone behaviour (shared, self installing) ----------------
+   On a phone the filter toolbars take the whole first screen, so the list
+   people came for starts below the fold. This collapses any toolbar that
+   carries several filters behind a single button, and puts a count on that
+   button so a filter can never be left on without being visible.
+
+   Done here rather than in each render path because the pages rebuild their
+   toolbars constantly, and the markup differs on every screen. */
+const NLCM_Q = 760;
+
+function nlcmIsPhone(){ return window.innerWidth <= NLCM_Q; }
+
+function nlcmActive(tb){
+  let n = 0;
+  tb.querySelectorAll("select").forEach(s => {
+    // "all", "", and the first option are the resting state
+    if(s.selectedIndex > 0 && s.value && !/^(all|)$/i.test(s.value)) n++;
+  });
+  tb.querySelectorAll('input:not([type=checkbox]):not([type=radio])').forEach(i => {
+    if(i.value && i.value.trim()) n++;
+  });
+  return n;
+}
+
+function nlcmLabel(btn, tb, open){
+  const n = nlcmActive(tb);
+  btn.innerHTML = (open ? "Hide filters" : "Filters")
+    + (n ? ` <span class="cnt">${n}</span>` : "");
+}
+
+function nlcmSetup(){
+  if(!nlcmIsPhone()){
+    // back on a wide screen: undo everything so nothing is left hidden
+    document.querySelectorAll(".toolbar[data-mfil]").forEach(tb => {
+      const tabs = tb.parentNode.querySelector(":scope > .tabs[data-mlift]");
+      if(tabs){ delete tabs.dataset.mlift; tb.insertBefore(tabs, tb.firstChild); }
+      tb.classList.remove("mhide", "mshow");
+      delete tb.dataset.mfil;
+    });
+    document.querySelectorAll(".mfil").forEach(x => x.remove());
+    return;
+  }
+  document.querySelectorAll(".toolbar").forEach(tb => {
+    if(tb.dataset.mfil) return;
+    // only toolbars that are mostly filters; a row of action buttons stays put
+    const fields = tb.querySelectorAll("select, input:not([type=checkbox]):not([type=radio])").length;
+    if(fields < 3) return;
+    tb.dataset.mfil = "1";
+
+    // A view switcher inside a filter toolbar must not be collapsed with it:
+    // hiding the Kanban/Spreadsheet tabs would leave no way to change view.
+    // It is lifted out to sit above the filter button instead.
+    const tabs = tb.querySelector(":scope > .tabs");
+    if(tabs){ tabs.dataset.mlift = "1"; tb.parentNode.insertBefore(tabs, tb); }
+
+    const bar = document.createElement("div");
+    bar.className = "mfil";
+    const btn = document.createElement("button");
+    btn.className = "btn ghost";
+    btn.type = "button";
+    bar.appendChild(btn);
+    tb.parentNode.insertBefore(bar, tb);
+
+    let open = false;
+    const paint = () => {
+      tb.classList.toggle("mshow", open);
+      tb.classList.toggle("mhide", !open);
+      nlcmLabel(btn, tb, open);
+    };
+    btn.onclick = () => { open = !open; paint(); };
+    // the count has to follow what the filters actually say
+    tb.addEventListener("change", () => nlcmLabel(btn, tb, open));
+    tb.addEventListener("input",  () => nlcmLabel(btn, tb, open));
+    paint();
+  });
+}
+
+(function(){
+  let queued = false;
+  const queue = () => {
+    if(queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; try{ nlcmSetup(); }catch(e){} });
+  };
+  if(document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", queue);
+  else queue();
+  window.addEventListener("resize", queue);
+  try{ new MutationObserver(queue).observe(document.documentElement,
+        { childList:true, subtree:true }); }catch(e){}
+})();
+
 </script>
 </body>
 </html>
