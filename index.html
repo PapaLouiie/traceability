@@ -336,6 +336,82 @@
   .rec .meta{margin-top:2px}
   .cnt-strip{gap:22px}
   .bom-table td.bom-cell{padding:4px 5px}
+  .navgrp{display:inline-flex;align-items:center;gap:6px}
+  .navgrp .navb{min-width:30px;padding:0 9px;font-size:16px;line-height:1}
+  .navgrp .navb:disabled{opacity:.35;cursor:default}
+  .navpos{font-size:11.5px;color:var(--muted);white-space:nowrap;
+    text-transform:none;letter-spacing:normal;font-weight:600}
+/* ---------------- phone layout ----------------
+   Appended last so it wins on source order. Everything here is inside a
+   width query, so nothing changes on a desktop.
+
+   The three problems being fixed, in the order they cost the most:
+     1. planning's header did not wrap, so the whole page scrolled sideways
+     2. the filter rows pushed real content off the first screen entirely
+     3. tab strips and toolbars clipped rather than scrolled                */
+
+@media(max-width:760px){
+  /* 1. header: wrap, shrink, and drop the parts that are only confirmation */
+  .head-in{flex-wrap:wrap !important; row-gap:6px; gap:6px !important; max-width:100% !important}
+  .brand-logo{height:26px}
+  .brand-tag{font-size:10px; letter-spacing:1.5px}
+  .brand-home, .nlcrep-btn{padding:5px 9px; font-size:11.5px}
+  .who{margin-left:auto; font-size:0; line-height:1; text-align:right}
+  .who .role-tag, .who a{font-size:11.5px}
+  .who br{display:none}
+  .who a{margin-left:8px}
+
+  /* 2. tab strips scroll instead of clipping, and keep a usable target size */
+  .tabs{overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    max-width:100%; flex-wrap:nowrap}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex:0 0 auto; white-space:nowrap}
+
+  /* 3. anything tappable gets a thumb sized target */
+  .btn, .toolbar select, .toolbar input:not([type=checkbox]){min-height:38px}
+  .btn.sm{min-height:32px}
+  input[type=checkbox], input[type=radio]{min-width:18px; min-height:18px}
+
+  /* 4. collapsible filters: the toolbar is hidden behind its own button
+        until asked for, so the list starts near the top of the screen */
+  .mfil{display:flex; align-items:center; gap:8px; margin:10px 0}
+  .mfil button{flex:1 1 auto}
+  .mfil .cnt{background:var(--orange); color:#fff; border-radius:9px;
+    padding:1px 7px; font-size:11px; font-weight:800}
+  .toolbar.mhide{display:none}
+  .toolbar.mshow{display:flex; background:var(--bg); border:1px solid var(--line);
+    border-radius:12px; padding:10px; margin-bottom:10px}
+  .toolbar.mshow select, .toolbar.mshow input:not([type=checkbox]){flex:1 1 46%; min-width:0}
+
+  /* 5. record rows stack rather than squeezing a right hand column */
+  .rec{flex-wrap:wrap; row-gap:4px}
+  .rec .sn{font-size:14px}
+  .rec .meta{font-size:11.5px}
+
+  /* 6. cards and modals use the full width they have */
+  .wrap{padding-left:10px; padding-right:10px}
+  .card .pad{padding:12px}
+  .modal{max-width:100% !important; width:100%; border-radius:14px}
+  .mh{font-size:15px; padding:12px 14px}
+  .mb{padding:14px}
+  .mf{padding:10px 14px; flex-wrap:wrap; gap:8px}
+  .mf .btn{flex:1 1 auto}
+
+  /* 7. the two startup banners are informative, not urgent: let them be
+        read without filling the screen */
+  .banner.show, .banner{font-size:12.5px}
+
+  /* 8. wide tables keep their own scroller rather than stretching the page */
+  .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  table{font-size:12px}
+}
+
+@media(max-width:420px){
+  .head-in{gap:5px !important}
+  .brand-home, .nlcrep-btn{padding:4px 7px; font-size:11px}
+  h1{font-size:20px}
+  .sub{font-size:12.5px}
+}
 </style>
 </head>
 <body>
@@ -406,10 +482,10 @@ try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dat
         '#splash{position:fixed;inset:0;z-index:2000;background:linear-gradient(135deg,#1a1c45,#24275E 55%,#2e3170);display:flex;align-items:center;justify-content:center;transition:opacity .5s}'+
         '#splash .in{text-align:center;font-family:"Bizmo",Arial,sans-serif}'+
         '#splash .lg{height:62px;width:auto;animation:spPop .7s cubic-bezier(.2,1.4,.4,1) both}'+
-        '#splash .pt{font-weight:800;font-size:30px;line-height:1;letter-spacing:1px;margin-top:18px;opacity:0;animation:spUp .55s .5s ease-out forwards;white-space:nowrap}'+
+        '#splash .pt{font-weight:800;font-size:min(30px,6.6vw);line-height:1;letter-spacing:1px;margin-top:18px;opacity:0;animation:spUp .55s .5s ease-out forwards;white-space:nowrap}'+
         '#splash .pt .k{color:#F6851F}'+
         '#splash .pt .t,#splash .pt .gap{color:#c3c6e6;display:inline-block;overflow:hidden;white-space:nowrap;max-width:11ch;vertical-align:bottom;animation:spMerge .7s 1.6s cubic-bezier(.6,0,.25,1) forwards}'+
-        '#splash .ab{font-weight:600;font-size:12px;color:#c3c6e6;letter-spacing:3px;text-transform:uppercase;margin-top:12px;opacity:0;animation:spUp .6s 2.35s ease-out forwards}'+
+        '#splash .ab{font-weight:600;font-size:min(12px,3vw);color:#c3c6e6;letter-spacing:3px;text-transform:uppercase;margin-top:12px;opacity:0;animation:spUp .6s 2.35s ease-out forwards}'+
         '#splash .bar{width:190px;height:3px;background:rgba(255,255,255,.15);border-radius:99px;margin:22px auto 0;overflow:hidden}'+
         '#splash .bar i{display:block;height:100%;width:0;background:#F6851F;animation:spBar 2.7s .3s ease-in-out forwards}'+
         '@keyframes spPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}'+
@@ -1237,11 +1313,14 @@ async function renderHome(){
         <option value="customer|asc">Client, A to Z</option>
         <option value="customer|desc">Client, Z to A</option>
         <option value="model|asc">Model, A to Z</option>
-        <option value="so_number|asc">SO number</option>
+        <option value="so_number|asc">SO number, low to high</option>
+        <option value="so_number|desc">SO number, high to low</option>
         <option value="status|asc">Status</option>
         <option value="planned_qty|desc">Quantity, high to low</option>
         <option value="planned_qty|asc">Quantity, low to high</option>
         <option value="created_at|desc">Recently added</option>
+        <option value="updated_at|desc">Last modified, newest first</option>
+        <option value="updated_at|asc">Last modified, oldest first</option>
       </select>
       <button class="btn ghost" id="clearFil">Clear</button>
       <button class="btn orange" id="exportBtn" style="margin-left:auto">Export Excel</button>
@@ -1286,6 +1365,36 @@ function monthRange(year,month){
 
 let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
 let LAST_LIST=[]; const QRSEL=new Set(); let LPAGE=30;
+
+/* ---------------- moving between records ----------------
+   Walks the list exactly as it was last shown, so the current filters,
+   search and sort all carry over. LAST_LIST is the rendered order. */
+function recNavHtml(id){
+  const i=LAST_LIST.findIndex(r=>r.id===id);
+  if(i<0 || LAST_LIST.length<2) return "";
+  return `<span class="navgrp">
+    <button class="btn ghost sm navb" id="recPrev" type="button" title="Previous record (left arrow)"${i===0?" disabled":""}>\u2039</button>
+    <span class="navpos">${i+1} / ${LAST_LIST.length}</span>
+    <button class="btn ghost sm navb" id="recNext" type="button" title="Next record (right arrow)"${i===LAST_LIST.length-1?" disabled":""}>\u203a</button>
+  </span>`;
+}
+function wireRecNav(id, open){
+  const i=LAST_LIST.findIndex(r=>r.id===id);
+  if(i<0) return;
+  const goTo=k=>{ if(k>=0 && k<LAST_LIST.length) open(LAST_LIST[k].id); };
+  const prev=document.getElementById("recPrev"), next=document.getElementById("recNext");
+  if(prev) prev.onclick=()=>goTo(i-1);
+  if(next) next.onclick=()=>goTo(i+1);
+  if(window.__recNavKey) document.removeEventListener("keydown", window.__recNavKey);
+  window.__recNavKey=e=>{
+    const t=e.target, tag=(t&&t.tagName||"").toLowerCase();
+    if(tag==="input"||tag==="select"||tag==="textarea"||(t&&t.isContentEditable)) return;
+    if(document.querySelector(".modal-bg")) return;     // a dialog owns the keys
+    if(e.key==="ArrowLeft"){ e.preventDefault(); goTo(i-1); }
+    else if(e.key==="ArrowRight"){ e.preventDefault(); goTo(i+1); }
+  };
+  document.addEventListener("keydown", window.__recNavKey);
+}
 let QR_REASONS=[];
 let QR_POLICY_START="";
 let QPREV=null;
@@ -1688,7 +1797,8 @@ function renderEditor(rec){
 
   root.innerHTML = shell(`
     <button class="btn link" id="back">&larr; All records</button>
-    <h1>${isNew?"New record":esc(r.serial||"Record")}</h1>
+    <h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${isNew?"New record":esc(r.serial||"Record")}
+      ${isNew?"":recNavHtml(r.id)}</h1>
     <p class="sub">${isNew?"Enter the essentials to create the record. You can fill the rest later.":"Update fields anytime. Changes save to the database."}</p>
     <div class="banner" id="banner"></div>
 
@@ -1883,6 +1993,7 @@ function renderEditor(rec){
     if(qi) qi.className="kind-"+(r.record_kind||"Production");
     document.getElementById("printBtn").onclick=()=>printTag(current);
     wireQrPanel();
+    wireRecNav(r.id, openRecord);
     document.getElementById("addWorker").onclick=addWorker;
     document.getElementById("raiseCcr").onclick=raiseCcr;
     loadCcrs(); renderAudit();
@@ -2271,9 +2382,9 @@ async function renderBomEditor(){
           const changed=dirty[r.id]&&dirty[r.id][k]!==undefined&&dirty[r.id][k]!==orig[r.id][k];
           if(k==="bom_stock_status")
             return `<td class="bom-cell${changed?" changed":""}"><select data-id="${r.id}" data-col="${k}">
-              ${["","In Stock","Partial Stock","Cargo/PO Item","Not available"].map(o=>`<option value="${o}" ${cur===o?"selected":""}>${o||"\u2014"}</option>`).join("")}</select></td>`;
+              ${["","In Stock","Partial Stock","Cargo/PO Item","Not available"].map(o=>`<option value="${o}" ${cur===o?"selected":""}>${o||"-"}</option>`).join("")}</select></td>`;
           if(isFabCol(k) && isPlans && !r.needs_fabrication)
-            return `<td class="bom-cell" style="opacity:.35" title="This plan is not marked as needing fabrication">\u2014</td>`;
+            return `<td class="bom-cell" style="opacity:.35" title="This plan is not marked as needing fabrication">-</td>`;
           if(isQty(k))
             return `<td class="bom-cell qty${changed?" changed":""}"><input type="number" min="0" step="any" data-id="${r.id}" data-col="${k}" value="${esc(cur)}"></td>`;
           return `<td class="bom-cell${changed?" changed":""}"><input data-id="${r.id}" data-col="${k}" value="${esc(cur)}"></td>`;
@@ -2577,7 +2688,7 @@ async function saveRecord(){
       p_date:payload.production_date, p_so:payload.so_number,
       p_model:payload.model, p_exclude:current?current.id:null });
     if(sim && sim.length){
-      const list=sim.slice(0,5).map(r=>`  \u2022 ${r.serial}${r.line?" (line "+r.line+")":""} \u2014 ${r.status}${r.customer_reference?" \u2014 C.Ref "+r.customer_reference:" \u2014 no C.Ref"}`).join("\n");
+      const list=sim.slice(0,5).map(r=>`  \u2022 ${r.serial}${r.line?" (line "+r.line+")":""}, ${r.status}${r.customer_reference?", C.Ref "+r.customer_reference:", no C.Ref"}`).join("\n");
       const ok=confirm(
         `${sim.length} record${sim.length==1?"":"s"} already exist${sim.length==1?"s":""} for this date, SO and model:\n\n${list}${sim.length>5?"\n  ...":""}\n\n`+
         `This one has no customer reference, so it cannot be told apart automatically.\n\n`+
@@ -3047,9 +3158,18 @@ function qrInPolicy(r){
   if(!r || !QR_POLICY_START) return true;
   return String(r.production_date||"") >= QR_POLICY_START;
 }
-function qrDue(r){
+/* Two different jobs, deliberately kept apart.
+
+   qrUnanswered decides who gets ASKED. Anyone saving a record as Completed
+   is asked, whatever the production date, because they are closing out work
+   right now and the product is in front of them.
+
+   qrInPolicy decides what gets MEASURED and what carries a pending badge.
+   The back catalogue stays out of both, so the rate is honest and the list
+   is not flooded with amber on records nobody was ever asked about. */
+function qrUnanswered(r){
   return !!r && r.status==="Completed" && !r.qr_not_required
-      && r.qr_applied!==true && r.qr_applied!==false && qrInPolicy(r);
+      && r.qr_applied!==true && r.qr_applied!==false;
 }
 /* Asked at the moment of completion, the only time the product is still in
    front of the person and a photo of the label is actually possible. The
@@ -3061,12 +3181,12 @@ function qrSpotlight(){
   panel.classList.remove("flash"); void panel.offsetWidth; panel.classList.add("flash");
 }
 function maybeAskQr(){
-  if(!qrDue(current)) return;
+  if(!qrUnanswered(current)) return;
   // Scrolled to first, so closing the modal leaves the question on screen
   // rather than somewhere further down the page.
   qrSpotlight();
   if(!may("records","edit")) return;
-  setTimeout(()=>{ if(qrDue(current)) qrConfirmModal(current); }, 650);
+  setTimeout(()=>{ if(qrUnanswered(current)) qrConfirmModal(current); }, 650);
 }
 /* The QR state as a badge for the console list. Every completed record in
    the policy period carries one, including the good case: a label that only
@@ -3113,9 +3233,10 @@ function qrPanelHtml(r){
       <div class="m" style="color:var(--muted)">${esc(r.qr_confirmed_by||"")}${r.qr_confirmed_at?" · "+esc(String(r.qr_confirmed_at).slice(0,16).replace("T"," ")):""}</div></div>
       ${may_?'<button class="btn ghost sm" id="qrAgain">Change</button>':""}</div>`;
   if(!qrInPolicy(r))
-    return `<div class="qrconf"><div><b>Completed before QR confirmation started.</b>
-      <div class="m">Not counted in the compliance rate.</div></div>
-      ${may_?'<button class="btn ghost sm" id="qrConfirm">Confirm anyway</button>':""}</div>`;
+    return `<div class="qrconf"><div><b>Not confirmed yet.</b>
+      <div class="m">Produced before QR tracking started, so it is not counted in the rate.
+      You can still record an answer.</div></div>
+      ${may_?'<button class="btn ghost sm" id="qrConfirm">Confirm</button>':""}</div>`;
   return `<div class="qrconf warn"><div><b>Not confirmed yet.</b>
     <div class="m">Say whether the QR was printed and stuck inside the product.</div></div>
     ${may_?'<button class="btn orange sm" id="qrConfirm">Confirm now</button>':""}</div>`;
@@ -3321,6 +3442,270 @@ function printTag(r){
   </body></html>`);
   w.document.close();
 }
+
+/* ---------------- Report an issue (shared, self installing) ----------------
+   One block, pasted unchanged into every page. It brings its own styles,
+   its own overlay and its own toast, and depends on nothing beyond `db`
+   and `esc`, because the pages do not all share the same helpers: mo.html
+   has no modal markup at all and three of the five have no banner().
+
+   Calling nlcReportInstall() puts the button in the header. The page name
+   it files against is worked out here, so no page has to pass anything. */
+const NLCREP_CSS = `
+.nlcrep-btn{display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  font-size:13px;font-weight:600;color:inherit;opacity:.9;text-decoration:none;
+  padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.28)}
+.nlcrep-btn:hover{opacity:1;background:rgba(255,255,255,.14)}
+.nlcrep-bg{position:fixed;inset:0;background:rgba(18,20,45,.55);z-index:9998;
+  display:flex;align-items:center;justify-content:center;padding:16px}
+.nlcrep-m{background:var(--card,#fff);color:var(--ink,#1c1e33);width:100%;max-width:560px;
+  max-height:92vh;overflow:auto;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.3);
+  font:14px/1.5 inherit}
+.nlcrep-h{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:14px 18px;border-bottom:1px solid var(--line,#e7e8f1);font-weight:800}
+.nlcrep-h span{cursor:pointer;font-size:22px;line-height:1;opacity:.6}
+.nlcrep-h span:hover{opacity:1}
+.nlcrep-b{padding:16px 18px}
+.nlcrep-f{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;
+  border-top:1px solid var(--line,#e7e8f1)}
+.nlcrep-k{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.nlcrep-k label{flex:1 1 170px;min-width:0;display:flex;gap:9px;align-items:flex-start;
+  border:1px solid var(--line,#e7e8f1);border-radius:10px;padding:11px 13px;cursor:pointer;
+  text-transform:none;letter-spacing:normal;margin:0;color:inherit;text-align:left}
+.nlcrep-k label:has(input:checked){border-color:var(--orange,#F6851F);background:var(--orange-soft,#fff2e6)}
+.nlcrep-k input{width:16px;height:16px;flex:none;padding:0;margin:2px 0 0;accent-color:var(--orange,#F6851F)}
+.nlcrep-k b{display:block;font-size:13.5px}
+.nlcrep-k i{font-style:normal;font-size:11.5px;color:var(--muted,#71749a)}
+.nlcrep-fld{margin-bottom:12px}
+.nlcrep-fld label{display:block;font-size:11px;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--muted,#71749a);margin-bottom:5px}
+.nlcrep-fld input,.nlcrep-fld select,.nlcrep-fld textarea{width:100%;padding:10px 12px;
+  font:inherit;font-size:15px;border:1px solid var(--line,#e7e8f1);border-radius:10px;
+  background:var(--card,#fbfbfe);color:var(--ink,#1c1e33)}
+.nlcrep-fld textarea{resize:vertical;line-height:1.45}
+.nlcrep-bn{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:9999;
+  background:#1f9d63;color:#fff;padding:11px 18px;border-radius:10px;font-size:13.5px;
+  font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:92vw}
+.nlcrep-bn.bad{background:#c0392b}
+@media(max-width:560px){.nlcrep-btn span{display:none}}
+`;
+
+function nlcRepToast(msg, ok){
+  const d = document.createElement("div");
+  d.className = "nlcrep-bn" + (ok ? "" : " bad");
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 4200);
+}
+
+function nlcRepPage(){
+  // planning.html names its own board view; everywhere else the file is enough
+  try{ if(typeof VIEW === "string" && VIEW)
+    return ({kanban:"Planning board", calendar:"Planning calendar", sheet:"Spreadsheet",
+             warehouse:"Warehouse queue", queue:"Assembly queue",
+             stats:"Planning analytics"})[VIEW] || "Planning board";
+  }catch(e){}
+  const f = (location.pathname.split("/").pop() || "index.html").toLowerCase();
+  return ({ "index.html":"Console", "":"Console", "dashboard.html":"Dashboard",
+            "mo.html":"Production report", "changelog.html":"Release notes",
+            "planning.html":"Planning board" })[f] || f;
+}
+
+function nlcReportModal(){
+  const page = nlcRepPage();
+  const bg = document.createElement("div");
+  bg.className = "nlcrep-bg";
+  bg.innerHTML = `<div class="nlcrep-m" role="dialog" aria-modal="true">
+    <div class="nlcrep-h">Report an issue or request a feature<span class="nlcrep-x">&times;</span></div>
+    <div class="nlcrep-b">
+      <div class="nlcrep-k">
+        <label><input type="radio" name="nlcrepK" value="issue" checked>
+          <span><b>Something is wrong</b><i>A bug or a problem</i></span></label>
+        <label><input type="radio" name="nlcrepK" value="feature">
+          <span><b>Something is missing</b><i>A feature request</i></span></label>
+      </div>
+      <div class="nlcrep-fld"><label>Short title</label>
+        <input id="nlcrepTitle" maxlength="140" placeholder="One line describing it"></div>
+      <div class="nlcrep-fld"><label>Detail</label>
+        <textarea id="nlcrepDetail" rows="4" placeholder="What happened, or what you need it to do"></textarea></div>
+      <div class="nlcrep-fld"><label>How urgent is it for you</label>
+        <select id="nlcrepSev">
+          <option value="Critical">Critical, I cannot do my job</option>
+          <option value="High">High, it is slowing me down a lot</option>
+          <option value="Medium" selected>Medium, it is annoying</option>
+          <option value="Low">Low, would be nice to have</option></select></div>
+      <div style="font-size:12px;color:var(--muted,#71749a)">Filed against: <b>${esc(page)}</b></div>
+    </div>
+    <div class="nlcrep-f">
+      <button class="btn ghost" id="nlcrepCancel" type="button">Cancel</button>
+      <button class="btn primary" id="nlcrepGo" type="button">Send</button>
+    </div></div>`;
+  document.body.appendChild(bg);
+
+  const close = () => { bg.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = e => { if(e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  bg.querySelector(".nlcrep-x").onclick = close;
+  bg.querySelector("#nlcrepCancel").onclick = close;
+  bg.onclick = e => { if(e.target === bg) close(); };
+  setTimeout(() => { const t = bg.querySelector("#nlcrepTitle"); if(t) t.focus(); }, 50);
+
+  bg.querySelector("#nlcrepGo").onclick = async () => {
+    const title = bg.querySelector("#nlcrepTitle").value.trim();
+    if(!title){ nlcRepToast("Give it a short title first.", false); return; }
+    const go = bg.querySelector("#nlcrepGo");
+    go.disabled = true; go.textContent = "Sending...";
+    const { error } = await db.rpc("submit_feedback", {
+      p_kind: bg.querySelector('input[name="nlcrepK"]:checked').value,
+      p_page: page,
+      p_title: title,
+      p_detail: bg.querySelector("#nlcrepDetail").value.trim() || null,
+      p_severity: bg.querySelector("#nlcrepSev").value });
+    if(error){
+      nlcRepToast(error.message, false);
+      go.disabled = false; go.textContent = "Send";
+      return;
+    }
+    close();
+    nlcRepToast("Thanks. Your report is on the list.", true);
+  };
+}
+
+function nlcReportInstall(){
+  if(!document.getElementById("nlcrep-css")){
+    const st = document.createElement("style");
+    st.id = "nlcrep-css"; st.textContent = NLCREP_CSS;
+    document.head.appendChild(st);
+  }
+  // headers are rendered after sign in, so this may be called before one
+  // exists; it is safe to call again
+  document.querySelectorAll(".head-in").forEach(h => {
+    if(h.querySelector(".nlcrep-btn")) return;
+    const a = document.createElement("a");
+    a.className = "nlcrep-btn";
+    a.title = "Report an issue or request a feature";
+    a.innerHTML = '⚠ <span>Report</span>';
+    a.onclick = e => { e.preventDefault(); nlcReportModal(); };
+    const who = h.querySelector(".who");
+    if(who) h.insertBefore(a, who); else h.appendChild(a);
+  });
+}
+
+/* Each page renders its header at a different moment (after sign in, after a
+   fetch, after a hash route). Rather than hooking five different render
+   paths, watch for the header appearing, then stop watching. Debounced to a
+   frame, because these pages redraw large lists and an observer that ran a
+   query on every mutation would be felt. */
+(function(){
+  let queued = false, obs = null;
+  const go = () => {
+    queued = false;
+    try{ nlcReportInstall(); }catch(e){ return; }
+    if(obs && document.querySelector(".nlcrep-btn")){ obs.disconnect(); obs = null; }
+  };
+  const queue = () => { if(queued) return; queued = true; requestAnimationFrame(go); };
+  if(document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", queue);
+  else queue();
+  try{
+    obs = new MutationObserver(queue);
+    obs.observe(document.documentElement, { childList:true, subtree:true });
+  }catch(e){}
+})();
+
+
+/* ---------------- phone behaviour (shared, self installing) ----------------
+   On a phone the filter toolbars take the whole first screen, so the list
+   people came for starts below the fold. This collapses any toolbar that
+   carries several filters behind a single button, and puts a count on that
+   button so a filter can never be left on without being visible.
+
+   Done here rather than in each render path because the pages rebuild their
+   toolbars constantly, and the markup differs on every screen. */
+const NLCM_Q = 760;
+
+function nlcmIsPhone(){ return window.innerWidth <= NLCM_Q; }
+
+function nlcmActive(tb){
+  let n = 0;
+  tb.querySelectorAll("select").forEach(s => {
+    // "all", "", and the first option are the resting state
+    if(s.selectedIndex > 0 && s.value && !/^(all|)$/i.test(s.value)) n++;
+  });
+  tb.querySelectorAll('input:not([type=checkbox]):not([type=radio])').forEach(i => {
+    if(i.value && i.value.trim()) n++;
+  });
+  return n;
+}
+
+function nlcmLabel(btn, tb, open){
+  const n = nlcmActive(tb);
+  btn.innerHTML = (open ? "Hide filters" : "Filters")
+    + (n ? ` <span class="cnt">${n}</span>` : "");
+}
+
+function nlcmSetup(){
+  if(!nlcmIsPhone()){
+    // back on a wide screen: undo everything so nothing is left hidden
+    document.querySelectorAll(".toolbar[data-mfil]").forEach(tb => {
+      const tabs = tb.parentNode.querySelector(":scope > .tabs[data-mlift]");
+      if(tabs){ delete tabs.dataset.mlift; tb.insertBefore(tabs, tb.firstChild); }
+      tb.classList.remove("mhide", "mshow");
+      delete tb.dataset.mfil;
+    });
+    document.querySelectorAll(".mfil").forEach(x => x.remove());
+    return;
+  }
+  document.querySelectorAll(".toolbar").forEach(tb => {
+    if(tb.dataset.mfil) return;
+    // only toolbars that are mostly filters; a row of action buttons stays put
+    const fields = tb.querySelectorAll("select, input:not([type=checkbox]):not([type=radio])").length;
+    if(fields < 3) return;
+    tb.dataset.mfil = "1";
+
+    // A view switcher inside a filter toolbar must not be collapsed with it:
+    // hiding the Kanban/Spreadsheet tabs would leave no way to change view.
+    // It is lifted out to sit above the filter button instead.
+    const tabs = tb.querySelector(":scope > .tabs");
+    if(tabs){ tabs.dataset.mlift = "1"; tb.parentNode.insertBefore(tabs, tb); }
+
+    const bar = document.createElement("div");
+    bar.className = "mfil";
+    const btn = document.createElement("button");
+    btn.className = "btn ghost";
+    btn.type = "button";
+    bar.appendChild(btn);
+    tb.parentNode.insertBefore(bar, tb);
+
+    let open = false;
+    const paint = () => {
+      tb.classList.toggle("mshow", open);
+      tb.classList.toggle("mhide", !open);
+      nlcmLabel(btn, tb, open);
+    };
+    btn.onclick = () => { open = !open; paint(); };
+    // the count has to follow what the filters actually say
+    tb.addEventListener("change", () => nlcmLabel(btn, tb, open));
+    tb.addEventListener("input",  () => nlcmLabel(btn, tb, open));
+    paint();
+  });
+}
+
+(function(){
+  let queued = false;
+  const queue = () => {
+    if(queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; try{ nlcmSetup(); }catch(e){} });
+  };
+  if(document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", queue);
+  else queue();
+  window.addEventListener("resize", queue);
+  try{ new MutationObserver(queue).observe(document.documentElement,
+        { childList:true, subtree:true }); }catch(e){}
+})();
+
 </script>
 </body>
 </html>
