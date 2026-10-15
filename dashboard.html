@@ -105,75 +105,178 @@
   .login .btn{width:100%; margin-top:16px}
   .msg{color:#c0392b; font-size:13px; margin-top:10px; display:none} .msg.show{display:block}
 /* ---------------- phone layout ----------------
-   Appended last so it wins on source order. Everything here is inside a
-   width query, so nothing changes on a desktop.
+   Appended last so it wins on source order. Everything is inside a width
+   query, so nothing changes on a desktop.
 
-   The three problems being fixed, in the order they cost the most:
-     1. planning's header did not wrap, so the whole page scrolled sideways
-     2. the filter rows pushed real content off the first screen entirely
-     3. tab strips and toolbars clipped rather than scrolled                */
+   Written for the shop floor: someone standing at a line, holding a phone,
+   scanning a list to find one order and check its state. That decides the
+   hierarchy. Status carries all the colour and weight because state is what
+   people scan for; serial sits on its baseline; context goes quiet.
+
+   The brand palette and typeface are fixed, so the work here is structure,
+   spacing and where weight lands.                                        */
 
 @media(max-width:760px){
-  /* 1. header: wrap, shrink, and drop the parts that are only confirmation */
-  .head-in{flex-wrap:wrap !important; row-gap:6px; gap:6px !important; max-width:100% !important}
-  .brand-logo{height:26px}
-  .brand-tag{font-size:10px; letter-spacing:1.5px}
-  .brand-home, .nlcrep-btn{padding:5px 9px; font-size:11.5px}
-  .who{margin-left:auto; font-size:0; line-height:1; text-align:right}
-  .who .role-tag, .who a{font-size:11.5px}
-  .who br{display:none}
-  .who a{margin-left:8px}
 
-  /* 2. tab strips scroll instead of clipping, and keep a usable target size */
+  /* ---- header: one bar, nav in a sheet ------------------------------- */
+  header{padding:0}
+  .head-in{display:flex !important; flex-wrap:nowrap !important; align-items:center;
+    gap:10px !important; height:52px; padding:0 14px; max-width:100% !important}
+  .brand-logo{height:24px; flex:none}
+  .brand-tag{font-size:10px; letter-spacing:2px; flex:none}
+  /* every nav chip and the user block live in the sheet instead */
+  .head-in > .brand-home, .head-in > .nlcrep-btn, .head-in > .who{display:none}
+  .mnav-btn{margin-left:auto; flex:none; display:inline-flex; align-items:center; gap:7px;
+    height:34px; padding:0 12px; border-radius:9px; cursor:pointer;
+    border:1px solid rgba(255,255,255,.3); background:rgba(255,255,255,.08);
+    color:#fff; font:700 12px/1 inherit; letter-spacing:.3px}
+  .mnav-btn:active{background:rgba(255,255,255,.2)}
+  .mnav-btn i{font-style:normal; font-size:15px; line-height:1}
+
+  .mnav-sheet{position:fixed; inset:0; z-index:9000; display:none}
+  .mnav-sheet.open{display:block}
+  .mnav-scrim{position:absolute; inset:0; background:rgba(14,16,38,.5)}
+  .mnav-card{position:absolute; left:0; right:0; top:0; background:var(--navy);
+    padding:12px 14px 16px; box-shadow:0 14px 40px rgba(0,0,0,.4);
+    border-bottom:3px solid var(--orange)}
+  .mnav-head{display:flex; align-items:center; justify-content:space-between;
+    gap:10px; height:40px; color:#fff}
+  .mnav-head b{font-size:13px; letter-spacing:.3px; font-weight:700}
+  .mnav-x{font-size:26px; line-height:1; opacity:.75; cursor:pointer; padding:0 4px}
+  .mnav-links{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px}
+  /* the report widget injects its styles into head at runtime, so they land
+     after this stylesheet; these tiles need the extra specificity to win */
+  .mnav-sheet .mnav-links > *{opacity:1 !important; border:0 !important}
+  .mnav-links > *{display:flex !important; align-items:center; justify-content:center;
+    min-height:44px; padding:0 10px; border-radius:10px; font-size:13px; font-weight:600;
+    color:#fff; background:rgba(255,255,255,.1); border:0; text-decoration:none;
+    text-align:center; letter-spacing:0; text-transform:none}
+  .mnav-links > *:active{background:rgba(255,255,255,.22)}
+  /* in a full width menu every item gets a word, not just a glyph: the
+     Report label is hidden in the narrow header, and the theme toggle has
+     only ever been an icon */
+  .mnav-links .nlcrep-btn span{display:inline !important}
+  .mnav-links #themeBtn::after{content:"Light / dark"; margin-left:7px}
+  .mnav-links #fbBtn::before{content:"\26A0"; margin-right:7px}
+  .mnav-who{margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,.18);
+    color:#c3c6e6; font-size:12px; display:flex; align-items:center;
+    justify-content:space-between; gap:10px; flex-wrap:wrap}
+  .mnav-who .role-tag{font-size:11px}
+  .mnav-who a{color:#fff; font-weight:700}
+
+  /* ---- page head ------------------------------------------------------ */
+  .wrap{padding-left:14px; padding-right:14px}
+  h1{font-size:21px; line-height:1.2; margin-bottom:4px}
+  .sub{font-size:12.5px; line-height:1.45; margin-bottom:12px}
+
+  /* ---- tab strips scroll rather than clip ----------------------------- */
   .tabs{overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
     max-width:100%; flex-wrap:nowrap}
   .tabs::-webkit-scrollbar{display:none}
-  .tabs button{flex:0 0 auto; white-space:nowrap}
+  .tabs button{flex:0 0 auto; white-space:nowrap; min-height:38px}
 
-  /* 3. anything tappable gets a thumb sized target */
-  .btn, .toolbar select, .toolbar input:not([type=checkbox]){min-height:38px}
-  .btn.sm{min-height:32px}
-  input[type=checkbox], input[type=radio]{min-width:18px; min-height:18px}
+  /* ---- thumb sized targets -------------------------------------------- */
+  .btn, .toolbar select, .toolbar input:not([type=checkbox]){min-height:40px}
+  .btn.sm{min-height:34px}
+  input[type=checkbox], input[type=radio]{min-width:20px; min-height:20px}
 
-  /* 4. collapsible filters: the toolbar is hidden behind its own button
-        until asked for, so the list starts near the top of the screen */
-  .mfil{display:flex; align-items:center; gap:8px; margin:10px 0}
-  .mfil button{flex:1 1 auto}
+  /* ---- filters behind one button -------------------------------------- */
+  .mfil{display:flex; align-items:center; gap:8px; margin:0 0 12px}
+  .mfil button{flex:1 1 auto; justify-content:center}
   .mfil .cnt{background:var(--orange); color:#fff; border-radius:9px;
     padding:1px 7px; font-size:11px; font-weight:800}
   .toolbar.mhide{display:none}
   .toolbar.mshow{display:flex; background:var(--bg); border:1px solid var(--line);
-    border-radius:12px; padding:10px; margin-bottom:10px}
+    border-radius:12px; padding:12px; margin-bottom:12px; gap:10px}
   .toolbar.mshow select, .toolbar.mshow input:not([type=checkbox]){flex:1 1 46%; min-width:0}
 
-  /* 5. record rows stack rather than squeezing a right hand column */
-  .rec{flex-wrap:wrap; row-gap:4px}
-  .rec .sn{font-size:14px}
-  .rec .meta{font-size:11.5px}
+  /* ---- the records list, which is the point of the screen -------------
+     Three columns on one line: select, content, state. The previous
+     wrap-to-three-rows left the checkbox stranded on a line of its own and
+     wasted a third of every row's width.                                 */
+  .rec{display:grid !important;
+    grid-template-columns:auto minmax(0,1fr) auto;
+    align-items:start; gap:4px 11px; padding:14px 14px}
+  .rec > input[type=checkbox]{align-self:center; margin:0}
+  .rec > div:not(.r-right){min-width:0}
+  .rec .r-right{margin-left:0 !important; text-align:right; white-space:nowrap;
+    display:flex; flex-direction:column; align-items:flex-end}
+  .rec .sn{font-size:15px; letter-spacing:-.1px; display:flex; flex-wrap:wrap;
+    align-items:center; gap:5px; line-height:1.25}
+  .rec .meta{font-size:11.5px; line-height:1.4; margin-top:3px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden}
+  /* the chip must never break mid word; the grid column sizes to it */
+  .rec .r-right .chip{font-size:11px; padding:3px 9px; white-space:nowrap;
+    flex:none; word-break:normal; overflow-wrap:normal}
+  .rec .r-right .meta{font-size:11px; margin-top:5px; opacity:.8}
+  .rec .badge-sample{font-size:9.5px; padding:1px 5px}
+  .wk-head{margin:16px 0 8px; font-size:11px}
 
-  /* 6. cards and modals use the full width they have */
-  .wrap{padding-left:10px; padding-right:10px}
-  .card .pad{padding:12px}
-  .modal{max-width:100% !important; width:100%; border-radius:14px}
-  .mh{font-size:15px; padding:12px 14px}
-  .mb{padding:14px}
-  .mf{padding:10px 14px; flex-wrap:wrap; gap:8px}
-  .mf .btn{flex:1 1 auto}
+  /* ---- counts strip ----------------------------------------------------
+     Three figures across a phone leaves no room for the uppercase labels to
+     sit beside each other, so they run together. Thirds with a hairline
+     between them keeps each figure visibly its own. */
+  .cnt-strip{gap:0; padding:12px 6px; flex-wrap:wrap; align-items:stretch}
+  .cnt{flex:1 1 28%; min-width:0; align-items:center; text-align:center;
+    padding:0 6px; border-right:1px solid var(--line)}
+  .cnt:last-of-type{border-right:0}
+  .cnt .n{font-size:19px}
+  .cnt .l{font-size:9.5px; letter-spacing:.4px; line-height:1.25}
+  .cnt-div{display:none}
+  /* the note takes a line of its own; as a flex sibling on the same row it
+     squeezed all three figures to nothing */
+  .cnt-note{flex:1 0 100%; margin:10px 0 0; text-align:center; font-size:11px}
 
-  /* 7. the two startup banners are informative, not urgent: let them be
-        read without filling the screen */
-  .banner.show, .banner{font-size:12.5px}
+  /* ---- planning: notices, board ----------------------------------------
+     Two notice bars owned the whole first screen and pushed the board 700px
+     down. Every word is kept; the type, padding and leading are tightened so
+     they read as notices rather than as the page. */
+  .sync-remind{padding:10px 12px; margin-bottom:10px; gap:8px; font-size:12.5px;
+    line-height:1.4}
+  .sync-remind b{font-size:13px}
+  .sync-remind .btn{min-height:36px}
 
-  /* 8. wide tables keep their own scroller rather than stretching the page */
+  /* One column per screen, swiped. A 250px column on a 390px phone shows a
+     column and a half, which reads as something broken rather than as a
+     board that scrolls. */
+  .kb, .kb.kb5{display:flex; overflow-x:auto; grid-template-columns:none; gap:12px;
+    padding-bottom:10px; scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch;
+    scrollbar-width:none}
+  .kb::-webkit-scrollbar{display:none}
+  .kb > *{min-width:86vw; flex:0 0 86vw; scroll-snap-align:start}
+  /* the heading is a chip, a count and a fold control stacked into a narrow
+     column; as a plain line it fits and reads faster */
+  .kb-col h3{display:flex; align-items:center; gap:8px; flex-wrap:nowrap}
+  .kb-col h3 .chip{background:transparent !important; color:var(--navy) !important;
+    padding:0; font-size:12.5px; font-weight:800; letter-spacing:.2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  html[data-theme="dark"] .kb-col h3 .chip{color:#aeb3ff !important}
+  .kb-col h3 .n{font-size:10.5px; white-space:nowrap; margin-left:auto; opacity:.75}
+  .kb-col h3 .fold{flex:none; width:26px; text-align:center}
+
+  /* ---- cards and modals use the width they have ------------------------ */
+  .card .pad{padding:14px}
+  .modal{max-width:100% !important; width:100%}
+  .mh{font-size:15px; padding:13px 15px}
+  .mb{padding:15px}
+  .mf{padding:11px 15px; flex-wrap:wrap; gap:8px}
+  .mf .btn{flex:1 1 auto; justify-content:center}
+
+  /* ---- long notices read without filling the screen -------------------- */
+  .banner.show, .banner{font-size:12.5px; line-height:1.45}
+
+  /* ---- wide tables keep their own scroller ----------------------------- */
   .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
   table{font-size:12px}
 }
 
 @media(max-width:420px){
-  .head-in{gap:5px !important}
-  .brand-home, .nlcrep-btn{padding:4px 7px; font-size:11px}
+  .wrap{padding-left:12px; padding-right:12px}
   h1{font-size:20px}
-  .sub{font-size:12.5px}
+  .rec{padding:13px 12px; gap:4px 9px}
+  .rec .sn{font-size:14.5px}
+  .mnav-links{grid-template-columns:1fr 1fr}
 }
 </style>
 </head>
@@ -819,7 +922,9 @@ function nlcReportInstall(){
     // the build is worth seeing without opening the console
     const tag = h.querySelector(".brand-tag");
     if(tag && typeof NLC_BUILD === "string" && !tag.title) tag.title = "Build " + NLC_BUILD;
-    if(h.querySelector(".nlcrep-btn")) return;
+    // document wide, not header only: the phone nav moves this button into
+    // its sheet, and a header-only check would then add a second one
+    if(document.querySelector(".nlcrep-btn")) return;
     const a = document.createElement("a");
     a.className = "nlcrep-btn";
     a.title = "Report an issue or request a feature";
@@ -854,21 +959,89 @@ function nlcReportInstall(){
 
 
 /* ---------------- phone behaviour (shared, self installing) ----------------
-   On a phone the filter toolbars take the whole first screen, so the list
-   people came for starts below the fold. This collapses any toolbar that
-   carries several filters behind a single button, and puts a count on that
-   button so a filter can never be left on without being visible.
+   Two things the CSS cannot do on its own.
 
-   Done here rather than in each render path because the pages rebuild their
-   toolbars constantly, and the markup differs on every screen. */
+   1. The header carries up to eight navigation chips plus the signed in
+      user. On a phone that wraps to three rows of competing links before
+      the page title. They are moved into a sheet behind one Menu button,
+      and moved back if the window widens.
+
+   2. Filter toolbars take the whole first screen, so the list people came
+      for starts below the fold. Any toolbar carrying several filters is
+      collapsed behind one button with a count of what is active, so a
+      filter can never be left on without being visible.
+
+   Both are done here rather than in each render path because the pages
+   rebuild their toolbars constantly and the markup differs per screen. */
 const NLCM_Q = 760;
 
 function nlcmIsPhone(){ return window.innerWidth <= NLCM_Q; }
 
+/* ---- 1. navigation sheet ---------------------------------------------- */
+function nlcmNav(){
+  const head = document.querySelector(".head-in");
+  if(!head) return;
+
+  if(!nlcmIsPhone()){
+    // widened: put everything back exactly where it came from
+    const sheet = document.getElementById("mnavSheet");
+    if(sheet){
+      const links = sheet.querySelector(".mnav-links");
+      const who   = sheet.querySelector(".mnav-who");
+      if(links) [...links.children].forEach(el => head.appendChild(el));
+      if(who)   [...who.children].forEach(el => head.appendChild(el));
+      sheet.remove();
+    }
+    const b = head.querySelector(".mnav-btn");
+    if(b) b.remove();
+    head.dataset.mnav = "";
+    return;
+  }
+
+  if(head.dataset.mnav === "1") return;
+
+  // the links are whatever this page's header already holds
+  const moving = [...head.children].filter(el =>
+    el.classList.contains("brand-home") || el.classList.contains("nlcrep-btn"));
+  const who = head.querySelector(".who");
+  if(!moving.length && !who) return;
+  head.dataset.mnav = "1";
+
+  const btn = document.createElement("button");
+  btn.className = "mnav-btn";
+  btn.type = "button";
+  btn.innerHTML = '<i>☰</i> Menu';
+  head.appendChild(btn);
+
+  const sheet = document.createElement("div");
+  sheet.className = "mnav-sheet";
+  sheet.id = "mnavSheet";
+  sheet.innerHTML = '<div class="mnav-scrim"></div>' +
+    '<div class="mnav-card"><div class="mnav-head"><b>Go to</b>' +
+    '<span class="mnav-x" role="button" aria-label="Close">&times;</span></div>' +
+    '<div class="mnav-links"></div><div class="mnav-who"></div></div>';
+  document.body.appendChild(sheet);
+
+  const links = sheet.querySelector(".mnav-links");
+  moving.forEach(el => links.appendChild(el));
+  const whoBox = sheet.querySelector(".mnav-who");
+  if(who) whoBox.appendChild(who);
+  else whoBox.remove();
+
+  const close = () => sheet.classList.remove("open");
+  btn.onclick = () => sheet.classList.toggle("open");
+  sheet.querySelector(".mnav-scrim").onclick = close;
+  sheet.querySelector(".mnav-x").onclick = close;
+  // a link inside the sheet should close it on the way out
+  links.addEventListener("click", e => { if(e.target.closest("a,button")) close(); });
+  document.addEventListener("keydown", e => { if(e.key === "Escape") close(); });
+}
+
+/* ---- 2. collapsible filters -------------------------------------------- */
 function nlcmActive(tb){
   let n = 0;
   tb.querySelectorAll("select").forEach(s => {
-    // "all", "", and the first option are the resting state
+    // "all", "" and the first option are the resting state
     if(s.selectedIndex > 0 && s.value && !/^(all|)$/i.test(s.value)) n++;
   });
   tb.querySelectorAll('input:not([type=checkbox]):not([type=radio])').forEach(i => {
@@ -884,8 +1057,8 @@ function nlcmLabel(btn, tb, open){
 }
 
 function nlcmSetup(){
+  nlcmNav();
   if(!nlcmIsPhone()){
-    // back on a wide screen: undo everything so nothing is left hidden
     document.querySelectorAll(".toolbar[data-mfil]").forEach(tb => {
       const tabs = tb.parentNode.querySelector(":scope > .tabs[data-mlift]");
       if(tabs){ delete tabs.dataset.mlift; tb.insertBefore(tabs, tb.firstChild); }
@@ -904,7 +1077,6 @@ function nlcmSetup(){
 
     // A view switcher inside a filter toolbar must not be collapsed with it:
     // hiding the Kanban/Spreadsheet tabs would leave no way to change view.
-    // It is lifted out to sit above the filter button instead.
     const tabs = tb.querySelector(":scope > .tabs");
     if(tabs){ tabs.dataset.mlift = "1"; tb.parentNode.insertBefore(tabs, tb); }
 
@@ -923,7 +1095,6 @@ function nlcmSetup(){
       nlcmLabel(btn, tb, open);
     };
     btn.onclick = () => { open = !open; paint(); };
-    // the count has to follow what the filters actually say
     tb.addEventListener("change", () => nlcmLabel(btn, tb, open));
     tb.addEventListener("input",  () => nlcmLabel(btn, tb, open));
     paint();
@@ -946,7 +1117,8 @@ function nlcmSetup(){
 })();
 
 
-const NLC_BUILD = "2026-10-14 18:12";
+
+const NLC_BUILD = "2026-10-15 08:34";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
