@@ -493,9 +493,16 @@ function renderValue(){
     // nothing and saves an afternoon of guessing
     show();
     document.getElementById("valStats").innerHTML="";
-    if(note) note.innerHTML=(VAL&&VAL.length)
-      ? "No records with a price in this date range. Widen the range, or check that sync-pricing has run."
-      : "No prices have been synced yet. Deploy and run <b>sync-pricing</b>, then reload this page.";
+    /* Tell the two apart properly. Records in range with every one unpriced
+       means the sync has not run; no rows at all means the range is empty.
+       Suggesting the date range when there are simply no prices sends
+       somebody hunting in the wrong place. */
+    const anyRecords=(VAL||[]).some(r=>Number(r.unpriced_records)||Number(r.priced_records));
+    if(note) note.innerHTML = !VAL||!VAL.length
+      ? "No production records in this date range at all. Widen the range."
+      : (anyRecords
+        ? `None of the ${fmt((VAL||[]).reduce((a,r)=>a+(Number(r.unpriced_records)||0),0))} records in this range have a price against them. Deploy and run <b>sync-pricing</b>, then reload this page.`
+        : "No prices have been synced yet. Deploy and run <b>sync-pricing</b>, then reload this page.");
     return;
   }
   show();
@@ -1201,7 +1208,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-22 19:45";
+const NLC_BUILD = "2026-11-22 19:50";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
