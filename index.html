@@ -24,6 +24,9 @@
   html[data-theme="dark"] input, html[data-theme="dark"] select, html[data-theme="dark"] textarea{background:#23254a; color:var(--ink); border-color:var(--line)}
   html[data-theme="dark"] .btn.ghost{background:#23254a; color:var(--ink)}
   html[data-theme="dark"] thead th{background:#23254a}
+  /* --navy has no dark mode value, so every modal title was rendering at a
+     contrast ratio of 1.18 to 1 against the dark card: effectively invisible */
+  html[data-theme="dark"] .modal .mh{color:#aeb3ff}
   html[data-theme="dark"] tfoot .totals td{background:#20224a}
   html[data-theme="dark"] .wk-head{background:#20224a}
   html[data-theme="dark"] .modal{background:var(--card)}
@@ -193,6 +196,17 @@
   .qr-drop-b{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:3px}
   .qr-drop > span.qr-drop-h{font-size:11px;opacity:.85}
   .qr-drop.over{border-color:var(--orange);background:var(--orange-soft)}
+  /* finished goods: two drop zones side by side, stacking on a phone */
+  .fg-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .fg-col{min-width:0}
+  @media(max-width:640px){ .fg-grid2{grid-template-columns:1fr} }
+  .fg-grid{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 2px}
+  .fg-one{display:flex;align-items:center;gap:6px;font-size:11.5px;
+    border:1px solid var(--line);border-radius:8px;padding:4px 8px;background:var(--card)}
+  .fg-one b{font-size:11.5px}
+  .fg-one span{color:var(--muted)}
+  .fg-one.done{border-color:var(--ok);background:var(--ok-bg)}
+  .fg-one.done span{color:var(--ok)}
   .qr-sel{width:16px; height:16px; accent-color:var(--orange); margin-right:4px; flex:none; align-self:center}
   .rec{display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); cursor:pointer}
   .rec:last-child{border-bottom:none}
@@ -212,6 +226,17 @@
 
   table{width:100%; border-collapse:collapse; font-size:13.5px}
   .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  /* mass BOM edit: one row per field, tick box, label, value */
+  .mass-grid{display:flex; flex-direction:column; gap:7px}
+  .mass-row{display:grid; grid-template-columns:20px 118px 1fr; align-items:center; gap:9px;
+    margin:0; text-transform:none; letter-spacing:normal; font-size:13.5px; color:var(--ink); font-weight:400}
+  .mass-row input[type=checkbox]{width:16px; height:16px; margin:0; padding:0; flex:none; accent-color:var(--orange)}
+  .mass-row .mass-lbl{font-size:12px; font-weight:700; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.4px; overflow-wrap:anywhere}
+  .mass-row input:not([type=checkbox]), .mass-row select{width:100%; min-width:0; margin:0}
+  @media(max-width:560px){ .mass-row{grid-template-columns:20px 1fr; row-gap:3px}
+    .mass-row .mass-lbl{grid-column:2}
+    .mass-row input:not([type=checkbox]), .mass-row select{grid-column:2} }
   .bom-wrap{max-height:calc(100vh - 230px); overflow:auto}
   @media(max-width:900px){ .bom-wrap{max-height:calc(100vh - 190px)} }
   .bom-table th{position:sticky; top:0; z-index:5; background:var(--card);
@@ -652,6 +677,8 @@ function wkMon(ws){ const m=(ws||"").match(/^(\d{4})-W(\d{2})$/); if(!m) return 
   mon.setUTCDate(jan4.getUTCDate()-day+(w-1)*7); return mon.toISOString().slice(0,10); }
 let ROLE = "";
 let STAFF = [];
+let STAGES = [];
+let STAFFTAB = "workers";
 let LIGHT_TYPES = [];
 const PERMS = {};
 const may = (section,what)=>{ const p=PERMS[section]; if(!p) return true; return what==="edit"?!!p.edit:!!p.view; };
@@ -697,6 +724,78 @@ const minsBetween = (s,f)=>{ if(!s||!f) return null;
   const [a,b]=s.split(":").map(Number), [c,d]=f.split(":").map(Number);
   let m=(c*60+d)-(a*60+b); if(m<0) m+=24*60; return m; };
 const staffName = id => { if(!id) return "Unassigned"; const s=STAFF.find(x=>x.id===id); return s?s.full_name:("ID "+id); };
+/* The people still working here. A resigned worker keeps their row so their
+   past entries still read correctly, but drops out of every picker. Rows that
+   predate the active column have it undefined, which counts as still here. */
+/* What people see beside a name in a picker: the Palm HR employee number
+   when it is filled in, otherwise the internal id, which is all there was
+   before. staff.id is never shown as the employee number, because entries
+   point at it and it has nothing to do with HR. */
+/* Options for the worker boxes. Each person is listed twice on purpose: once
+   as "Name (number)" so typing the name finds them, and once as the bare
+   employee number with the name as its description, so typing just the number
+   finds them too. Relying on the browser to match a typed number against the
+   middle of "Name (number)" is not safe, because datalist filtering differs
+   between browsers. Both forms resolve through staffMatch. */
+function workerOptions(){
+  return WORKER_PICK().map(s=>{
+    const emp=String(s.employee_id||"").trim();
+    const named=`<option value="${esc(staffLabel(s))}"></option>`;
+    // only a real employee number gets an entry of its own. Offering the
+    // internal id as though it were one invites a collision with somebody
+    // else's actual employee number.
+    return emp?named+`<option value="${esc(emp)}">${esc(s.full_name)}</option>`:named;
+  }).join("");
+}
+const staffTag = s => (s && s.employee_id && String(s.employee_id).trim()) || "";
+/* How a person reads in a picker: the name, and the Palm HR number in
+   brackets when there is one. Somebody with no number yet is shown by name
+   alone, because putting their internal id there reads like an employee
+   number and can collide with a real one. */
+const staffLabel = s => `${s.full_name}${staffTag(s)?` (${staffTag(s)})`:""}`;
+/* A typed name resolves on the full label, the name alone, the internal id or
+   the employee number, so whichever one somebody has to hand works. */
+function staffMatch(x,v){
+  const t=String(v).trim(), lt=t.toLowerCase();
+  const emp=(x.employee_id||"").trim();
+  return staffLabel(x)===t
+      || (x.full_name||"").toLowerCase()===lt
+      || (!!emp && emp.toLowerCase()===lt);
+}
+/* Resolve what somebody typed in a worker box. Employee number, name and the
+   full label are tried across everyone first. Only if none of those hit does
+   the internal id get a look, so a typed number can never land on somebody
+   whose internal id happens to equal another person's employee number. */
+function findStaff(list,v){
+  const t=String(v).trim();
+  return list.find(x=>staffMatch(x,t)) || list.find(x=>String(x.id)===t) || null;
+}
+const STAFF_PICK = () => STAFF.filter(s => s.active !== false);
+/* Workers and foremen are separate lists off the same table, so a person can
+   be both and their staff id never changes. Rows written before the split
+   have the flags undefined: those count as workers, which is what everyone on
+   the list was being used for. */
+/* A name typed into a worker box that does not resolve has three different
+   causes, and saying which one saves a trip to the People screen. */
+function whyNotAWorker(v){
+  const hit=findStaff(STAFF,v);
+  if(!hit) return "No worker matches \u201c"+v+"\u201d.";
+  if(hit.active===false) return `${hit.full_name} is marked as having left, so cannot be added to new entries.`;
+  if(hit.is_worker===false) return `${hit.full_name} is on the foremen list, not the workers list.`;
+  return "No worker matches \u201c"+v+"\u201d.";
+}
+const WORKER_PICK  = () => STAFF_PICK().filter(s => s.is_worker !== false);
+const FOREMAN_PICK = () => STAFF_PICK().filter(s => s.is_foreman === true);
+/* The stage picker, built from the list managed on the People screen. A
+   stage already on an entry is kept as an option even after it is retired, so
+   opening an old entry does not silently change what it says. */
+function stageOptions(selected){
+  const live=STAGE_PICK().map(s=>s.name);
+  const all=selected && !live.includes(selected) ? [selected, ...live] : live;
+  return `<option value="">Not stated</option>`+
+    all.map(n=>`<option ${n===selected?"selected":""}>${esc(n)}</option>`).join("");
+}
+const STAGE_PICK = () => STAGES.filter(s => s.active !== false);
 const namesOf = w => { const ids=(w.staff_ids&&w.staff_ids.length)?w.staff_ids:(w.staff_id?[w.staff_id]:[]);
   return ids.length?ids.map(staffName).join(", "):"Unassigned"; };
 function renderChips(){
@@ -710,8 +809,13 @@ function renderChips(){
   const { data:{ session } } = await db.auth.getSession();
   if(!session){ renderLogin(); return; }
   SESSION = session;
-  const { data:staff } = await db.from("staff").select("id,full_name,called_name").order("full_name");
+  // every staff row is loaded, including people who have left, because old
+  // worker entries store the staff id and still have to resolve to a name.
+  // The pickers use STAFF_PICK, which is the people still here.
+  const { data:staff } = await db.from("staff").select("*").order("full_name");
   STAFF = staff||[];
+  try{ const { data:ps } = await db.from("production_stages").select("*").order("sort_order");
+    STAGES = ps||[]; }catch(e){ STAGES = []; }
   const { data:lt } = await db.from("light_types").select("name").order("name");
   LIGHT_TYPES = (lt||[]).map(x=>x.name);
   try{ const { data:qr } = await db.from("qr_reasons").select("label").eq("active",true).order("sort");
@@ -741,6 +845,7 @@ async function route(){
   const m=h.match(/^#\/record\/([0-9a-fA-F-]{36})$/);
   if(m){ await openRecord(m[1],true); return; }
   if(h==="#/admin" && may("admin","view")){ renderAdmin(); return; }
+  if(h==="#/staff" && may("people","view")){ renderStaff(); return; }
   if(h==="#/bom" && may("engineering","edit")){ renderBomEditor(); return; }
   if(h==="#/history"){ renderHistory(); return; }
   if(h==="#/feedback"){ renderFeedback(); return; }
@@ -783,6 +888,7 @@ function shell(inner){
       ${may("engineering","edit")?'<a id="navBom" class="brand-home">BOM editor</a>':''}
       <a id="navHist" class="brand-home">History</a>
       <a id="navFb" class="brand-home" title="Report an issue or request a feature">Feedback</a>
+      ${may("people","view")?'<a id="navStaff" class="brand-home" title="Workers, foremen and production stages">People</a>':''}
       ${may("admin","view")?'<a id="adminBtn" class="brand-home">Admin</a>':''}
       <a class="brand-home" id="themeBtn" title="Light / dark">${document.documentElement.dataset.theme==="dark"?"\u2600":"\u263E"}</a>
       <div class="who">${esc(SESSION.user.email)}<br>${ROLE?`<span class="role-tag">${esc(ROLE)}</span> \u00b7 `:""}<a id="signout">Sign out</a></div>
@@ -799,6 +905,7 @@ function wireShell(){
   const tb=document.getElementById("themeBtn");
   if(tb) tb.onclick=toggleTheme;
   const nb=document.getElementById("navBom"); if(nb) nb.onclick=e=>{ e.preventDefault(); renderBomEditor(); };
+  const ns=document.getElementById("navStaff"); if(ns) ns.onclick=e=>{ e.preventDefault(); renderStaff(); };
   const nh=document.getElementById("navHist"); if(nh) nh.onclick=e=>{ e.preventDefault(); renderHistory(); };
   const nf=document.getElementById("navFb");   if(nf) nf.onclick=e=>{ e.preventDefault(); renderFeedback(); };
   updateQueueBadge();
@@ -1789,8 +1896,8 @@ async function openRecord(id, fromRoute){
 /* ---------------- editor (create + edit) ---------------- */
 function opt(list,val){ return list.map(o=>`<option ${o===val?"selected":""}>${esc(o)}</option>`).join(""); }
 function staffOpts(val){
-  return `<option value="">Select worker\u2026</option>`+STAFF.map(s=>
-    `<option value="${esc(s.id)}" ${s.id===val?"selected":""}>${esc(s.full_name)} (${esc(s.id)})</option>`).join("");
+  return `<option value="">Select worker\u2026</option>`+WORKER_PICK().map(s=>
+    `<option value="${esc(s.id)}" ${s.id===val?"selected":""}>${esc(staffLabel(s))}</option>`).join("");
 }
 
 /* ---------------- modal helper ---------------- */
@@ -1896,7 +2003,7 @@ function renderEditor(rec){
   document.body.classList.remove("wide");
   setHash(isNew?"#/new":"#/record/"+rec.id);
   const r=rec||{ production_date:new Date().toISOString().slice(0,10), status:"Open" };
-  const nameList=STAFF.map(s=>`<option value="${esc(s.full_name)}">`).join("");
+  const nameList=FOREMAN_PICK().map(s=>`<option value="${esc(s.full_name)}">`).join("");
 
   root.innerHTML = shell(`
     <button class="btn link" id="back">&larr; All records</button>
@@ -1963,20 +2070,25 @@ function renderEditor(rec){
           <p class="hint" style="margin:6px 0 12px">Print this and place it inside the product. Scanning always shows the live record.</p>
           <button class="btn orange sm" id="printBtn">Print tag</button>
           <div id="qrPanel">${qrPanelHtml(rec)}</div>
+          <div id="fgPanel">${fgPanelHtml(rec)}</div>
         </div>
       </div></div></div>
 
-      <div class="card"><h2>Production entries <span id="wc" class="chip" style="margin-left:auto"></span></h2>
+      <div class="card"><h2>Production entries <span id="msBadge"></span><span id="wc" class="chip" style="margin-left:auto"></span></h2>
         <div class="pad">
-          <p class="hint" style="margin:0 0 12px">One entry per worker. Total time and cycle time are calculated for you from the start time, completion time and quantity.</p>
+          <p class="hint" style="margin:0 0 12px">One entry per worker, per stage. Total time and cycle time are calculated for you from the start time, completion time and quantity.
+            If a stage is finished on a later day, add a separate entry and set the day on it, so the minutes stay meaningful.</p>
           <div class="row">
             <div class="field full"><label>Workers (add one or more)</label>
               <input id="w-staff-in" list="stafflist" placeholder="Type a name and press Enter">
-              <datalist id="stafflist">${STAFF.map(s=>`<option value="${esc(s.full_name)} (${esc(s.id)})">`).join("")}</datalist>
+              <datalist id="stafflist">${workerOptions()}</datalist>
               <div id="w-chips" class="chips"></div>
             </div>
             <div class="field"><label>Conveyor</label><select id="w-conv"><option value=""></option>${CONVEYORS.map(c=>`<option>${c}</option>`).join("")}</select></div>
             <div class="field"><label>Task</label><select id="w-type"><option value="C">Complete</option><option value="S">Stickers</option></select></div>
+            <div class="field"><label>Stage</label><select id="w-stage">${stageOptions("")}</select></div>
+            <div class="field"><label>Day</label><input id="w-date" type="date" value="${esc(r.production_date||"")}"
+              title="The day this work was done. Change it when a stage was finished on a later day."></div>
             <div class="field"><label>Start time</label><input id="w-start" type="time"></div>
             <div class="field"><label>Completion time</label><input id="w-finish" type="time"></div>
             <div class="field"><label>Quantity finished</label><input id="w-qty" type="number" min="0" value="0"></div>
@@ -2096,6 +2208,7 @@ function renderEditor(rec){
     if(qi) qi.className="kind-"+(r.record_kind||"Production");
     document.getElementById("printBtn").onclick=()=>printTag(current);
     wireQrPanel();
+    wireFgPanel();
     wireRecNav(r.id, openRecord);
     document.getElementById("addWorker").onclick=addWorker;
     document.getElementById("raiseCcr").onclick=raiseCcr;
@@ -2115,8 +2228,11 @@ function renderEditor(rec){
     const wIn=document.getElementById("w-staff-in");
     const commitWorker=()=>{
       const v=wIn.value.trim(); if(!v) return;
-      const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
-      if(!s){ banner("No worker matches \u201c"+v+"\u201d."); return; }
+      const s=findStaff(WORKER_PICK(),v);
+      if(!s){
+        // a typed name that only matches someone who has left should say so,
+        // rather than the same "no match" as a typo
+        banner(whyNotAWorker(v)); return; }
       if(!selWorkers.includes(s.id)) selWorkers.push(s.id);
       wIn.value=""; renderChips();
     };
@@ -2155,9 +2271,224 @@ function banner(msg,ok){
 /* ---------------- admin: users and permissions ---------------- */
 const SECTION_LABELS={records:"Production records",entries:"Production entries",
   engineering:"Engineering / BOM",fabrication:"Fabrication",quality:"Quality & CCRs",
-  planning:"Planning",dashboard:"Dashboard",admin:"User administration"};
+  planning:"Planning",dashboard:"Dashboard",people:"People and stages",
+  admin:"User administration"};
 let SECTIONS=Object.entries(SECTION_LABELS);   // rebuilt from the database on the admin screen
 let ROLES=["admin","supervisor","foreman","sales","viewer"];  // refreshed from the database on the admin screen
+
+/* ---------------- people and production stages ----------------
+   The shop floor lists: who can be picked as a worker or named as a foreman,
+   and what stages a worker entry can be logged against. Nothing here is ever
+   deleted when it has been used. Worker entries store the staff id, so
+   removing a person would leave their past entries pointing at nothing. A
+   person who leaves is marked as having left: they keep their history and
+   drop out of every picker. The same applies to a stage that is retired. */
+async function renderStaff(){
+  setHash("#/staff");
+  document.body.classList.remove("wide");
+  if(!STAFFTAB) STAFFTAB="workers";
+  root.innerHTML=shell(`
+    <button class="btn link" id="back">&larr; All records</button>
+    <h1>People and stages</h1>
+    <p class="sub">The names offered when picking workers and typing a foreman, and the production stages a worker entry can be logged against.</p>
+    <div class="banner" id="banner"></div>
+    <div class="toolbar">
+      <div class="tabs" id="stTabs">
+        <button data-t="workers" class="${STAFFTAB==="workers"?"on":""}">Workers</button>
+        <button data-t="foremen" class="${STAFFTAB==="foremen"?"on":""}">Foremen</button>
+        <button data-t="stages"  class="${STAFFTAB==="stages"?"on":""}">Production stages</button>
+      </div>
+    </div>
+    <div id="staffBody"><div class="spinner"></div></div>`);
+  wireShell();
+  document.getElementById("back").onclick=renderHome;
+  document.querySelectorAll("#stTabs button").forEach(b=>b.onclick=()=>{ STAFFTAB=b.dataset.t; renderStaff(); });
+  await drawStaffAdmin();
+}
+
+async function drawStaffAdmin(){
+  const body=document.getElementById("staffBody");
+  const canEdit=may("people","edit");
+  const [sR,gR]=await Promise.all([
+    db.from("staff").select("*").order("full_name"),
+    db.from("production_stages").select("*").order("sort_order").then(r=>r,()=>({data:[],error:null}))
+  ]);
+  if(sR.error){ body.innerHTML=`<div class="card"><div class="empty">Could not load the staff list: ${esc(sR.error.message)}</div></div>`; return; }
+  STAFF=sR.data||[];
+  const stageErr=gR.error; STAGES=gR.data||[];
+
+  const reload=()=>drawStaffAdmin();
+  const call=async(fn,args,okMsg)=>{
+    const { error }=await db.rpc(fn,args);
+    if(error){ banner("Could not save: "+error.message); return false; }
+    banner(okMsg,true); await reload(); return true;
+  };
+  // the flags are undefined on rows written before the split, and a row like
+  // that was being used as a worker, so that is how it is read
+  const isW=s=>s.is_worker!==false, isF=s=>s.is_foreman===true;
+
+  if(STAFFTAB==="stages"){ drawStages(body,canEdit,stageErr,call); return; }
+
+  const foremen=STAFFTAB==="foremen";
+  const flag=foremen?isF:isW;
+  const mine=STAFF.filter(s=>flag(s)&&s.active!==false);
+  const gone=STAFF.filter(s=>flag(s)&&s.active===false);
+  const other=STAFF.filter(s=>!flag(s)&&s.active!==false);
+  const word=foremen?"foreman":"worker";
+
+  const row=s=>`<tr${s.active===false?' style="opacity:.6"':''}>
+    <td style="white-space:nowrap"><b>${esc(s.full_name||"")}</b>${s.active===false?' <span class="chip" data-tone="hold">left</span>':""}
+      ${(foremen?isW(s):isF(s))?`<span class="chip" title="Also on the other list">also ${foremen?"a worker":"a foreman"}</span>`:""}</td>
+    <td>${esc(s.called_name||"")}</td>
+    <td style="white-space:nowrap">${s.employee_id?`<b>${esc(s.employee_id)}</b>`
+      :'<span style="color:var(--muted)" title="No Palm HR number recorded yet">not set</span>'}</td>
+    <td style="white-space:nowrap">${canEdit?`
+      <button class="btn ghost sm" data-edit-staff="${esc(s.id)}">Edit</button>
+      <button class="btn ghost sm" data-move-staff="${esc(s.id)}">Remove from ${foremen?"foremen":"workers"}</button>
+      <button class="btn ${s.active===false?"primary":"danger"} sm" data-left-staff="${esc(s.id)}" data-to="${s.active===false?"1":"0"}">
+        ${s.active===false?"Bring back":"Mark as left"}</button>`:""}</td>
+  </tr>`;
+
+  body.innerHTML=`
+    <div class="card"><h2>${foremen?"Foremen":"Workers"}</h2><div class="pad">
+      <p class="hint" style="margin:0 0 12px">${foremen
+        ? "These names are suggested in the Foreman box on a record. Somebody can be both a foreman and a worker."
+        : "These names fill the worker picker on production and fabrication entries. Somebody can be both a worker and a foreman."}
+        Nobody is ever deleted: marking someone as having left takes them out of the pickers while every entry they are already on keeps their name.</p>
+      ${canEdit?`<div class="row">
+        <div class="field"><label>Full name</label><input id="sa-name" placeholder="${foremen?"Eng. Shahin":"Ali Alfayez"}"></div>
+        <div class="field"><label>Short name</label><input id="sa-called" placeholder="${foremen?"Shahin":"Ali"}"></div>
+        <div class="field"><label>Employee ID</label><input id="sa-emp" placeholder="from Palm HR"></div>
+      </div>
+      <button class="btn primary" id="sa-add">Add ${word}</button>
+      ${other.length?`<div style="margin-top:14px">
+        <label class="hint" style="display:block;margin-bottom:5px">Or take somebody already on the other list</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="sa-existing" style="max-width:280px"><option value="">Pick a name…</option>
+            ${other.map(s=>`<option value="${esc(s.id)}">${esc(s.full_name)}</option>`).join("")}</select>
+          <button class="btn ghost" id="sa-also">Also make ${word===("foreman")?"a foreman":"a worker"}</button>
+        </div></div>`:""}`:""}
+    </div>
+    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Short name</th><th style="width:110px">Employee ID</th><th style="width:330px"></th></tr></thead>
+      <tbody>${mine.length?mine.map(row).join(""):`<tr><td colspan="4" style="color:var(--muted)">No ${foremen?"foremen":"workers"} on the list yet.</td></tr>`}</tbody></table></div>
+    ${gone.length?`<div class="pad"><details><summary style="cursor:pointer;font-weight:700;color:var(--muted)">${gone.length} who ${gone.length===1?"has":"have"} left</summary>
+      <div class="tbl-wrap" style="margin-top:10px"><table><tbody>${gone.map(row).join("")}</tbody></table></div></details></div>`:""}
+    </div>`;
+
+  if(!canEdit) return;
+
+  const add=document.getElementById("sa-add");
+  if(add) add.onclick=async()=>{
+    const n=document.getElementById("sa-name").value.trim();
+    const c=document.getElementById("sa-called").value.trim();
+    const e=document.getElementById("sa-emp").value.trim();
+    if(!n){ banner("Type the full name first."); return; }
+    const dup=STAFF.find(s=>(s.full_name||"").toLowerCase()===n.toLowerCase());
+    if(dup){ banner(`${dup.full_name} is already on the list. Use the picker below to add them as a ${word} too.`); return; }
+    const edup=e&&STAFF.find(s=>(s.employee_id||"").toLowerCase()===e.toLowerCase());
+    if(edup){ banner(`Employee ID ${e} is already on ${edup.full_name}.`); return; }
+    add.disabled=true;
+    await call("upsert_staff",{ p_id:null, p_full_name:n, p_called_name:c||null, p_active:true,
+      p_is_worker:!foremen, p_is_foreman:foremen, p_employee_id:e||null },`${n} added as a ${word}.`);
+    add.disabled=false;
+  };
+
+  const also=document.getElementById("sa-also");
+  if(also) also.onclick=async()=>{
+    const id=document.getElementById("sa-existing").value;
+    const s=STAFF.find(x=>String(x.id)===id);
+    if(!s){ banner("Pick a name first."); return; }
+    await call("upsert_staff",{ p_id:String(s.id), p_full_name:s.full_name, p_called_name:s.called_name||null,
+      p_active:true, p_is_worker:foremen?isW(s):true, p_is_foreman:foremen?true:isF(s),
+      p_employee_id:s.employee_id||null },
+      `${s.full_name} is now a ${word} as well.`);
+  };
+
+  body.querySelectorAll("[data-move-staff]").forEach(b=>b.onclick=async()=>{
+    const s=STAFF.find(x=>String(x.id)===b.dataset.moveStaff); if(!s) return;
+    const keepsOther=foremen?isW(s):isF(s);
+    if(!keepsOther){
+      banner(`${s.full_name} is only on this list. Use Mark as left instead, which keeps their history.`); return; }
+    if(!confirm(`Take ${s.full_name} off the ${foremen?"foremen":"workers"} list?\n\nThey stay on the ${foremen?"workers":"foremen"} list and keep every entry they are on.`)) return;
+    await call("upsert_staff",{ p_id:String(s.id), p_full_name:s.full_name, p_called_name:s.called_name||null,
+      p_active:true, p_is_worker:foremen?isW(s):false, p_is_foreman:foremen?false:isF(s),
+      p_employee_id:s.employee_id||null },
+      `${s.full_name} removed from the ${foremen?"foremen":"workers"} list.`);
+  });
+
+  body.querySelectorAll("[data-left-staff]").forEach(b=>b.onclick=async()=>{
+    const s=STAFF.find(x=>String(x.id)===b.dataset.leftStaff); if(!s) return;
+    const on=b.dataset.to==="1";
+    if(!on && !confirm(`Mark ${s.full_name} as having left?\n\nThey stop appearing in every picker. Every entry they are already on keeps their name, and you can bring them back at any time.`)) return;
+    b.disabled=true;
+    await call("upsert_staff",{ p_id:String(s.id), p_full_name:s.full_name, p_called_name:s.called_name||null,
+      p_active:on, p_is_worker:isW(s), p_is_foreman:isF(s), p_employee_id:s.employee_id||null },
+      on?`${s.full_name} is back on the list.`:`${s.full_name} marked as having left.`);
+  });
+
+  body.querySelectorAll("[data-edit-staff]").forEach(b=>b.onclick=()=>{
+    const s=STAFF.find(x=>String(x.id)===b.dataset.editStaff); if(!s) return;
+    const n=prompt("Full name",s.full_name||""); if(n===null) return;
+    if(!n.trim()){ banner("A name is required."); return; }
+    const c=prompt("Short name",s.called_name||""); if(c===null) return;
+    const e=prompt("Employee ID from Palm HR",s.employee_id||""); if(e===null) return;
+    call("upsert_staff",{ p_id:String(s.id), p_full_name:n.trim(), p_called_name:c.trim()||null,
+      p_active:s.active!==false, p_is_worker:isW(s), p_is_foreman:isF(s),
+      p_employee_id:e.trim()||null },"Saved.");
+  });
+}
+
+function drawStages(body,canEdit,stageErr,call){
+  body.innerHTML=`
+    <div class="card"><h2>Production stages</h2><div class="pad">
+      ${stageErr?`<div class="empty">The production stages table is not set up yet. Run the SQL batch for this release, then reload.<br><span class="meta">${esc(stageErr.message)}</span></div>`:`
+      <p class="hint" style="margin:0 0 12px">A product is not always finished in one go. These are the stages a worker entry can be logged against, so a job split across days can be recorded properly.
+        Order is the order they appear in the picker. A stage that has been used is retired rather than deleted.</p>
+      ${canEdit?`<div class="row">
+        <div class="field"><label>Stage name</label><input id="st-name" placeholder="Fitting LED and Driver into Tray"></div>
+        <div class="field"><label>Order</label><input id="st-sort" type="number" min="0" step="10" placeholder="30"></div>
+      </div>
+      <button class="btn primary" id="st-add">Add stage</button>`:""}`}
+    </div>
+    ${stageErr?"":`<div class="tbl-wrap"><table><thead><tr><th style="width:70px">Order</th><th>Stage</th><th style="width:190px"></th></tr></thead><tbody>${
+      STAGES.length?STAGES.map(s=>`<tr${s.active===false?' style="opacity:.6"':''}>
+        <td style="color:var(--muted)">${esc(s.sort_order??"")}</td>
+        <td><b>${esc(s.name||"")}</b>${s.active===false?' <span class="chip" data-tone="hold">retired</span>':""}</td>
+        <td style="white-space:nowrap">${canEdit?`
+          <button class="btn ghost sm" data-edit-stage="${esc(s.id)}">Edit</button>
+          <button class="btn ${s.active===false?"primary":"danger"} sm" data-off-stage="${esc(s.id)}" data-to="${s.active===false?"1":"0"}">
+            ${s.active===false?"Bring back":"Retire"}</button>`:""}</td>
+      </tr>`).join(""):`<tr><td colspan="3" style="color:var(--muted)">No stages yet. Add the ones your foremen use.</td></tr>`}
+    </tbody></table></div>`}
+    </div>`;
+  if(!canEdit||stageErr) return;
+
+  const sadd=document.getElementById("st-add");
+  if(sadd) sadd.onclick=async()=>{
+    const n=document.getElementById("st-name").value.trim();
+    const o=document.getElementById("st-sort").value.trim();
+    if(!n){ banner("Type the stage name first."); return; }
+    if(STAGES.some(s=>(s.name||"").toLowerCase()===n.toLowerCase())){ banner(`${n} is already a stage.`); return; }
+    sadd.disabled=true;
+    await call("upsert_production_stage",{ p_id:null, p_name:n, p_sort:o===""?null:Number(o), p_active:true },`Stage "${n}" added.`);
+    sadd.disabled=false;
+  };
+  body.querySelectorAll("[data-off-stage]").forEach(b=>b.onclick=async()=>{
+    const s=STAGES.find(x=>String(x.id)===b.dataset.offStage); if(!s) return;
+    const on=b.dataset.to==="1";
+    if(!on && !confirm(`Retire "${s.name}"?\n\nIt stops being offered on new entries. Entries already logged against it keep it.`)) return;
+    b.disabled=true;
+    await call("upsert_production_stage",{ p_id:String(s.id), p_name:s.name, p_sort:s.sort_order, p_active:on },
+      on?`"${s.name}" is back.`:`"${s.name}" retired.`);
+  });
+  body.querySelectorAll("[data-edit-stage]").forEach(b=>b.onclick=()=>{
+    const s=STAGES.find(x=>String(x.id)===b.dataset.editStage); if(!s) return;
+    const n=prompt("Stage name",s.name||""); if(n===null) return;
+    if(!n.trim()){ banner("A stage name is required."); return; }
+    const o=prompt("Order in the picker (lower comes first)",String(s.sort_order??"")); if(o===null) return;
+    call("upsert_production_stage",{ p_id:String(s.id), p_name:n.trim(), p_sort:o.trim()===""?null:Number(o), p_active:s.active!==false },"Saved.");
+  });
+}
 
 async function renderAdmin(){
   setHash("#/admin");
@@ -2178,7 +2509,11 @@ async function renderAdmin(){
   const users=data.users||[], perms=data.perms||[];
   const pm={}; perms.forEach(p=>{ (pm[p.role]=pm[p.role]||{})[p.section]=p; });
   ROLES=[...new Set(perms.map(p=>p.role))].sort((a,b)=>a==="admin"?-1:(b==="admin"?1:a.localeCompare(b)));
-  const dbSections=[...new Set(perms.map(p=>p.section))];
+  /* people is forced into the list so the row is there to tick even on a
+     database where batch43 has not run. Ticking it calls set_role_permission,
+     which creates the row. Without this the section would be invisible here
+     while may() treats a missing row as allowed, which is the wrong way round. */
+  const dbSections=[...new Set([...perms.map(p=>p.section), "people"])];
   SECTIONS=dbSections.sort((a,b)=>{
     const order=Object.keys(SECTION_LABELS);
     const ia=order.indexOf(a), ib=order.indexOf(b);
@@ -2350,6 +2685,7 @@ async function renderBomEditor(){
         <option value="customer_asc">Client, A to Z</option>
       </select>
       <button class="btn ghost" id="bomReset" title="Clear every filter and go back to the default order">Reset</button>
+      <button class="btn ghost" id="bomMass" disabled title="Type a value once and put it on every row you have ticked">Mass BOM edit (0)</button>
       <button class="btn primary" id="bomSave" disabled>Save changes (0)</button>
       ${BOMSRC==="rejected"?`<button class="btn orange" id="bomRepush" disabled>Re-push to warehouse (0)</button>`:""}
       ${BOMSRC==="plans"&&may("planning","edit")?`<button class="btn orange" id="bomPush" disabled title="Send the selected plans to the warehouse queue. Only plans with a planned date can go.">Push to warehouse (0)</button>`:""}
@@ -2402,6 +2738,8 @@ async function renderBomEditor(){
   if(!data.length){ grid.innerHTML=`<div class="empty">${isRejected?"Nothing returned to engineering. Plans the warehouse rejects appear here for BOM correction.":(isPlans?"No plans in Draft, Returned, Warehouse or Pushed.":"No production records yet.")}</div>`; return; }
 
   const dirty={};
+  // how many matching rows are drawn at once, raised by the Show more button
+  let RENDERN=300; const RENDERSTEP=300;
   const COLS=isPlans
     ?[["bom_driver","Driver"],["bom_driver_qty","Drv qty"],["bom_led","LED"],["bom_led_qty","LED qty"],
       ["bom_em","EM"],["bom_em_qty","EM qty"],["bom_housing","Housing"],["bom_housing_qty","Hsg qty"],
@@ -2498,17 +2836,31 @@ async function renderBomEditor(){
     const st=stEl?stEl.value:"live";
     let rows=data.filter(r=>rowVisible(r,q,only,wk,st));
     rows=bomSorted(rows);
+    /* Every BOM cell is an input, so the browser builds about twelve form
+       controls per row. Rendering every match put 29,000 of them on the page
+       at 4,000 plans, which cost five and a half seconds to open and nearly
+       three seconds every time anyone touched a filter. Only the first slice
+       is drawn now. Edits are held in `dirty` by row id, so anything typed
+       before narrowing the filter is still saved. */
+    const total=rows.length;
+    const capped=total>RENDERN;
+    rows=capped?rows.slice(0,RENDERN):rows;
     grid.innerHTML=`<div class="tbl-wrap bom-wrap"><table class="bom-table"><thead><tr>
-        ${isPlans?`${isRejected||canPush?'<th style="width:28px"></th>':""}<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
+        <th style="width:28px"><input type="checkbox" id="bomAll" title="Select every row shown"></th>
+        ${isPlans?`<th style="min-width:120px">SO</th><th>Product</th><th style="min-width:160px">C.Ref</th><th style="width:64px">DN qty</th><th style="min-width:${isRejected?"190px":"90px"}">${isRejected?"Rejected because":"Status"}</th>`
                  :`<th style="min-width:150px">Serial</th><th>Model</th><th style="min-width:160px">C.Ref</th><th style="width:90px">SO</th>`}
         ${COLS.map(c=>`<th style="min-width:${isQty(c[0])?"74px":"140px"}">${c[1]}</th>`).join("")}
       </tr></thead><tbody>${
       rows.map(r=>`<tr>
-        ${isPlans?`${isRejected?`<td style="width:28px"><input type="checkbox" class="rpSel" data-rp="${r.id}"></td>`
-                   :(canPush?`<td style="width:28px">${PUSHABLE.includes(r.plan_status)
-                       ?`<input type="checkbox" class="pushSel" data-push="${r.id}" data-date="${esc(r.planned_date||"")}" title="${r.planned_date?"Ready to push":"No planned date yet"}">`
-                       :""}</td>`:"")}
-                   <td><b>${esc(r.odoo_so||r.sap_so||"")}</b><div class="meta">${esc(r.customer||"")}</div></td>
+        ${/* One checkbox per row now serves mass BOM edit, push and re-push.
+              The push and re-push attributes are only put on rows those
+              actions accept, so their selectors still pick up exactly the
+              rows they did before. */""}
+        <td style="width:28px"><input type="checkbox" class="bomSel" data-id="${r.id}"
+          ${isRejected?`data-rp="${r.id}"`:""}
+          ${isPlans&&!isRejected&&canPush&&PUSHABLE.includes(r.plan_status)
+            ?`data-push="${r.id}" data-date="${esc(r.planned_date||"")}" title="${r.planned_date?"Ready to push":"No planned date yet"}"`:""}></td>
+        ${isPlans?`<td><b>${esc(r.odoo_so||r.sap_so||"")}</b><div class="meta">${esc(r.customer||"")}</div></td>
                    <td>${esc(r.product_name||r.model||"")}</td>
                    <td>${esc(r.c_ref||"")}</td>
                    <td>${r.so_qty==null?"":esc(r.so_qty)}</td>
@@ -2534,8 +2886,14 @@ async function renderBomEditor(){
       </tr>`).join("")}</tbody></table></div>
       ${rows.length?"":`<div class="empty">Nothing matches the current filter.${q?" Searching the database for more\u2026":""}</div>`}
       <div class="meta" style="padding:8px 10px;border-top:1px solid var(--line)">
-        Showing ${rows.length.toLocaleString()} of ${data.length.toLocaleString()} loaded${truncated?` <b style="color:var(--hold)">(load capped at ${CAP.toLocaleString()}; use the search box to reach anything not loaded)</b>`:""}
+        Showing ${rows.length.toLocaleString()} of ${total.toLocaleString()} matching, ${data.length.toLocaleString()} loaded${truncated?` <b style="color:var(--hold)">(load capped at ${CAP.toLocaleString()}; use the search box to reach anything not loaded)</b>`:""}
+        ${capped?`<button class="btn ghost sm" id="bomMore" style="margin-left:8px">Show ${Math.min(RENDERSTEP,total-rows.length).toLocaleString()} more</button>
+          <span style="margin-left:6px">Narrow with the filters above to reach the rest faster. Anything you type is saved even after the list changes.</span>`:""}
       </div>`;
+    const moreBtn=document.getElementById("bomMore");
+    // paint() belongs to the Reset button's own scope and is not reachable
+    // here, nor does showing more rows change whether Reset is available
+    if(moreBtn) moreBtn.onclick=()=>{ RENDERN+=RENDERSTEP; draw(); };
     (function(){
       const tbl=grid.querySelector("table.bom-table"); if(!tbl) return;
       const key="nlc-bomw-"+(isRejected?"rejected":(isPlans?"plans":"records"));
@@ -2546,6 +2904,10 @@ async function renderBomEditor(){
         ths.forEach((th,i)=>{ if(saved[i]) th.style.width=saved[i]+"px"; });
       }
       ths.forEach((th,i)=>{
+        // the first column is the 28px select box. A resize grip there has
+        // nothing to resize and sits on top of the tick box, swallowing the
+        // click, so it is left off.
+        if(i===0 && th.querySelector("#bomAll")) return;
         const rz=document.createElement("span"); rz.className="rz"; th.appendChild(rz);
         rz.addEventListener("mousedown",e=>{
           e.preventDefault();
@@ -2574,6 +2936,115 @@ async function renderBomEditor(){
     });
     wireRepush();
     wirePush();
+    wireMass();
+  }
+
+  /* Mass BOM edit. Tick rows, type a value once, put it on all of them.
+     Nothing is written to the database here: the values go into `dirty`
+     exactly as if they had been typed cell by cell, so they are highlighted,
+     reviewable, undoable by Reset and saved by the existing Save button
+     through the same RPC. A field is only applied when its own tick box is
+     on, so leaving a field alone never wipes what is already there, and
+     ticking a field with an empty value clears it on purpose. */
+  function wireMass(){
+    const btn=document.getElementById("bomMass");
+    if(!btn) return;
+    const boxes=[...document.querySelectorAll(".bomSel")];
+    const all=document.getElementById("bomAll");
+    const picked=()=>boxes.filter(b=>b.checked);
+    const sync=()=>{ const n=picked().length;
+      btn.disabled=!n; btn.textContent=`Mass BOM edit (${n})`;
+      if(all){ all.checked=n>0&&n===boxes.length; all.indeterminate=n>0&&n<boxes.length; } };
+    // addEventListener, not onchange: push and re-push already own onchange
+    // on the rows they accept, and assigning would silently replace theirs
+    boxes.forEach(b=>b.addEventListener("change",sync));
+    if(all) all.onchange=()=>{
+      // the dispatched change runs sync, which rewrites all.checked, so the
+      // target is captured first rather than read again inside the loop
+      const want=all.checked;
+      boxes.forEach(b=>{ if(b.checked!==want){ b.checked=want;
+        b.dispatchEvent(new Event("change")); } });
+      sync();
+    };
+    sync();
+    btn.onclick=()=>massModal(picked().map(b=>b.dataset.id));
+  }
+
+  function massModal(ids){
+    if(!ids.length) return;
+    const rowOf=id=>data.find(r=>r.id===id);
+    const label=id=>{ const r=rowOf(id); if(!r) return "(row)";
+      return isPlans?(r.odoo_so||r.sap_so||"(no SO)"):(r.serial||"(no serial)"); };
+    const names=ids.slice(0,8).map(label).join(", ");
+    const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+    bg.innerHTML=`<div class="modal" style="max-width:640px"><div class="mh">Mass BOM edit<span class="x">&times;</span></div>
+      <div class="mb">
+        <p class="sub" style="margin:0 0 4px">Applying to <b>${ids.length}</b> row${ids.length===1?"":"s"}: ${esc(names)}${ids.length>8?` and ${ids.length-8} more`:""}</p>
+        <p class="sub" style="margin:0 0 12px">Tick the fields you want to set. Fields left unticked are not touched. A ticked field with nothing in it clears that field.</p>
+        <div class="mass-grid">
+          ${COLS.map(([k,lbl])=>{
+            const input=k==="bom_stock_status"
+              ? `<select data-mk="${k}">${["","In Stock","Partial Stock","Cargo/PO Item","Not available"].map(o=>`<option value="${o}">${o||"(clear)"}</option>`).join("")}</select>`
+              : (isQty(k) ? `<input type="number" min="0" step="any" data-mk="${k}">`
+                          : `<input data-mk="${k}">`);
+            return `<label class="mass-row"><input type="checkbox" class="mass-on" data-on="${k}">
+              <span class="mass-lbl">${esc(lbl)}</span>${input}</label>`;
+          }).join("")}
+        </div>
+        <div class="banner" id="massWarn" style="margin-top:10px"></div>
+      </div>
+      <div class="mf"><button class="btn ghost" id="massCancel">Cancel</button>
+        <button class="btn primary" id="massGo" disabled>Apply to ${ids.length} row${ids.length===1?"":"s"}</button></div></div>`;
+    document.body.appendChild(bg);
+    const close=()=>bg.remove();
+    bg.querySelector(".x").onclick=close;
+    bg.querySelector("#massCancel").onclick=close;
+    bg.onclick=e=>{ if(e.target===bg) close(); };
+
+    const go=bg.querySelector("#massGo");
+    const onBoxes=[...bg.querySelectorAll(".mass-on")];
+    const warn=bg.querySelector("#massWarn");
+    const refresh=()=>{
+      const on=onBoxes.filter(b=>b.checked).map(b=>b.dataset.on);
+      go.disabled=!on.length;
+      // fabricated columns only exist on plans that need fabrication, so say
+      // so up front rather than silently skipping rows at apply time
+      const fabOn=on.some(isFabCol);
+      const noFab=fabOn&&isPlans?ids.filter(id=>{ const r=rowOf(id); return r&&!r.needs_fabrication; }).length:0;
+      warn.className=noFab?"banner show":"banner";
+      warn.style.display=noFab?"block":"none";
+      warn.textContent=noFab?`${noFab} of the ${ids.length} selected row${ids.length===1?" is":"s are"} not marked as needing fabrication, so the fabricated fields will be skipped on ${noFab===1?"it":"them"}.`:"";
+    };
+    onBoxes.forEach(b=>b.addEventListener("change",refresh));
+    bg.querySelectorAll("[data-mk]").forEach(el=>el.addEventListener("input",()=>{
+      // typing in a field is a clear signal you want it applied
+      const t=bg.querySelector(`.mass-on[data-on="${el.dataset.mk}"]`);
+      if(t&&!t.checked){ t.checked=true; refresh(); }
+    }));
+    refresh();
+
+    go.onclick=()=>{
+      const fields=onBoxes.filter(b=>b.checked).map(b=>b.dataset.on);
+      let touched=0, skipped=0;
+      ids.forEach(id=>{
+        const r=rowOf(id); if(!r) return;
+        fields.forEach(k=>{
+          if(isFabCol(k)&&isPlans&&!r.needs_fabrication){ skipped++; return; }
+          const el=bg.querySelector(`[data-mk="${k}"]`);
+          const v=el?String(el.value).trim():"";
+          if(!dirty[id]) dirty[id]={};
+          if(v===orig[id][k]) delete dirty[id][k]; else dirty[id][k]=v;
+          touched++;
+        });
+        if(dirty[id]&&!Object.keys(dirty[id]).length) delete dirty[id];
+      });
+      close();
+      draw();
+      updateSaveBtn();
+      banner(`Set ${fields.length} field${fields.length===1?"":"s"} on ${ids.length} row${ids.length===1?"":"s"}`+
+             (skipped?`, skipping ${skipped} fabricated cell${skipped===1?"":"s"} on plans that do not need fabrication`:"")+
+             ". Nothing is saved until you press Save changes.", true);
+    };
   }
   function updateSaveBtn(){
     const n=Object.keys(dirty).length;
@@ -2632,7 +3103,7 @@ async function renderBomEditor(){
   function wirePush(){
     const btn=document.getElementById("bomPush");
     if(!btn) return;
-    const boxes=[...document.querySelectorAll(".pushSel")];
+    const boxes=[...document.querySelectorAll(".bomSel[data-push]")];
     const sync=()=>{ const n=boxes.filter(b=>b.checked).length;
       btn.disabled=!n; btn.textContent=`Push to warehouse (${n})`; };
     boxes.forEach(b=>b.onchange=sync);
@@ -2671,7 +3142,7 @@ async function renderBomEditor(){
   function wireRepush(){
     const btn=document.getElementById("bomRepush");
     if(!btn) return;
-    const boxes=[...document.querySelectorAll(".rpSel")];
+    const boxes=[...document.querySelectorAll(".bomSel[data-rp]")];
     const sync=()=>{ const n=boxes.filter(b=>b.checked).length;
       btn.disabled=!n; btn.textContent=`Re-push to warehouse (${n})`; };
     boxes.forEach(b=>b.onchange=sync);
@@ -2937,11 +3408,11 @@ async function saveRecord(){
     document.querySelector("h1").textContent=data.serial;
     document.getElementById("save").textContent="Save changes";
     document.getElementById("printBtn").onclick=()=>printTag(current);
-    refreshQrPanel();
+    refreshQrPanel(); refreshFgPanel();
     document.getElementById("addWorker").onclick=addWorker;
     loadWorkers(); renderAudit(); updateBomChip();
     banner("Record created. Serial "+data.serial+".",true);
-    maybeAskQr();
+    maybeAskOnComplete();
   } else {
     // update via POST RPC so proxies that block PATCH do not break saves
     const { data, error }=await db.rpc("update_production_record",{ p_id:current.id, p_fields:payload });
@@ -2950,7 +3421,7 @@ async function saveRecord(){
         ?"Network error reaching the database. Check your connection, then try again."
         :(dupMsg(error.message)||("Could not save changes: "+error.message))); return; }
     current=data; banner("Changes saved.",true); renderAudit(); updateBomChip();
-    refreshQrPanel(); maybeAskQr();
+    refreshQrPanel(); refreshFgPanel(); maybeAskOnComplete();
     const qi=document.getElementById("qrimg");
     if(qi) qi.className="kind-"+(data.record_kind||"Production");
     loadWorkers();
@@ -2970,11 +3441,20 @@ function updateBomChip(){
 async function loadWorkers(){
   const box=document.getElementById("workers");
   const { data, error }=await db.from("worker_entries")
-    .select("id,qty,conveyor,start_time,finish_time,work_type,total_mins,cycle_time,remarks,staff_id,staff_ids")
+    .select("id,qty,conveyor,start_time,finish_time,work_type,total_mins,cycle_time,remarks,staff_id,staff_ids,stage,work_date")
     .eq("record_id",current.id).order("created_at",{ascending:true});
   const wc=document.getElementById("wc");
   if(error){ box.innerHTML=`<div class="empty">Could not load entries: ${esc(error.message)}</div>`; return; }
   wc.textContent=(data.length||0)+(data.length===1?" entry":" entries");
+  const ms=document.getElementById("msBadge");
+  if(ms){
+    const stages=new Set(data.map(w=>w.stage).filter(Boolean));
+    const days=new Set(data.map(w=>w.work_date).filter(Boolean));
+    const staged=stages.size>1||days.size>1;
+    ms.innerHTML=staged
+      ? `<span class="chip" data-tone="info" title="${stages.size>1?stages.size+" different stages":""}${stages.size>1&&days.size>1?", ":""}${days.size>1?days.size+" different days":""}">multi stage</span>`
+      : "";
+  }
   if(!data.length){ box.innerHTML=`<div class="empty">No entries yet.</div>`; return; }
   const totQty=data.reduce((a,w)=>a+(w.qty||0),0);
   const totMin=data.reduce((a,w)=>a+(Number(w.total_mins)||0),0);
@@ -2989,10 +3469,12 @@ async function loadWorkers(){
     qh.innerHTML=`<b>${totQty}</b> of <b>${current.planned_qty}</b> logged &middot; <b>${rem}</b> remaining`;
     qh.style.color = rem<0 ? "var(--hold)" : (rem===0 ? "var(--ok)" : "var(--muted)");
   }
-  box.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Worker</th><th>Conveyor</th><th>Start</th><th>Finish</th><th>Task</th>
+  box.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Worker</th><th>Stage</th><th>Day</th><th>Conveyor</th><th>Start</th><th>Finish</th><th>Task</th>
     <th class="num">Qty</th><th class="num">Total min</th><th class="num">Cycle</th><th></th></tr></thead><tbody>${
     data.map(w=>`<tr>
       <td>${esc(namesOf(w))}${w.remarks?`<div class="meta">${esc(w.remarks)}</div>`:""}</td>
+      <td>${w.stage?esc(w.stage):'<span style="color:var(--muted)">-</span>'}</td>
+      <td style="white-space:nowrap">${esc(w.work_date||"")||'<span style="color:var(--muted)">-</span>'}</td>
       <td>${esc(w.conveyor||"-")}</td>
       <td>${esc(t5(w.start_time))||"-"}</td>
       <td>${esc(t5(w.finish_time))||"-"}</td>
@@ -3004,7 +3486,7 @@ async function loadWorkers(){
         <button class="btn danger" data-del="${w.id}">Remove</button></td>
     </tr>`).join("")}</tbody>
     <tfoot><tr class="totals">
-      <td colspan="5" style="text-align:right">Record totals</td>
+      <td colspan="7" style="text-align:right">Record totals</td>
       <td class="num">${totQty}</td>
       <td class="num">${Math.round(totMin)}</td>
       <td class="num">${avgCyc!=null?avgCyc:""}</td><td></td>
@@ -3027,10 +3509,12 @@ function editEntry(w, loggedTotal){
     <div class="row">
       <div class="field full"><label>Workers</label>
         <input id="ee-staff-in" list="stafflist2" placeholder="Type a name and press Enter">
-        <datalist id="stafflist2">${STAFF.map(s=>`<option value="${esc(s.full_name)} (${esc(s.id)})">`).join("")}</datalist>
+        <datalist id="stafflist2">${workerOptions()}</datalist>
         <div id="ee-chips" class="chips"></div></div>
       <div class="field"><label>Conveyor</label><select id="ee-conv"><option value=""></option>${CONVEYORS.map(c=>`<option ${c===w.conveyor?"selected":""}>${c}</option>`).join("")}</select></div>
       <div class="field"><label>Task</label><select id="ee-type"><option value="C" ${w.work_type!=="S"?"selected":""}>Complete</option><option value="S" ${w.work_type==="S"?"selected":""}>Stickers</option></select></div>
+      <div class="field"><label>Stage</label><select id="ee-stage">${stageOptions(w.stage||"")}</select></div>
+      <div class="field"><label>Day</label><input id="ee-date" type="date" value="${esc(w.work_date||"")}"></div>
       <div class="field"><label>Start time</label><input id="ee-start" type="time" value="${esc(t5(w.start_time))}"></div>
       <div class="field"><label>Completion time</label><input id="ee-finish" type="time" value="${esc(t5(w.finish_time))}"></div>
       <div class="field"><label>Quantity finished</label><input id="ee-qty" type="number" min="0" value="${w.qty??0}">
@@ -3047,7 +3531,7 @@ function editEntry(w, loggedTotal){
   chips();
   const inp=m.el.querySelector("#ee-staff-in");
   const commit=()=>{ const v=inp.value.trim(); if(!v) return;
-    const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
+    const s=findStaff(STAFF,v);
     if(!s) return; if(!sel.includes(s.id)) sel.push(s.id); inp.value=""; chips(); };
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } });
   inp.addEventListener("change",commit);
@@ -3073,6 +3557,8 @@ function editEntry(w, loggedTotal){
     const fields={ staff_ids:sel, staff_id:sel[0]||null,
       conveyor:m.el.querySelector("#ee-conv").value||null,
       work_type:m.el.querySelector("#ee-type").value,
+      stage:m.el.querySelector("#ee-stage").value||null,
+      work_date:m.el.querySelector("#ee-date").value||null,
       start_time:m.el.querySelector("#ee-start").value||null,
       finish_time:m.el.querySelector("#ee-finish").value||null,
       qty:String(qty),
@@ -3091,6 +3577,8 @@ async function addWorker(){
     staff_id:selWorkers[0]||null,
     conveyor:document.getElementById("w-conv").value||null,
     work_type:document.getElementById("w-type").value,
+    stage:document.getElementById("w-stage").value||null,
+    work_date:document.getElementById("w-date").value||null,
     start_time:document.getElementById("w-start").value||null,
     finish_time:document.getElementById("w-finish").value||null,
     qty:parseInt(document.getElementById("w-qty").value||"0",10),
@@ -3123,8 +3611,11 @@ function wireFabrication(){
   selFabWorkers=[];
   const inp=document.getElementById("fw-staff-in");
   const commit=()=>{ const v=inp.value.trim(); if(!v) return;
-    const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
-    if(!s){ banner("No worker matches \u201c"+v+"\u201d."); return; }
+    // new entry, so only people still here. The two edit forms keep searching
+    // the whole list, or an entry made before someone left could not be opened.
+    const s=findStaff(WORKER_PICK(),v);
+    if(!s){
+      banner(whyNotAWorker(v)); return; }
     if(!selFabWorkers.includes(s.id)) selFabWorkers.push(s.id);
     inp.value=""; fabChips(); };
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } });
@@ -3211,7 +3702,7 @@ function editFab(w, loggedTotal){
     <div class="row">
       <div class="field full"><label>Workers</label>
         <input id="fe-staff-in" list="stafflist3" placeholder="Type a name and press Enter">
-        <datalist id="stafflist3">${STAFF.map(s=>`<option value="${esc(s.full_name)} (${esc(s.id)})">`).join("")}</datalist>
+        <datalist id="stafflist3">${workerOptions()}</datalist>
         <div id="fe-chips" class="chips"></div></div>
       <div class="field"><label>Stage</label><select id="fe-stage">${["Fabrication","Painting Pending","Fabrication Complete"].map(s=>`<option ${s===w.stage?"selected":""}>${s}</option>`).join("")}</select></div>
       <div class="field"><label>Quantity</label><input id="fe-qty" type="number" min="0" value="${w.qty??0}">
@@ -3228,7 +3719,7 @@ function editFab(w, loggedTotal){
   chips();
   const inp=m.el.querySelector("#fe-staff-in");
   const commit=()=>{ const v=inp.value.trim(); if(!v) return;
-    const s=STAFF.find(x=>`${x.full_name} (${x.id})`===v || x.full_name.toLowerCase()===v.toLowerCase() || x.id===v);
+    const s=findStaff(STAFF,v);
     if(!s) return; if(!sel.includes(s.id)) sel.push(s.id); inp.value=""; chips(); };
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } });
   inp.addEventListener("change",commit);
@@ -3627,6 +4118,218 @@ function qrConfirmModal(r){
     if(error){ msg(error.message); btn.disabled=false; btn.textContent="Save"; return; }
     current=data; closeAll(); refreshQrPanel();
     banner(ans==="yes"?"QR confirmed as applied.":"Recorded as not applied.", ans==="yes");
+    setTimeout(maybeAskFg, 500);
+  };
+
+  sync();
+}
+
+/* ---------------- finished goods photos ----------------
+   Asked for when a record is set to Completed, right after the QR question so
+   two dialogs never stack. Two photos: the packed pallet, and one individual
+   piece. Skippable with a reason, the same bargain as QR, because a flat
+   phone battery must not stop the line. */
+function fgAnswered(r){
+  return !!r && (r.fg_skipped===true || !!r.fg_pallet_path || !!r.fg_piece_path);
+}
+function fgUnanswered(r){
+  return !!r && r.status==="Completed" && !fgAnswered(r);
+}
+function fgSpotlight(){
+  const box=document.getElementById("fgPanel"); if(!box) return;
+  try{ box.scrollIntoView({behavior:"smooth", block:"center"}); }catch(e){ box.scrollIntoView(); }
+  const panel=box.querySelector(".qrconf"); if(!panel) return;
+  panel.classList.remove("flash"); void panel.offsetWidth; panel.classList.add("flash");
+}
+function maybeAskFg(){
+  if(!fgUnanswered(current)) return;
+  fgSpotlight();
+  if(!may("records","edit")) return;
+  setTimeout(()=>{ if(fgUnanswered(current)) fgModal(current); }, 650);
+}
+/* One question at a time. QR goes first because it is the older rule and the
+   one people already expect; the FG question follows once QR is answered. */
+function maybeAskOnComplete(){
+  if(qrUnanswered(current)){ maybeAskQr(); return; }
+  maybeAskFg();
+}
+
+function fgPanelHtml(r){
+  if(!r || !r.id) return "";
+  const shot=(path,label,which)=>path
+    ? `<div class="fg-one done"><b>${label}</b><span>taken</span>
+         <button class="btn ghost sm" data-fgview="${esc(which)}">View</button></div>`
+    : `<div class="fg-one"><b>${label}</b><span>not taken</span></div>`;
+  const both=r.fg_pallet_path&&r.fg_piece_path;
+  const who=r.fg_by?`<div class="m" style="color:var(--muted);margin-top:6px">By ${esc(r.fg_by)}${r.fg_at?" on "+esc(String(r.fg_at).slice(0,16).replace("T"," ")):""}</div>`:"";
+  if(r.fg_skipped)
+    return `<div class="qrconf"><div><b>Finished goods photos skipped.</b>
+      <div class="m">Reason: ${esc(r.fg_skip_reason||"not given")}</div>${who}</div>
+      ${may("records","edit")?'<button class="btn ghost sm" id="fgAgain">Add them now</button>':""}</div>`;
+  if(r.fg_pallet_path||r.fg_piece_path)
+    return `<div class="qrconf ${both?"ok":"warn"}"><div>
+        <b>${both?"Finished goods photos taken.":"One finished goods photo still missing."}</b>
+        <div class="fg-grid">${shot(r.fg_pallet_path,"Packed pallet","pallet")}${shot(r.fg_piece_path,"Single piece","piece")}</div>
+        ${r.fg_note?`<div class="m">${esc(r.fg_note)}</div>`:""}${who}</div>
+      ${may("records","edit")?`<button class="btn ghost sm" id="fgAgain">${both?"Change":"Add it"}</button>`:""}</div>`;
+  if(r.status!=="Completed")
+    return `<div class="qrconf"><div><b>Finished goods photos.</b>
+      <div class="m">Asked for once this record is set to Completed.</div></div></div>`;
+  return `<div class="qrconf warn"><div><b>Finished goods photos not taken yet.</b>
+    <div class="m">One of the packed pallet, and one of a single piece.</div></div>
+    ${may("records","edit")?'<button class="btn orange sm" id="fgConfirm">Add them now</button>':""}</div>`;
+}
+
+function wireFgPanel(){
+  const r=current, go=id=>document.getElementById(id);
+  const c=go("fgConfirm"); if(c) c.onclick=()=>fgModal(r);
+  const a=go("fgAgain");   if(a) a.onclick=()=>fgModal(r);
+  document.querySelectorAll("[data-fgview]").forEach(b=>b.onclick=()=>
+    openFgPhoto(b.dataset.fgview==="pallet"?r.fg_pallet_path:r.fg_piece_path));
+}
+
+function refreshFgPanel(){
+  const box=document.getElementById("fgPanel");
+  if(!box) return;
+  box.innerHTML=fgPanelHtml(current);
+  wireFgPanel();
+}
+
+async function openFgPhoto(path){
+  if(!path) return;
+  const { data, error }=await db.storage.from("fg-photos").createSignedUrl(path, 3600);
+  if(error){ banner("Could not open the photo: "+error.message); return; }
+  window.open(data.signedUrl, "_blank");
+}
+
+/* Wires one drop zone: camera, file picker, drag and drop. Paste is handled
+   once for the whole dialog, since a paste has no target of its own and has
+   to go to whichever zone was last touched. */
+function fgZone(el, key, state, onChange){
+  const q=s=>el.querySelector(s);
+  const drop=q(`#fgDrop_${key}`);
+  async function take(f){
+    if(!f) return;
+    if(!/^image\//.test(f.type)){ onChange(`That is not an image file.`); return; }
+    gbusy(true);
+    state[key]=await shrinkImage(f, 1600, 0.75);
+    gbusy(false);
+    const kb=Math.round(state[key].size/1024);
+    q(`#fgPrev_${key}`).innerHTML=`<div class="qr-prev"><img src="${URL.createObjectURL(state[key])}" alt="">
+      <div><b>${esc(state[key].name||"photo.jpg")}</b><div class="m">${kb} KB</div>
+      <button class="btn link" type="button" data-again="${key}" style="padding:0">Use a different photo</button></div></div>`;
+    const ag=q(`[data-again="${key}"]`); if(ag) ag.onclick=()=>q(`#fgPick_${key}`).click();
+    onChange("");
+  }
+  q(`#fgCam_${key}`).onclick =()=>{ state.last=key; q(`#fgFileCam_${key}`).click(); };
+  q(`#fgPick_${key}`).onclick=()=>{ state.last=key; q(`#fgFilePick_${key}`).click(); };
+  q(`#fgFileCam_${key}`).onchange =()=>take(q(`#fgFileCam_${key}`).files[0]);
+  q(`#fgFilePick_${key}`).onchange=()=>take(q(`#fgFilePick_${key}`).files[0]);
+  ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{
+    e.preventDefault(); e.stopPropagation(); state.last=key; drop.classList.add("over"); }));
+  ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{
+    e.preventDefault(); e.stopPropagation(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop",e=>{
+    const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f){ state.last=key; take(f); }
+  });
+  drop.addEventListener("click",()=>{ state.last=key; });
+  return take;
+}
+
+function fgModal(r){
+  const zone=(key,title,hint)=>`
+    <div class="fg-col">
+      <div class="qr-drop" id="fgDrop_${key}">
+        <b>${title}</b>
+        <span>${hint}</span>
+        <div class="qr-drop-b">
+          <button class="btn ghost sm" id="fgCam_${key}" type="button">Take a photo</button>
+          <button class="btn ghost sm" id="fgPick_${key}" type="button">Choose a file</button>
+        </div>
+        <span class="qr-drop-h">or drag an image here</span>
+        <input type="file" id="fgFileCam_${key}" accept="image/*" capture="environment" hidden>
+        <input type="file" id="fgFilePick_${key}" accept="image/*" hidden>
+      </div>
+      <div id="fgPrev_${key}"></div>
+    </div>`;
+
+  const m=modal(`Finished goods photos for ${r.serial||"this record"}`, `
+    <p class="hint" style="margin-top:0">Two photos of the finished product: the packed pallet as it leaves, and one piece on its own.
+      ${r.fg_pallet_path||r.fg_piece_path?"Anything you add replaces what is already there.":""}</p>
+    <div class="fg-grid2">
+      ${zone("pallet","\u{1F4E6} Packed pallet","The pallet as it is packed and ready to go")}
+      ${zone("piece","\u{1F4A1} Single piece","One finished unit on its own")}
+    </div>
+    <span class="qr-drop-h" style="display:block;margin-top:6px;color:var(--muted)">You can also paste an image. It goes to whichever box you touched last.</span>
+    <div class="field" style="margin-top:12px"><label>Note (optional)</label>
+      <textarea id="fgNote" rows="2" placeholder="Anything worth recording">${esc(r.fg_note||"")}</textarea></div>
+    <div class="msg" id="fgMsg"></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px;flex-wrap:wrap">
+      <button class="btn link" id="fgSkip" type="button">Skip, with a reason</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn ghost" id="fgCancel" type="button">Cancel</button>
+        <button class="btn primary" id="fgSave" type="button" disabled>Save</button>
+      </div>
+    </div>`);
+
+  const el=m.el, q=s=>el.querySelector(s);
+  // two drop zones side by side need more room than the default dialog width
+  const shell_=el.querySelector(".modal"); if(shell_) shell_.style.maxWidth="700px";
+  const state={ pallet:null, piece:null, last:"pallet" };
+  const msg=t=>{ const b=q("#fgMsg"); b.className=t?"msg err":"msg"; b.textContent=t||""; };
+  const sync=t=>{
+    msg(t||"");
+    q("#fgSave").disabled=!(state.pallet||state.piece);
+  };
+  const takePallet=fgZone(el,"pallet",state,sync);
+  const takePiece =fgZone(el,"piece", state,sync);
+
+  const onPaste=e=>{
+    const items=(e.clipboardData&&e.clipboardData.items)||[];
+    for(const it of items){
+      if(it.kind==="file" && /^image\//.test(it.type)){
+        const f=it.getAsFile();
+        if(f){ e.preventDefault(); (state.last==="piece"?takePiece:takePallet)(f); return; }
+      }
+    }
+  };
+  document.addEventListener("paste", onPaste);
+  const closeAll=()=>{ document.removeEventListener("paste", onPaste); m.close(); };
+  q("#fgCancel").onclick=closeAll;
+  const x=el.querySelector(".x"); if(x) x.onclick=closeAll;
+
+  q("#fgSkip").onclick=async()=>{
+    const why=prompt("Why are the photos being skipped?");
+    if(why===null) return;
+    if(!why.trim()){ msg("Give a reason."); return; }
+    const { data, error }=await db.rpc("set_fg_skipped",{ p_id:r.id, p_reason:why.trim() });
+    if(error){ msg(error.message); return; }
+    current=data; closeAll(); refreshFgPanel(); banner("Recorded as skipped.",true);
+  };
+
+  q("#fgSave").onclick=async()=>{
+    const btn=q("#fgSave"); btn.disabled=true; btn.textContent="Saving…";
+    const paths={ pallet:null, piece:null };
+    gbusy(true);
+    for(const key of ["pallet","piece"]){
+      const f=state[key];
+      if(!f) continue;
+      const p=`${r.id}/${key}_${Date.now()}_${(f.name||key+".jpg").replace(/[^\w.\-]/g,"_")}`;
+      const { error:up }=await db.storage.from("fg-photos").upload(p, f, { upsert:false });
+      // the photo is the point, so a failed upload must not be recorded as done
+      if(up){ gbusy(false); msg(`The ${key==="pallet"?"pallet":"piece"} photo did not upload, so nothing was saved: ${up.message}`);
+        btn.disabled=false; btn.textContent="Save"; return; }
+      paths[key]=p;
+    }
+    gbusy(false);
+    const { data, error }=await db.rpc("set_fg_photos",{
+      p_id:r.id, p_pallet_path:paths.pallet, p_piece_path:paths.piece,
+      p_note:q("#fgNote").value.trim()||null });
+    if(error){ msg(error.message); btn.disabled=false; btn.textContent="Save"; return; }
+    current=data; closeAll(); refreshFgPanel();
+    const both=data.fg_pallet_path&&data.fg_piece_path;
+    banner(both?"Both finished goods photos saved.":"Photo saved. One is still missing.", !!both);
   };
 
   sync();
@@ -3992,7 +4695,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-10-15 08:34";
+const NLC_BUILD = "2026-11-22 17:35";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
