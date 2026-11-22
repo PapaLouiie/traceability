@@ -343,6 +343,7 @@ function toggleTheme(){
 }
 let ROLE="";
 let VAL=null;      // rows from production_value, or null when it refused
+let VALERR=null;   // a real fault worth showing, never a permission refusal
 const root=document.getElementById("root");
 const PAL=["#24275E","#F6851F","#3457b2","#1f9d63","#c0392b","#8e44ad","#c9820b","#16a085","#7f8c8d","#e67e22"];
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -437,7 +438,17 @@ async function load(){
     db.rpc("production_value",{ p_from:RANGE.from||null, p_to:RANGE.to||null })
   ]);
   VAL = (valRes && !valRes.error) ? (valRes.data||[]) : null;
-  if(valRes && valRes.error) try{ console.log("production value not shown:", valRes.error.message); }catch(e){}
+  /* A refusal and a missing function look identical from here, and silence
+     for both means a deployment mistake is indistinguishable from not having
+     access. So they are told apart: a permission refusal stays silent, and
+     anything else is a fault worth showing to whoever is looking. */
+  VALERR = null;
+  if(valRes && valRes.error){
+    const m=String(valRes.error.message||""), code=String(valRes.error.code||"");
+    const denied = code==="42501" || /permission|not allowed/i.test(m);
+    VALERR = denied ? null : m;
+    try{ console.log("production value:", m); }catch(e){}
+  }
   QR = qrRes && !qrRes.error ? qrRes.data : null;
   QRERR = qrRes && qrRes.error ? qrRes.error.message : null;
   if(error){
@@ -463,9 +474,31 @@ function renderStats(){
 function renderValue(){
   const sec=document.getElementById("valSection");
   if(!sec) return;
+  const show=()=>{ sec.hidden=false; sec.style.display="block"; };
+  const note=document.getElementById("valNote");
+
+  if(VALERR){
+    show();
+    document.getElementById("valStats").innerHTML="";
+    if(note) note.innerHTML=/production_value|does not exist|schema cache/i.test(VALERR)
+      ? `Production value is not set up on the database yet. Run <b>batch47.sql</b>, then reload. <span style="opacity:.7">(${esc(VALERR)})</span>`
+      : `Could not load production value: ${esc(VALERR)}`;
+    return;
+  }
+  if(VAL===null){ sec.hidden=true; sec.style.display="none"; return; }   // no permission
+
   const rows=(VAL||[]).filter(r=>Number(r.total_value)||Number(r.produced_value)||Number(r.priced_records));
-  if(!rows.length){ sec.hidden=true; sec.style.display="none"; return; }
-  sec.hidden=false; sec.style.display="block";
+  if(!rows.length){
+    // the caller is allowed to see value, so saying why there is none leaks
+    // nothing and saves an afternoon of guessing
+    show();
+    document.getElementById("valStats").innerHTML="";
+    if(note) note.innerHTML=(VAL&&VAL.length)
+      ? "No records with a price in this date range. Widen the range, or check that sync-pricing has run."
+      : "No prices have been synced yet. Deploy and run <b>sync-pricing</b>, then reload this page.";
+    return;
+  }
+  show();
 
   const money=(v,cur)=>`${fmt(Math.round(Number(v)||0))} ${esc(cur||"")}`.trim();
   const cell=(v,l,tone)=>`<div class="stat"><b${tone?` style="color:${tone}"`:""}>${v}</b><span>${esc(l)}</span></div>`;
@@ -487,7 +520,6 @@ function renderValue(){
   if(estN) parts.push(`${fmt(estN)} completed record${estN==1?"":"s"} had no production entries, so the record quantity was used instead. That accounts for ${fmt(Math.round(est))} of the produced value`+
     (prod>0?` (${Math.round(est/prod*100)}%)`:"")+".");
   if(unp)  parts.push(`${fmt(unp)} record${unp==1?"":"s"} in this range have no price against them yet and count as zero.`);
-  const note=document.getElementById("valNote");
   if(note) note.innerHTML=parts.join(" ")||"Every record in this range has a price and production entries behind it.";
 }
 
@@ -1168,7 +1200,8 @@ function nlcmSetup(){
 })();
 
 
-const NLC_BUILD = "2026-11-22 19:20";
+
+const NLC_BUILD = "2026-11-22 19:45";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
