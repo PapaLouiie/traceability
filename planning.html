@@ -137,6 +137,17 @@
   .pcard .t{font-weight:700; color:var(--navy); font-size:13.5px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; overflow-wrap:anywhere}
   .pcard .t>*{min-width:0}
   .pcard .m{font-size:12px; color:var(--muted); margin-top:3px; overflow-wrap:anywhere; word-break:break-word}
+  /* the customer reference is what people match against, so it wraps in full
+     rather than being cut off at the edge of the card */
+  /* prices in the plan dialog, shown only to people the database gives them to */
+  .pricebox{display:flex;flex-wrap:wrap;gap:8px}
+  .pricebox span{display:flex;flex-direction:column;gap:1px;background:var(--card);
+    border:1px solid var(--line);border-radius:9px;padding:6px 11px;min-width:96px}
+  .pricebox i{font-style:normal;font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);font-weight:800}
+  .pricebox b{font-size:14px;color:var(--ink)}
+  .pcard .cref{color:var(--ink); line-height:1.35}
+  .pcard .cref b{font-size:10px; letter-spacing:.5px; text-transform:uppercase; color:var(--muted);
+    margin-right:4px; font-weight:800}
   .pcard .wh-why{flex-basis:100%; width:100%; margin-top:2px}
   .pcard .foot{display:flex; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap}
   .late{background:var(--hold); color:#fff; font-size:10px; font-weight:800; padding:1px 6px; border-radius:5px}
@@ -1013,7 +1024,7 @@ function renderShell(){
         const rm=document.getElementById("syncRemind"); if(rm) rm.remove();
         const tms=j.timings?` (odoo ${Math.round(((j.timings.pickings_ms||0)+(j.timings.moves_ms||0)+(j.timings.sales_and_prep_ms||0))/1000)}s, db ${Math.round((j.timings.upsert_and_heal_ms||0)/1000)}s)`:"";
         banner(`Sync complete: ${j.new??0} new, ${j.updated??0} updated`+((j.cancelled??0)>0?`, ${j.cancelled} flagged cancelled`:"")+`.`+tms,true);
-        if(SNAP_T){ await applyDelta(); await loadAttCounts(); draw(); }
+        if(SNAP_T){ await applyDelta(); await loadAttCounts(); await loadPrices(); draw(); }
         else await load(); }
     }catch(e){ banner("Sync failed: "+e.message+". Is the odoo-sync function deployed?"); }
     busy(false);
@@ -1053,6 +1064,29 @@ async function loadAttCounts(){
       if(!data||data.length<1000) break; from+=1000;
     }
   }catch(e){}
+}
+/* Prices, when the person is allowed them. plan_pricing has a policy that
+   returns nothing at all to anybody without the pricing permission, so for
+   most people this quietly comes back empty and no price is ever drawn. The
+   page does not decide that: the database does. Prices are never written to
+   the snapshot cache, so they cannot outlive a change of permission. */
+let PRICES={};
+async function loadPrices(){
+  PRICES={};
+  try{
+    let from=0;
+    while(true){
+      const { data, error }=await db.from("plan_pricing")
+        .select("plan_id,unit_price,currency,so_qty").range(from,from+999);
+      if(error) return;                    // no permission, or not set up yet
+      (data||[]).forEach(r=>{ PRICES[r.plan_id]=r; });
+      if(!data||data.length<1000) break; from+=1000;
+    }
+  }catch(e){ PRICES={}; }
+}
+function money(v,cur){
+  const n=Number(v); if(!isFinite(n)) return "";
+  return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+(cur?" "+cur:"");
 }
 function cleanSales(v){ return (v||"").replace(/^\s*\d+[\s\-._:]*/,""); }
 function appDialog({title, html, buttons, tone}){
@@ -1272,6 +1306,7 @@ async function load(){
       // warm path: paint the snapshot instantly, then merge only changes
       PLANS=snap.rows; SNAP_T=snap.t; draw();
       loadAttCounts().then(()=>draw());
+      loadPrices().then(()=>draw());
       const changed=await applyDelta();
       if(changed) draw();
     } else {
@@ -1283,6 +1318,7 @@ async function load(){
       catch(e){ active=await fetchPlans(["Draft","Warehouse","Returned to Engineering","Pushed","Returned"]); }
       PLANS=active; draw();
       loadAttCounts().then(()=>draw());
+      loadPrices().then(()=>draw());
       let rest;
       try{ rest=await fetchPlans(null, false, true); }
       catch(e){ rest=(await fetchPlans(null)).filter(p=>!active.some(a=>a.id===p.id)); }
@@ -1377,6 +1413,7 @@ function cardHTML(p){
       ${p.planned_qty?`<span class="cqty">${fmt(p.planned_qty)}<i>pcs</i></span>`:""}</div>
     <div class="m">${esc(p.product_name||p.model||"")}</div>
     <div class="m">${esc(p.customer||"")}${p.sales_person?" \u00b7 "+esc(p.sales_person):""}</div>
+    ${p.c_ref?`<div class="m cref"><b>C.Ref</b> ${esc(p.c_ref)}</div>`:""}
     <div class="foot">
       ${p.bom_stock_status?`<span class="chip" data-tone="${p.bom_stock_status==='In Stock'?'ok':(p.bom_stock_status==='Partial Stock'?'':'info')}">${esc(p.bom_stock_status)}</span>`:""}
       ${p.planned_date?`<span class="chip">${esc(weekLabel(isoWeekStr(p.planned_date)))}</span>`:""}
@@ -2781,7 +2818,19 @@ async function planModal(pLite){
         <div class="field"><label>Sales person</label><input id="p-sales_person" value="${esc(g("sales_person"))}"></div>
         <div class="field"><label>Region</label><input id="p-region" value="${esc(g("region"))}"></div>
         <div class="field full"><label>Product name</label><input id="p-product_name" value="${esc(g("product_name"))}"></div>
-        <div class="field"><label>C.Ref</label><input id="p-c_ref" value="${esc(g("c_ref"))}"></div>
+        <div class="field full"><label>C.Ref</label><input id="p-c_ref" value="${esc(g("c_ref"))}"></div>
+        ${(p&&PRICES[p.id])?(()=>{ const pr=PRICES[p.id];
+          const qty=Number(g("planned_qty"))||0;
+          const line=(Number(pr.unit_price)||0)*qty;
+          return `<div class="field full"><label>Value</label>
+            <div class="pricebox">
+              <span><i>Unit price</i><b>${esc(money(pr.unit_price,pr.currency))}</b></span>
+              <span><i>Plan qty</i><b>${esc(qty||"-")}</b></span>
+              <span><i>Line value</i><b>${esc(money(line,pr.currency))}</b></span>
+              ${pr.so_qty!=null&&Number(pr.so_qty)!==qty?`<span><i>SO qty</i><b>${esc(pr.so_qty)}</b></span>`:""}
+            </div>
+            <div class="hint">From the Odoo sale order line, before VAT. Only visible to people with the pricing permission.</div>
+          </div>`; })():""}
         <div class="field"><label>SO quantity</label><input id="p-so_qty" type="number" min="0" value="${esc(g("so_qty"))}"></div>
         <div class="field"><label>Model</label>
           <div style="display:flex;gap:6px"><input id="p-model" value="${esc(g("model"))}" placeholder="WP-44W-4000K" style="flex:1;min-width:0">
@@ -3336,7 +3385,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-22 11:05";
+const NLC_BUILD = "2026-11-22 19:20";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
