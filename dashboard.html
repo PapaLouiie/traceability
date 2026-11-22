@@ -342,6 +342,7 @@ function toggleTheme(){
   const t=document.getElementById("themeBtn"); if(t) t.textContent=dark?"\u263E":"\u2600";
 }
 let ROLE="";
+let VAL=null;      // rows from production_value, or null when it refused
 const root=document.getElementById("root");
 const PAL=["#24275E","#F6851F","#3457b2","#1f9d63","#c0392b","#8e44ad","#c9820b","#16a085","#7f8c8d","#e67e22"];
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -407,6 +408,13 @@ function renderShell(){
       <p class="sub" id="qrNote" style="margin-top:10px"></p>
       <div class="grid" id="qrGrid"></div>
 
+      <div id="valSection" hidden style="display:none">
+        <h1 style="margin-top:34px">Production value</h1>
+        <p class="sub">What the orders in this range are worth, and what has actually been produced. Prices are from the Odoo sale order line, before VAT.</p>
+        <div class="stats" id="valStats"></div>
+        <p class="sub" id="valNote" style="margin-top:10px"></p>
+      </div>
+
       <a class="backlink" href="index.html">&larr; Back to console</a>
     </div>`;
   document.getElementById("signout").onclick=async()=>{ await db.auth.signOut(); location.reload(); };
@@ -419,16 +427,25 @@ function renderShell(){
 async function load(){
   document.getElementById("grid").innerHTML=`<div class="card full"><div class="spinner"></div></div>`;
   document.getElementById("stats").innerHTML="";
-  const [{ data, error }, qrRes]=await Promise.all([
+  const [{ data, error }, qrRes, valRes]=await Promise.all([
     db.rpc("dashboard_data",{ p_from:RANGE.from||null, p_to:RANGE.to||null }),
-    db.rpc("qr_compliance_summary",{ p_from:RANGE.from||null, p_to:RANGE.to||null })
+    db.rpc("qr_compliance_summary",{ p_from:RANGE.from||null, p_to:RANGE.to||null }),
+    /* The database decides whether this person may see value, not the page.
+       production_value refuses anyone without the pricing permission, and the
+       section is only built from what comes back. There is no client side
+       flag to get wrong, and nothing to find by reading the page. */
+    db.rpc("production_value",{ p_from:RANGE.from||null, p_to:RANGE.to||null })
   ]);
+  VAL = (valRes && !valRes.error) ? (valRes.data||[]) : null;
+  if(valRes && valRes.error) try{ console.log("production value not shown:", valRes.error.message); }catch(e){}
   QR = qrRes && !qrRes.error ? qrRes.data : null;
   QRERR = qrRes && qrRes.error ? qrRes.error.message : null;
   if(error){
     if(isJwtErr(error)&&await recoverSession()) return location.reload();
     document.getElementById("grid").innerHTML=`<div class="card full"><div class="empty">Could not load data: ${esc(error.message)}</div></div>`; return; }
-  DATA=data; renderStats(); renderCharts(); renderQr();
+  // the plain sections first and the charts last: if the chart library fails
+  // to load, the figures are still on the page
+  DATA=data; renderStats(); renderQr(); renderValue(); renderCharts();
 }
 
 function renderStats(){
@@ -438,6 +455,40 @@ function renderStats(){
     cell(fmt(s.records),"Records")+cell(fmt(s.units),"Units")+
     cell(s.avg_cycle!=null?s.avg_cycle:"0","Avg min/unit")+
     cell(fmt(s.manpower),"Workers")+cell(fmt(s.lines),"Lines");
+}
+
+/* Nothing is drawn unless the database returned figures. On a refusal, or a
+   missing function, the whole section stays out of the page rather than
+   appearing empty, which would itself tell somebody there is a number there. */
+function renderValue(){
+  const sec=document.getElementById("valSection");
+  if(!sec) return;
+  const rows=(VAL||[]).filter(r=>Number(r.total_value)||Number(r.produced_value)||Number(r.priced_records));
+  if(!rows.length){ sec.hidden=true; sec.style.display="none"; return; }
+  sec.hidden=false; sec.style.display="block";
+
+  const money=(v,cur)=>`${fmt(Math.round(Number(v)||0))} ${esc(cur||"")}`.trim();
+  const cell=(v,l,tone)=>`<div class="stat"><b${tone?` style="color:${tone}"`:""}>${v}</b><span>${esc(l)}</span></div>`;
+
+  document.getElementById("valStats").innerHTML=rows.map(r=>
+    cell(money(r.total_value,r.currency),"Total value"+(rows.length>1?" ("+r.currency+")":""))+
+    cell(money(r.produced_value,r.currency),"Produced value")+
+    cell(fmt(r.produced_qty),"Units produced")+
+    cell(fmt(r.priced_records),"Records priced")
+  ).join("");
+
+  // how much of the produced figure is inferred rather than logged. Without
+  // this the number looks exact when much of it is not.
+  const est=rows.reduce((a,r)=>a+(Number(r.estimated_value)||0),0);
+  const estN=rows.reduce((a,r)=>a+(Number(r.estimated_records)||0),0);
+  const unp=rows.reduce((a,r)=>a+(Number(r.unpriced_records)||0),0);
+  const prod=rows.reduce((a,r)=>a+(Number(r.produced_value)||0),0);
+  const parts=[];
+  if(estN) parts.push(`${fmt(estN)} completed record${estN==1?"":"s"} had no production entries, so the record quantity was used instead. That accounts for ${fmt(Math.round(est))} of the produced value`+
+    (prod>0?` (${Math.round(est/prod*100)}%)`:"")+".");
+  if(unp)  parts.push(`${fmt(unp)} record${unp==1?"":"s"} in this range have no price against them yet and count as zero.`);
+  const note=document.getElementById("valNote");
+  if(note) note.innerHTML=parts.join(" ")||"Every record in this range has a price and production entries behind it.";
 }
 
 function card(id,title,tools){
@@ -1118,7 +1169,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-10-15 08:34";
+const NLC_BUILD = "2026-11-22 19:20";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
