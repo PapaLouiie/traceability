@@ -32,6 +32,11 @@
   html[data-theme="dark"] .fold:hover{background:#2a2c52; color:var(--ink)}
   html[data-theme="dark"] .cal-card{filter:brightness(.85)}
   html[data-theme="dark"] h1, html[data-theme="dark"] .pcard .t, html[data-theme="dark"] .qrow .t, html[data-theme="dark"] .cal-mini b{color:#aeb3ff}
+  /* --navy is never redefined for dark mode, so anything coloured with it was
+     coming out dark on dark: every modal title and every table header */
+  html[data-theme="dark"] .modal .mh, html[data-theme="dark"] thead th{color:#aeb3ff}
+  html[data-theme="dark"] .isr tbody tr:nth-child(even){background:#202240}
+  html[data-theme="dark"] .isr .isr-no{color:#ff9b7a}
   .role-tag{display:inline-block; font-size:10px; font-weight:800; letter-spacing:.8px; text-transform:uppercase;
     background:var(--orange); color:#fff; padding:1px 7px; border-radius:5px}
   *{box-sizing:border-box} html,body{margin:0}
@@ -262,6 +267,21 @@
   #shTable th{position:relative}
   #shTable .rz{position:absolute; right:0; top:0; bottom:0; width:7px; cursor:col-resize}
   #shTable .rz:hover{background:var(--orange); opacity:.5}
+
+  /* materials issued report. The global table rule sets a 1100px min-width and
+     clips every cell to one line, which a modal cannot carry, so the report
+     scopes its own table under .isr */
+  .isr-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+  .isr-bar .field{margin:0;min-width:150px}
+  .isr-tot{display:flex;flex-wrap:wrap;gap:16px;margin:0 0 10px;font-size:13px}
+  .isr-tot b{font-size:17px;display:block;line-height:1.2;color:var(--ink)}
+  .isr table{min-width:0;table-layout:auto;font-size:12.5px}
+  .isr tbody td{white-space:normal;overflow:visible;vertical-align:top;padding:7px 8px}
+  .isr tbody tr:nth-child(even){background:#fafbff}
+  .isr .isr-it{display:block;font-size:11.5px;color:var(--muted)}
+  .isr .isr-it b{color:var(--ink);font-weight:600}
+  .isr .isr-no{color:#b4451f}
+  .isr-nowrap{white-space:nowrap}
 
   /* queue */
   .qrow{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow);
@@ -2066,7 +2086,13 @@ function drawWarehouse(v){
       <button class="btn primary" id="wAppSel" disabled>Approve selected (0)</button>
       <button class="btn danger" id="wRejSel" disabled>Reject selected (0)</button>
     </div>`:"";
-  v.innerHTML=queueStrip("Warehouse",rows)+bulkBar+(rows.length?rows.map(p=>`
+  // the report reads history, so it stays available to anyone who can open this
+  // view, including read-only roles, and whether or not the queue has rows today
+  const repBar=`<div class="toolbar" style="margin-bottom:12px">
+      <button class="btn ghost" id="whIssued">Materials issued report</button>
+      <span class="m" style="color:var(--muted)">What was issued, by date</span>
+    </div>`;
+  v.innerHTML=queueStrip("Warehouse",rows)+repBar+bulkBar+(rows.length?rows.map(p=>`
     <div class="qrow">
       ${canAct?`<input type="checkbox" class="wSel" data-wsel="${p.id}" style="margin-top:4px">`:""}
       <div class="info">
@@ -2097,6 +2123,8 @@ function drawWarehouse(v){
       ?"Every plan in this queue is hidden by the filters above. Use Show all to see them."
       :"Nothing waiting on the warehouse. Pushed plans arrive here for material issuance before assembly."}</div>`);
   wireQueueStrip(v);
+  const ib=v.querySelector("#whIssued");
+  if(ib) ib.onclick=()=>issuedReportModal();
   if(!canAct) return;
 
   const selCount=()=>[...v.querySelectorAll(".wSel:checked")].length;
@@ -2184,6 +2212,170 @@ function planReportModal(){
     if(error){ banner(error.message); go.disabled=false; go.textContent="Send"; return; }
     close(); banner("Thanks. Your report is on the list.",true);
   };
+}
+
+/* ---------------- materials issued report ---------------- */
+/* Saudi Arabia has no daylight saving, so a fixed +03:00 is enough to turn a
+   picked date into the factory day. Reading the device timezone instead would
+   shift the day for anyone opening this from outside the Kingdom. */
+const KSA_OFF="+03:00", KSA_MS=3*3600000;
+const ksaToday=()=>new Date(Date.now()+KSA_MS).toISOString().slice(0,10);
+const ksaStamp=ts=>{ const d=new Date(ts);
+  return isNaN(d)?"":new Date(d.getTime()+KSA_MS).toISOString().slice(0,16).replace("T"," "); };
+const ksaMonday=()=>{ const d=new Date(Date.now()+KSA_MS);
+  d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7)); return d.toISOString().slice(0,10); };
+const ksaShift=(day,n)=>{ const d=new Date(day+"T00:00:00Z");
+  d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); };
+
+function issuedReportModal(){
+  const today=ksaToday();
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:1020px"><div class="mh">Materials issued<span class="x">&times;</span></div>
+    <div class="mb">
+      <div class="isr-bar">
+        <div class="field"><label>From</label><input type="date" id="isrFrom" value="${today}" max="${today}"></div>
+        <div class="field"><label>To</label><input type="date" id="isrTo" value="${today}" max="${today}"></div>
+        <button class="btn primary" id="isrGo">Show</button>
+        <button class="btn ghost sm" data-isrq="today">Today</button>
+        <button class="btn ghost sm" data-isrq="yday">Yesterday</button>
+        <button class="btn ghost sm" data-isrq="week">This week</button>
+        <button class="btn ghost sm" id="isrCsv" disabled>Export CSV</button>
+      </div>
+      <p class="sub" style="margin:9px 0 0">Both dates are included, counted as the Riyadh working day.</p>
+      <div id="isrOut" style="margin-top:12px"></div>
+    </div>
+    <div class="mf"><button class="btn ghost" id="isrClose">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.querySelector(".x").onclick=close;
+  bg.querySelector("#isrClose").onclick=close;
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+
+  const fromEl=bg.querySelector("#isrFrom"), toEl=bg.querySelector("#isrTo");
+  const out=bg.querySelector("#isrOut"), csvBtn=bg.querySelector("#isrCsv");
+  let LAST=[], RANGE=[today,today];
+
+  bg.querySelectorAll("[data-isrq]").forEach(b=>b.onclick=()=>{
+    const k=b.dataset.isrq;
+    if(k==="today"){ fromEl.value=toEl.value=ksaToday(); }
+    else if(k==="yday"){ fromEl.value=toEl.value=ksaShift(ksaToday(),-1); }
+    else { fromEl.value=ksaMonday(); toEl.value=ksaToday(); }
+    run();
+  });
+  bg.querySelector("#isrGo").onclick=run;
+
+  const chunk=(a,n)=>{ const o=[]; for(let i=0;i<a.length;i+=n) o.push(a.slice(i,i+n)); return o; };
+
+  async function run(){
+    const f=fromEl.value, t=toEl.value;
+    if(!f||!t){ out.innerHTML=`<div class="empty">Pick both dates.</div>`; return; }
+    if(t<f){ out.innerHTML=`<div class="empty">The To date falls before the From date.</div>`; return; }
+    RANGE=[f,t]; LAST=[]; csvBtn.disabled=true;
+    out.innerHTML=`<div class="spinner"></div>`;
+
+    const start=new Date(f+"T00:00:00"+KSA_OFF).toISOString();
+    const endD=new Date(t+"T00:00:00"+KSA_OFF); endD.setUTCDate(endD.getUTCDate()+1);
+    let raw=[];
+    try{
+      const { data, error }=await db.from("history_changes").select("*")
+        .eq("event","material_issued")
+        .gte("at",start).lt("at",endD.toISOString())
+        .order("at",{ascending:true}).limit(5000);
+      if(error) throw error;
+      raw=data||[];
+    }catch(e){
+      out.innerHTML=`<div class="empty">Could not read the history: ${esc(e.message)}</div>`; return;
+    }
+
+    // record_id on a history row can be a plan or a production record, and plans
+    // outside the loaded set exist too, so anything not already in memory is
+    // fetched from both tables before the rows are built
+    const byId=new Map(PLANS.map(p=>[p.id,p]));
+    const miss=[...new Set(raw.map(r=>r.record_id).filter(id=>id&&!byId.has(id)))];
+    for(const part of chunk(miss,150)){
+      try{
+        const [pr,rr]=await Promise.all([
+          db.from("planned_records").select("id,odoo_so,sap_so,customer,model,planned_qty,product_name").in("id",part),
+          db.from("production_records").select("id,so_number,customer,model,planned_qty").in("id",part)
+        ]);
+        (pr.data||[]).forEach(p=>byId.set(p.id,p));
+        (rr.data||[]).forEach(r=>{ if(!byId.has(r.id)) byId.set(r.id,
+          {id:r.id, odoo_so:r.so_number, customer:r.customer, model:r.model, planned_qty:r.planned_qty}); });
+      }catch(e){ /* a lookup miss costs a blank SO cell, not the report */ }
+    }
+
+    LAST=raw.map(r=>{
+      let v=r.new_value;
+      if(typeof v==="string"){ try{ v=JSON.parse(v); }catch(e){ v=null; } }
+      const items=(v&&Array.isArray(v.items))?v.items:[];
+      return { at:r.at, actor:r.actor||"", p:byId.get(r.record_id)||{},
+               stock:(v&&v.stock_status_at_issue)||"", rebuilt:!!(v&&v.reconstructed),
+               items, pieces:items.reduce((s,i)=>s+(Number(i.qty_issued)||0),0) };
+    });
+
+    if(!LAST.length){
+      out.innerHTML=`<div class="empty">Nothing recorded as issued between ${esc(f)} and ${esc(t)}.<br>
+        <span class="m" style="color:var(--muted)">If you know material went out, the issuance may predate history tracking,
+        or it was moved on without the Material issued button.</span></div>`;
+      return;
+    }
+
+    const sos=new Set(LAST.map(x=>x.p.odoo_so||x.p.sap_so).filter(Boolean));
+    const pieces=LAST.reduce((s,x)=>s+x.pieces,0);
+    const lines=LAST.reduce((s,x)=>s+x.items.length,0);
+    out.innerHTML=`
+      <div class="isr-tot">
+        <div><b>${fmt(LAST.length)}</b>issuance${LAST.length===1?"":"s"}</div>
+        <div><b>${fmt(sos.size)}</b>order${sos.size===1?"":"s"}</div>
+        <div><b>${fmt(lines)}</b>BOM line${lines===1?"":"s"}</div>
+        <div><b>${fmt(pieces)}</b>pieces issued</div>
+      </div>
+      <div class="tbl-wrap isr"><table><thead><tr>
+        <th style="width:130px">WHEN</th><th style="width:110px">SO</th><th>CUSTOMER</th>
+        <th>MODEL</th><th style="width:58px">QTY</th><th>ITEMS ISSUED</th><th style="width:150px">ISSUED BY</th>
+      </tr></thead><tbody>
+      ${LAST.map(x=>`<tr>
+        <td class="isr-nowrap">${esc(ksaStamp(x.at))}</td>
+        <td class="isr-nowrap">${esc(x.p.odoo_so||x.p.sap_so||"(no SO)")}</td>
+        <td>${esc(x.p.customer||"")}</td>
+        <td>${esc(x.p.model||x.p.product_name||"")}</td>
+        <td>${x.p.planned_qty==null?"":esc(x.p.planned_qty)}</td>
+        <td>${x.items.length?x.items.map(i=>`<span class="isr-it"><b>${esc(i.slot||"")}</b>
+              ${esc(i.item||"not set")} x${i.qty_issued==null?"?":esc(i.qty_issued)}
+              ${i.confirmed_available===false?'<span class="isr-no">not available</span>':""}</span>`).join("")
+            :'<span class="m" style="color:var(--muted)">no item detail recorded</span>'}
+          ${x.stock?`<span class="isr-it">stock at issue: ${esc(x.stock)}</span>`:""}
+          ${x.rebuilt?'<span class="isr-it">rebuilt from the BOM, may differ from what went out</span>':""}</td>
+        <td>${esc(x.actor)}</td>
+      </tr>`).join("")}
+      </tbody></table></div>`;
+    csvBtn.disabled=false;
+  }
+
+  csvBtn.onclick=()=>{
+    if(!LAST.length) return;
+    const head=["When (Riyadh)","SO","Customer","Model","Planned qty","Slot","Item","Qty issued","Availability","Stock at issue","Issued by"];
+    const rows=[head];
+    LAST.forEach(x=>{
+      const base=[ksaStamp(x.at), x.p.odoo_so||x.p.sap_so||"", x.p.customer||"",
+                  x.p.model||x.p.product_name||"", x.p.planned_qty==null?"":x.p.planned_qty];
+      const tail=[x.stock, x.actor];
+      if(!x.items.length) rows.push(base.concat(["","","",""],tail));
+      x.items.forEach(i=>rows.push(base.concat([i.slot||"", i.item||"", i.qty_issued==null?"":i.qty_issued,
+        i.confirmed_available===true?"available":(i.confirmed_available===false?"not available":"unchecked")],tail)));
+    });
+    const q=s=>`"${String(s==null?"":s).replace(/"/g,'""')}"`;
+    // the BOM leads with a UTF-8 marker so Excel opens Arabic customer names correctly
+    const blob=new Blob(["﻿"+rows.map(r=>r.map(q).join(",")).join("\r\n")],
+                        {type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`materials-issued-${RANGE[0]}_to_${RANGE[1]}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  };
+
+  run();
 }
 
 /* ---------------- pull a plan back out of a queue ---------------- */
@@ -3144,7 +3336,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-10-15 08:34";
+const NLC_BUILD = "2026-11-22 11:05";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
