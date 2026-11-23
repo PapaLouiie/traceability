@@ -4136,13 +4136,10 @@ function qrConfirmModal(r){
    own outcome on the record, so nothing is lost by not reporting it here, and
    a sweep can retry anything that failed. */
 function notifyCompletion(r){
-  if(!r || r.status!=="Completed" || r.fg_notified_at) return;
-  if(!r.fg_pallet_path && !r.fg_piece_path) return;
-  try{
-    db.functions.invoke("fg-complete-notify",{ body:{ record_id:r.id } })
-      .then(res=>{ try{ console.log("completion notice:", JSON.stringify(res&&res.data||res&&res.error)); }catch(e){} })
-      .catch(e=>{ try{ console.log("completion notice failed:", e&&e.message); }catch(_){} });
-  }catch(e){ /* the function may not be deployed yet, which is fine */ }
+  // nothing to do: saving the photos is itself what makes the record eligible,
+  // and the scheduled sweep finds it. Kept as a function so the call site
+  // reads as an intention rather than silence.
+  return;
 }
 
 function fgAnswered(r){
@@ -4191,8 +4188,8 @@ function fgPanelHtml(r){
         <span title="${esc(r.fg_notify_error)}">Last attempt failed.</span>
         ${may("records","edit")?'<button class="btn link" id="fgRetry" style="padding:0">Try again</button>':""}</div>`;
     if(r.fg_pallet_path||r.fg_piece_path)
-      return `<div class="m" style="margin-top:6px;color:var(--muted)">The completion email has not gone out yet.
-        ${may("records","edit")?'<button class="btn link" id="fgRetry" style="padding:0">Send it now</button>':""}</div>`;
+      return `<div class="m" style="margin-top:6px;color:var(--muted)">The completion email goes out within five minutes.
+        ${may("records","edit")?'<button class="btn link" id="fgRetry" style="padding:0">Send it sooner</button>':""}</div>`;
     return "";
   })();
   if(r.fg_skipped)
@@ -4220,14 +4217,17 @@ function wireFgPanel(){
   document.querySelectorAll("[data-fgview]").forEach(b=>b.onclick=()=>
     openFgPhoto(b.dataset.fgview==="pallet"?r.fg_pallet_path:r.fg_piece_path));
   const rt=go("fgRetry");
+  /* The page does not call the notifier any more. A browser call needs a CORS
+     preflight, which the Supabase gateway rejects while Verify JWT is on, and
+     that toggle cannot be changed from this network. So this queues the
+     record and the scheduled sweep sends it, which also covers the case where
+     somebody closes the tab mid save. */
   if(rt) rt.onclick=async()=>{
-    rt.disabled=true; rt.textContent="Sending\u2026";
-    const { data, error }=await db.functions.invoke("fg-complete-notify",{ body:{ record_id:r.id } });
-    if(error||((data||{}).error)){ banner("Could not send: "+((error&&error.message)||data.error)); rt.disabled=false; rt.textContent="Try again"; return; }
-    if((data||{}).skipped){ banner("Not sent: "+data.skipped); rt.disabled=false; rt.textContent="Try again"; return; }
-    banner("Sent to "+(((data||{}).to)||[]).join(", "), true);
-    const { data:fresh }=await db.from("production_records").select("*").eq("id",r.id).maybeSingle();
-    if(fresh){ current=fresh; refreshFgPanel(); }
+    rt.disabled=true; rt.textContent="Queueing\u2026";
+    const { data, error }=await db.rpc("request_fg_notify",{ p_id:r.id });
+    if(error){ banner("Could not queue it: "+error.message); rt.disabled=false; rt.textContent="Try again"; return; }
+    if(data){ current=data; refreshFgPanel(); }
+    banner("Queued. It goes out within five minutes.", true);
   };
 }
 
@@ -4739,7 +4739,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-23 15:05";
+const NLC_BUILD = "2026-11-23 15:35";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
