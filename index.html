@@ -4129,6 +4129,22 @@ function qrConfirmModal(r){
    two dialogs never stack. Two photos: the packed pallet, and one individual
    piece. Skippable with a reason, the same bargain as QR, because a flat
    phone battery must not stop the line. */
+/* Asks the notifier to email the salesperson and post the Odoo note. Fired
+   when the photos are saved, because the photos are the content of the email.
+   Deliberately silent: a mail or Odoo problem is not the operator's to solve
+   and must never stop somebody finishing a record. The function records its
+   own outcome on the record, so nothing is lost by not reporting it here, and
+   a sweep can retry anything that failed. */
+function notifyCompletion(r){
+  if(!r || r.status!=="Completed" || r.fg_notified_at) return;
+  if(!r.fg_pallet_path && !r.fg_piece_path) return;
+  try{
+    db.functions.invoke("fg-complete-notify",{ body:{ record_id:r.id } })
+      .then(res=>{ try{ console.log("completion notice:", JSON.stringify(res&&res.data||res&&res.error)); }catch(e){} })
+      .catch(e=>{ try{ console.log("completion notice failed:", e&&e.message); }catch(_){} });
+  }catch(e){ /* the function may not be deployed yet, which is fine */ }
+}
+
 function fgAnswered(r){
   return !!r && (r.fg_skipped===true || !!r.fg_pallet_path || !!r.fg_piece_path);
 }
@@ -4330,6 +4346,7 @@ function fgModal(r){
     current=data; closeAll(); refreshFgPanel();
     const both=data.fg_pallet_path&&data.fg_piece_path;
     banner(both?"Both finished goods photos saved.":"Photo saved. One is still missing.", !!both);
+    notifyCompletion(data);
   };
 
   sync();
@@ -4693,9 +4710,9 @@ function nlcmSetup(){
         { childList:true, subtree:true }); }catch(e){}
 })();
 
-  
 
-const NLC_BUILD = "2026-11-22 17:35";
+
+const NLC_BUILD = "2026-11-23 14:50";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
