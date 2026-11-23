@@ -2500,6 +2500,7 @@ function drawStages(body,canEdit,stageErr,call){
    the mailbox. Counts come from fg_queue_health() because the lists below are
    capped; cron and vault live in schemas the console cannot read, which is why
    that function exists at all. */
+let EMTAB="queue";
 async function renderEmails(){
   setHash("#/emails");
   document.body.classList.remove("wide");
@@ -2508,10 +2509,125 @@ async function renderEmails(){
     <h1>Completion emails</h1>
     <p class="sub">Every completed record with finished goods photos, and whether the salesperson has been told.</p>
     <div class="banner" id="banner"></div>
+    <div class="toolbar">
+      <div class="tabs" id="emTabs">
+        <button data-t="queue" class="${EMTAB!=="people"?"on":""}">Queue</button>
+        <button data-t="people" class="${EMTAB==="people"?"on":""}">Who gets them</button>
+      </div>
+    </div>
     <div id="emBody"><div class="spinner"></div></div>`);
   wireShell();
   document.getElementById("back").onclick=renderHome;
-  await drawEmails();
+  document.querySelectorAll("#emTabs button").forEach(b=>b.onclick=()=>{ EMTAB=b.dataset.t; renderEmails(); });
+  if(EMTAB==="people") await drawEmailPeople(); else await drawEmails();
+}
+
+/* ---------------- who the completion email goes to ----------------
+   The salesperson comes off the Odoo order and is not listed here, because it
+   changes per order. Everything on this screen is the fixed part. */
+async function drawEmailPeople(){
+  const body=document.getElementById("emBody");
+  const canEdit=may("admin","edit");
+
+  const [cR,sR]=await Promise.all([
+    db.from("pts_notify_recipients").select("*").order("kind").order("email"),
+    db.from("pts_notify_settings").select("*").eq("id",1).maybeSingle()
+  ]);
+  if(cR.error){
+    const missing=/relation|does not exist|schema cache/i.test(cR.error.message||"");
+    body.innerHTML=`<div class="card"><div class="empty">${missing
+      ? "The recipient list is not installed yet. Run batch53.sql in Supabase."
+      : "Could not load the list: "+esc(cR.error.message)}</div></div>`;
+    return;
+  }
+  const rows=cR.data||[];
+  const cfg=sR.data||{ send_to_salesperson:true, include_followers:false };
+  const KIND={ to:"Addressed", cc:"Copied", bcc:"Blind copied" };
+
+  const row=r=>`<tr${r.active===false?' style="opacity:.55"':''}>
+    <td style="white-space:nowrap"><b>${esc(r.email)}</b>${r.active===false?' <span class="chip" data-tone="hold">off</span>':""}</td>
+    <td>${esc(r.name||"")}<div class="emq-sub">${esc(r.note||"")}</div></td>
+    <td style="white-space:nowrap">${canEdit?`
+      <select data-kind-for="${esc(r.id)}">${Object.entries(KIND).map(([k,l])=>
+        `<option value="${k}" ${(r.kind||"cc")===k?"selected":""}>${l}</option>`).join("")}</select>`
+      :esc(KIND[r.kind||"cc"]||r.kind)}</td>
+    <td style="white-space:nowrap">${canEdit?`
+      <button class="btn ghost sm" data-off="${esc(r.id)}" data-to="${r.active===false?"1":"0"}">${r.active===false?"Turn on":"Turn off"}</button>
+      <button class="btn danger" data-rm="${esc(r.id)}">Remove</button>`:""}</td>
+  </tr>`;
+
+  body.innerHTML=`
+    <style>.emq-sub{font-size:12px;color:var(--muted);margin-top:3px}</style>
+    <div class="card"><h2>The salesperson</h2><div class="pad">
+      <p class="hint" style="margin:0 0 10px">Taken from the salesperson on the Odoo sales order, so it follows whoever owns that order rather than a list kept here. A portal or customer contact is never written to, even if somebody has added them as a follower.</p>
+      <label class="radio" style="display:block;margin-bottom:8px">
+        <input type="checkbox" id="em-sales" ${cfg.send_to_salesperson!==false?"checked":""} ${canEdit?"":"disabled"}>
+        Write to the salesperson on the order</label>
+      <label class="radio" style="display:block">
+        <input type="checkbox" id="em-fol" ${cfg.include_followers?"checked":""} ${canEdit?"":"disabled"}>
+        Also write to every internal follower of the order</label>
+      <p class="hint" style="margin:8px 0 0">An order with no salesperson on it falls back to the people following it in Odoo, so it still reaches somebody. Ticking the second box writes to the followers on every order, which is how this worked before and is usually more people than anyone wants.</p>
+    </div></div>
+
+    <div class="card"><h2>Copied on every one</h2><div class="pad">
+      <p class="hint" style="margin:0 0 12px">These people are on every completion email, whatever the order. Anyone already addressed is not copied as well.</p>
+      ${canEdit?`<div class="row">
+        <div class="field"><label>Email</label><input id="em-email" type="email" placeholder="name@nlc.com.sa"></div>
+        <div class="field"><label>Name</label><input id="em-name" placeholder="Yousef Afaneh"></div>
+        <div class="field"><label>Why they are on it</label><input id="em-note" placeholder="Sales Manager"></div>
+        <div class="field"><label>How</label><select id="em-kind">${Object.entries(KIND).map(([k,l])=>
+          `<option value="${k}" ${k==="cc"?"selected":""}>${l}</option>`).join("")}</select></div>
+      </div>
+      <button class="btn primary" id="em-add">Add to the list</button>`:""}
+    </div>
+    <div class="tbl-wrap"><table><thead><tr><th>Email</th><th>Name</th><th style="width:150px">How</th><th style="width:200px"></th></tr></thead>
+      <tbody>${rows.length?rows.map(row).join(""):`<tr><td colspan="4" style="color:var(--muted)">Nobody is copied yet, so only the salesperson is told.</td></tr>`}</tbody></table></div>
+    </div>`;
+
+  if(!canEdit) return;
+
+  const save=async(fn,args,msg)=>{
+    const { error }=await db.rpc(fn,args);
+    if(error){ banner("Could not save: "+error.message); return false; }
+    banner(msg,true); await drawEmailPeople(); return true;
+  };
+  const settings=async()=>{
+    const { error }=await db.rpc("set_notify_settings",{
+      p_send_to_salesperson: document.getElementById("em-sales").checked,
+      p_include_followers:   document.getElementById("em-fol").checked });
+    if(error){ banner("Could not save: "+error.message); await drawEmailPeople(); return; }
+    banner("Saved.",true);
+  };
+  document.getElementById("em-sales").onchange=settings;
+  document.getElementById("em-fol").onchange=settings;
+
+  const add=document.getElementById("em-add");
+  if(add) add.onclick=async()=>{
+    const e=document.getElementById("em-email").value.trim();
+    if(!e.includes("@")){ banner("Type an email address first."); return; }
+    add.disabled=true;
+    await save("upsert_notify_recipient",{ p_id:null, p_email:e,
+      p_name:document.getElementById("em-name").value.trim()||null,
+      p_note:document.getElementById("em-note").value.trim()||null,
+      p_kind:document.getElementById("em-kind").value, p_active:true }, `${e} added.`);
+    add.disabled=false;
+  };
+  body.querySelectorAll("[data-kind-for]").forEach(sel=>sel.onchange=()=>{
+    const r=rows.find(x=>String(x.id)===sel.dataset.kindFor);
+    save("upsert_notify_recipient",{ p_id:r.id, p_email:r.email, p_name:r.name,
+      p_note:r.note, p_kind:sel.value, p_active:r.active }, "Saved.");
+  });
+  body.querySelectorAll("[data-off]").forEach(b=>b.onclick=()=>{
+    const r=rows.find(x=>String(x.id)===b.dataset.off);
+    save("upsert_notify_recipient",{ p_id:r.id, p_email:r.email, p_name:r.name,
+      p_note:r.note, p_kind:r.kind, p_active:b.dataset.to==="1" },
+      b.dataset.to==="1"?`${r.email} is back on the list.`:`${r.email} will not be copied.`);
+  });
+  body.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{
+    const r=rows.find(x=>String(x.id)===b.dataset.rm);
+    if(!confirm(`Remove ${r.email} from the list?\n\nTurn them off instead if this might be temporary.`)) return;
+    save("remove_notify_recipient",{ p_id:r.id }, `${r.email} removed.`);
+  });
 }
 
 async function drawEmails(){
@@ -4904,7 +5020,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-23 18:10";
+const NLC_BUILD = "2026-11-23 19:05";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
