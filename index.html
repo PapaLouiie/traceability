@@ -24,6 +24,9 @@
   html[data-theme="dark"] input, html[data-theme="dark"] select, html[data-theme="dark"] textarea{background:#23254a; color:var(--ink); border-color:var(--line)}
   html[data-theme="dark"] .btn.ghost{background:#23254a; color:var(--ink)}
   html[data-theme="dark"] thead th{background:#23254a}
+  /* card headings are navy on a navy card in dark mode, which measured 1.18:1.
+     Every screen in the console is affected, not just one. */
+  html[data-theme="dark"] .card h2{color:#aeb3ff}
   /* --navy has no dark mode value, so every modal title was rendering at a
      contrast ratio of 1.18 to 1 against the dark card: effectively invisible */
   html[data-theme="dark"] .modal .mh{color:#aeb3ff}
@@ -846,6 +849,7 @@ async function route(){
   if(m){ await openRecord(m[1],true); return; }
   if(h==="#/admin" && may("admin","view")){ renderAdmin(); return; }
   if(h==="#/staff" && may("people","view")){ renderStaff(); return; }
+  if(h==="#/emails" && may("admin","view")){ renderEmails(); return; }
   if(h==="#/bom" && may("engineering","edit")){ renderBomEditor(); return; }
   if(h==="#/history"){ renderHistory(); return; }
   if(h==="#/feedback"){ renderFeedback(); return; }
@@ -2490,6 +2494,163 @@ function drawStages(body,canEdit,stageErr,call){
   });
 }
 
+/* ---------------- completion email queue ----------------
+   The completion email is sent by the database, not the browser, so without
+   this screen the only way to know whether anything is going out is to open
+   the mailbox. Counts come from fg_queue_health() because the lists below are
+   capped; cron and vault live in schemas the console cannot read, which is why
+   that function exists at all. */
+async function renderEmails(){
+  setHash("#/emails");
+  document.body.classList.remove("wide");
+  root.innerHTML=shell(`
+    <button class="btn link" id="back">&larr; All records</button>
+    <h1>Completion emails</h1>
+    <p class="sub">Every completed record with finished goods photos, and whether the salesperson has been told.</p>
+    <div class="banner" id="banner"></div>
+    <div id="emBody"><div class="spinner"></div></div>`);
+  wireShell();
+  document.getElementById("back").onclick=renderHome;
+  await drawEmails();
+}
+
+async function drawEmails(){
+  const body=document.getElementById("emBody");
+  const canAct=may("records","edit");
+  const cols="id,serial,model,customer,so_number,planned_qty,fg_at,fg_by,fg_notified_at,fg_notify_error";
+  const photos="fg_pallet_path.not.is.null,fg_piece_path.not.is.null";
+
+  const [hR,wR,sR]=await Promise.all([
+    db.rpc("fg_queue_health"),
+    db.from("production_records").select(cols)
+      .eq("status","Completed").or(photos).is("fg_notified_at",null)
+      .order("fg_at",{ascending:false}).limit(300),
+    db.from("production_records").select(cols)
+      .eq("status","Completed").or(photos).not("fg_notified_at","is",null)
+      .order("fg_notified_at",{ascending:false}).limit(100)
+  ]);
+
+  if(wR.error){
+    body.innerHTML=`<div class="card"><div class="empty">Could not read the records: ${esc(wR.error.message)}</div></div>`;
+    return;
+  }
+  const waiting=(wR.data||[]).filter(r=>!r.fg_notify_error);
+  const failed =(wR.data||[]).filter(r=>r.fg_notify_error);
+  const sent   =sR.data||[];
+  const n=x=>Number(x||0).toLocaleString("en-US");
+
+  // ---- is sending actually switched on ----
+  const h=hR.error?null:hR.data;
+  let head="";
+  if(hR.error){
+    const missing=/function|does not exist|schema cache/i.test(hR.error.message||"");
+    head=`<div class="banner show err">${missing
+      ? "The queue health check is not installed yet, so this screen cannot say whether sending is switched on. Run batch51.sql in Supabase."
+      : `Could not read the queue health: ${esc(hR.error.message)}`}</div>`;
+  }else if(h){
+    const bad=[];
+    if(h.key_in_vault===false) bad.push("the service key is not in the vault, so nothing can be sent");
+    if(h.scheduled===false)    bad.push("the five minute sweep is not scheduled");
+    if(h.last_status && !["succeeded","cron not readable"].includes(h.last_status))
+      bad.push(`the last sweep reported ${esc(h.last_status)}`);
+    const cap=t=>t.charAt(0).toUpperCase()+t.slice(1);
+    head=bad.length
+      ? `<div class="banner show err">${cap(bad.join(". "))}.</div>`
+      : `<p class="hint" style="margin:14px 0 0">Sending is on. The email goes out within seconds of the photos being saved, and the
+         five minute sweep picks up anything missed.${h.last_run?` Last sweep ${esc(String(h.last_run).slice(0,16).replace("T"," "))}.`:""}</p>`;
+  }
+
+  // counts come from the health function when it answered, because the lists
+  // below are capped and would otherwise understate a backlog
+  const tiles=[["waiting",h?h.pending:waiting.length,""],
+               ["failed", h?h.failed :failed.length, failed.length||(h&&h.failed)?"var(--hold)":""],
+               ["sent",   h?h.sent   :sent.length,  ""]];
+
+  const sub=t=>t?`<div class="emq-sub">${t}</div>`:"";
+  const row=r=>`<tr>
+    <td style="white-space:nowrap"><b>${esc(r.serial||"")}</b>${sub(esc(r.so_number||""))}</td>
+    <td>${esc(r.customer||"")}${sub(esc(r.model||""))}</td>
+    <td style="white-space:nowrap">${esc(String(r.fg_at||"").slice(0,16).replace("T"," "))}${sub(esc(r.fg_by||""))}</td>
+    <td>${r.fg_notified_at
+      ? `<span class="chip" data-tone="ok">sent</span>${sub(esc(String(r.fg_notified_at).slice(0,16).replace("T"," ")))}`
+      : r.fg_notify_error
+        ? `<span class="chip" data-tone="hold">failed</span>`
+        : `<span class="chip" data-tone="info">waiting</span>`}</td>
+    <td style="white-space:nowrap">
+      <button class="btn ghost sm" data-open="${esc(r.id)}">Open</button>
+      ${canAct?`<button class="btn ghost sm" data-again="${esc(r.id)}" data-sent="${r.fg_notified_at?"1":"0"}"
+        ${r.fg_notified_at?'title="Sends it a second time"':""}>${r.fg_notified_at?"Resend":"Send now"}</button>`:""}
+    </td>
+  </tr>${r.fg_notify_error&&!r.fg_notified_at
+    /* the reason is the point of this screen, so it gets the full width rather
+       than a column that clips it on a phone */
+    ?`<tr class="emq-whyrow"><td colspan="5"><b>Why</b> ${esc(r.fg_notify_error)}</td></tr>`:""}`;
+
+  const table=(list,empty)=>list.length
+    ? `<div class="tbl-wrap"><table><thead><tr>
+         <th style="min-width:120px">Serial</th><th>Customer</th>
+         <th style="min-width:120px">Photos taken</th><th style="min-width:140px">Email</th><th style="width:175px"></th>
+       </tr></thead><tbody>${list.map(row).join("")}</tbody></table></div>`
+    : `<div class="pad" style="color:var(--muted)">${empty}</div>`;
+
+  body.innerHTML=`
+    <style>
+      .emq-tiles{display:flex; gap:10px; flex-wrap:wrap; margin:16px 0 4px}
+      .emq-tiles div{flex:1 1 140px; background:var(--card); border:1px solid var(--line);
+        border-radius:var(--radius); padding:14px 16px}
+      .emq-tiles b{display:block; font-size:26px; font-weight:800; color:var(--navy);
+        font-variant-numeric:tabular-nums; line-height:1.1}
+      html[data-theme="dark"] .emq-tiles b{color:#aeb3ff}
+      .emq-tiles span{font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted)}
+      .emq-sub{font-size:12px; color:var(--muted); margin-top:3px}
+      .emq-whyrow td{border-top:none; padding-top:0; font-size:12.5px; color:var(--hold);
+        overflow-wrap:anywhere; line-height:1.45; white-space:normal}
+      .emq-whyrow b{letter-spacing:.5px; text-transform:uppercase; font-size:10.5px; margin-right:6px}
+    </style>
+    ${head}
+    <div class="emq-tiles">${tiles.map(([l,v,c])=>
+      `<div><b${c?` style="color:${c}"`:""}>${n(v)}</b><span>${l}</span></div>`).join("")}</div>
+
+    ${failed.length?`<div class="card"><h2>Failed</h2>
+      <div class="pad" style="padding-bottom:0"><p class="hint" style="margin:0">Every sweep tries these again on its own. A reason that keeps coming back is the one worth reading.</p></div>
+      ${table(failed,"")}
+      ${canAct?`<div class="pad"><button class="btn primary" id="emAll">Queue all ${n(failed.length)} again</button></div>`:""}
+    </div>`:""}
+
+    <div class="card"><h2>Waiting</h2>
+      ${table(waiting,"Nothing waiting. Every completed record with photos has been sent.")}
+      ${waiting.length>=300?`<div class="pad" style="color:var(--muted)">Showing the first 300.</div>`:""}</div>
+
+    <div class="card"><h2>Sent</h2>
+      ${table(sent,"Nothing sent yet.")}
+      ${sent.length>=100?`<div class="pad" style="color:var(--muted)">Showing the 100 most recent.</div>`:""}</div>`;
+
+  body.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openRecord(b.dataset.open));
+
+  body.querySelectorAll("[data-again]").forEach(b=>b.onclick=async()=>{
+    if(b.dataset.sent==="1" &&
+       !confirm("Send this one again?\n\nThe salesperson and the followers get a second email for the same order.")) return;
+    b.disabled=true; const was=b.textContent; b.textContent="Queueing…";
+    const { error }=await db.rpc("request_fg_notify",{ p_id:b.dataset.again });
+    if(error){ banner("Could not queue it: "+error.message); b.disabled=false; b.textContent=was; return; }
+    banner("Queued. It goes out in a moment.",true);
+    await drawEmails();
+  });
+
+  const all=document.getElementById("emAll");
+  if(all) all.onclick=async()=>{
+    if(!confirm(`Queue all ${failed.length} failed records again?`)) return;
+    all.disabled=true; all.textContent="Queueing…";
+    let ok=0, bad=0;
+    for(const r of failed){
+      const { error }=await db.rpc("request_fg_notify",{ p_id:r.id });
+      if(error) bad++; else ok++;
+    }
+    banner(`${ok} queued${bad?`, ${bad} could not be`:""}.`, !bad);
+    await drawEmails();
+  };
+}
+
 async function renderAdmin(){
   setHash("#/admin");
   document.body.classList.remove("wide");
@@ -2497,10 +2658,14 @@ async function renderAdmin(){
     <button class="btn link" id="back">&larr; All records</button>
     <h1>User access</h1>
     <p class="sub">Assign a role to each person, then decide what each role can see and edit.</p>
+    <div class="toolbar" style="margin-top:0;margin-bottom:4px">
+      <button class="btn ghost sm" id="toEmails" title="Which completion emails have gone out, and which are stuck">Completion emails &rarr;</button>
+    </div>
     <div class="banner" id="banner"></div>
     <div id="adminBody"><div class="spinner"></div></div>`);
   wireShell();
   document.getElementById("back").onclick=renderHome;
+  document.getElementById("toEmails").onclick=renderEmails;
 
   const { data, error }=await db.rpc("admin_overview");
   const body=document.getElementById("adminBody");
@@ -4739,7 +4904,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-23 15:35";
+const NLC_BUILD = "2026-11-23 18:10";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
