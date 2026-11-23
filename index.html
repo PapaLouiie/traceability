@@ -4178,6 +4178,23 @@ function fgPanelHtml(r){
     : `<div class="fg-one"><b>${label}</b><span>not taken</span></div>`;
   const both=r.fg_pallet_path&&r.fg_piece_path;
   const who=r.fg_by?`<div class="m" style="color:var(--muted);margin-top:6px">By ${esc(r.fg_by)}${r.fg_at?" on "+esc(String(r.fg_at).slice(0,16).replace("T"," ")):""}</div>`:"";
+  /* The email has no screen of its own, so its state is shown where the
+     photos are: it is those photos that get sent. Without this the only way
+     to know whether the salesperson was told is to open Odoo or the mailbox. */
+  const notice=(()=>{
+    if(r.status!=="Completed") return "";
+    if(r.fg_notified_at)
+      return `<div class="m" style="margin-top:6px;color:var(--ok)">\u2713 Salesperson and followers emailed on
+        ${esc(String(r.fg_notified_at).slice(0,16).replace("T"," "))}, and the note is on the Odoo order.</div>`;
+    if(r.fg_notify_error)
+      return `<div class="m" style="margin-top:6px;color:#b4451f">The completion email has not gone out yet.
+        <span title="${esc(r.fg_notify_error)}">Last attempt failed.</span>
+        ${may("records","edit")?'<button class="btn link" id="fgRetry" style="padding:0">Try again</button>':""}</div>`;
+    if(r.fg_pallet_path||r.fg_piece_path)
+      return `<div class="m" style="margin-top:6px;color:var(--muted)">The completion email has not gone out yet.
+        ${may("records","edit")?'<button class="btn link" id="fgRetry" style="padding:0">Send it now</button>':""}</div>`;
+    return "";
+  })();
   if(r.fg_skipped)
     return `<div class="qrconf"><div><b>Finished goods photos skipped.</b>
       <div class="m">Reason: ${esc(r.fg_skip_reason||"not given")}</div>${who}</div>
@@ -4186,7 +4203,7 @@ function fgPanelHtml(r){
     return `<div class="qrconf ${both?"ok":"warn"}"><div>
         <b>${both?"Finished goods photos taken.":"One finished goods photo still missing."}</b>
         <div class="fg-grid">${shot(r.fg_pallet_path,"Packed pallet","pallet")}${shot(r.fg_piece_path,"Single piece","piece")}</div>
-        ${r.fg_note?`<div class="m">${esc(r.fg_note)}</div>`:""}${who}</div>
+        ${r.fg_note?`<div class="m">${esc(r.fg_note)}</div>`:""}${who}${notice}</div>
       ${may("records","edit")?`<button class="btn ghost sm" id="fgAgain">${both?"Change":"Add it"}</button>`:""}</div>`;
   if(r.status!=="Completed")
     return `<div class="qrconf"><div><b>Finished goods photos.</b>
@@ -4202,6 +4219,16 @@ function wireFgPanel(){
   const a=go("fgAgain");   if(a) a.onclick=()=>fgModal(r);
   document.querySelectorAll("[data-fgview]").forEach(b=>b.onclick=()=>
     openFgPhoto(b.dataset.fgview==="pallet"?r.fg_pallet_path:r.fg_piece_path));
+  const rt=go("fgRetry");
+  if(rt) rt.onclick=async()=>{
+    rt.disabled=true; rt.textContent="Sending\u2026";
+    const { data, error }=await db.functions.invoke("fg-complete-notify",{ body:{ record_id:r.id } });
+    if(error||((data||{}).error)){ banner("Could not send: "+((error&&error.message)||data.error)); rt.disabled=false; rt.textContent="Try again"; return; }
+    if((data||{}).skipped){ banner("Not sent: "+data.skipped); rt.disabled=false; rt.textContent="Try again"; return; }
+    banner("Sent to "+(((data||{}).to)||[]).join(", "), true);
+    const { data:fresh }=await db.from("production_records").select("*").eq("id",r.id).maybeSingle();
+    if(fresh){ current=fresh; refreshFgPanel(); }
+  };
 }
 
 function refreshFgPanel(){
@@ -4712,7 +4739,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-23 14:50";
+const NLC_BUILD = "2026-11-23 15:05";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
