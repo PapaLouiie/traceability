@@ -58,6 +58,17 @@
   .stats{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-top:6px}
   @media(max-width:820px){ .stats{grid-template-columns:repeat(2,1fr)} }
   .stat{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:15px; box-shadow:var(--shadow)}
+  .qd{display:flex;flex-direction:column;gap:7px}
+  .qd-row{display:grid;grid-template-columns:96px 1fr 70px 150px;align-items:center;gap:10px;font-size:13px}
+  .qd-day{color:var(--muted);font-variant-numeric:tabular-nums}
+  .qd-bar{height:10px;border-radius:99px;background:var(--line);overflow:hidden}
+  .qd-bar i{display:block;height:100%;background:var(--navy);border-radius:99px}
+  html[data-theme="dark"] .qd-bar i{background:#6b74d6}
+  .qd-n{text-align:right;font-weight:800;font-variant-numeric:tabular-nums;color:var(--navy)}
+  html[data-theme="dark"] .qd-n{color:#aeb3ff}
+  .qd-m{color:var(--muted);font-size:12px}
+  @media(max-width:700px){ .qd-row{grid-template-columns:82px 1fr 60px} .qd-m{display:none} }
+
   .stat b{display:block; font-size:26px; color:var(--navy); font-variant-numeric:tabular-nums}
   .stat span{font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:var(--muted)}
 
@@ -349,6 +360,7 @@ const PAL=["#24275E","#F6851F","#3457b2","#1f9d63","#c0392b","#8e44ad","#c9820b"
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt=n=>(n==null?"0":Number(n).toLocaleString());
 let SESSION=null, DATA=null, RANGE={from:"",to:""};
+let DAILY=null, DAILYERR=null;
 let QR=null, QRERR=null;
 // Status colours, not categorical ones: these encode state, not identity.
 // Green applied, red not applied, slate for not answered. Slate is
@@ -409,6 +421,12 @@ function renderShell(){
       <p class="sub" id="qrNote" style="margin-top:10px"></p>
       <div class="grid" id="qrGrid"></div>
 
+      <h1 style="margin-top:34px">Quantity produced</h1>
+      <p class="sub">Counted from worker entries at the final assembly stage, on the day the work was done. A job built up over three days shows on all three, not only on the day it was closed.</p>
+      <div class="stats" id="qtyStats"></div>
+      <p class="sub" id="qtyNote" style="margin-top:10px"></p>
+      <div class="card full" id="qtyCard" style="margin-top:14px"></div>
+
       <div id="valSection" hidden style="display:none">
         <h1 style="margin-top:34px">Production value</h1>
         <p class="sub">What the orders in this range are worth, and what has actually been produced. Prices are from the Odoo sale order line, before VAT.</p>
@@ -428,15 +446,18 @@ function renderShell(){
 async function load(){
   document.getElementById("grid").innerHTML=`<div class="card full"><div class="spinner"></div></div>`;
   document.getElementById("stats").innerHTML="";
-  const [{ data, error }, qrRes, valRes]=await Promise.all([
+  const [{ data, error }, qrRes, valRes, dayRes]=await Promise.all([
     db.rpc("dashboard_data",{ p_from:RANGE.from||null, p_to:RANGE.to||null }),
     db.rpc("qr_compliance_summary",{ p_from:RANGE.from||null, p_to:RANGE.to||null }),
     /* The database decides whether this person may see value, not the page.
        production_value refuses anyone without the pricing permission, and the
        section is only built from what comes back. There is no client side
        flag to get wrong, and nothing to find by reading the page. */
-    db.rpc("production_value",{ p_from:RANGE.from||null, p_to:RANGE.to||null })
+    db.rpc("production_value",{ p_from:RANGE.from||null, p_to:RANGE.to||null }),
+    db.rpc("production_daily",{ p_from:RANGE.from||null, p_to:RANGE.to||null })
   ]);
+  DAILY = (dayRes && !dayRes.error) ? (dayRes.data||[]) : null;
+  DAILYERR = dayRes && dayRes.error ? String(dayRes.error.message||"") : null;
   VAL = (valRes && !valRes.error) ? (valRes.data||[]) : null;
   /* A refusal and a missing function look identical from here, and silence
      for both means a deployment mistake is indistinguishable from not having
@@ -456,7 +477,58 @@ async function load(){
     document.getElementById("grid").innerHTML=`<div class="card full"><div class="empty">Could not load data: ${esc(error.message)}</div></div>`; return; }
   // the plain sections first and the charts last: if the chart library fails
   // to load, the figures are still on the page
-  DATA=data; renderStats(); renderQr(); renderValue(); renderCharts();
+  // Each section is rendered on its own. One of them failing used to take the
+  // rest of the page with it, which is how a missing deployment step ends up
+  // looking like a blank dashboard.
+  DATA=data;
+  [["stats",renderStats],["QR",renderQr],["quantity",renderQty],
+   ["value",renderValue],["charts",renderCharts]].forEach(([name,fn])=>{
+    try{ fn(); }catch(e){ try{ console.log(name+" section failed:", e); }catch(_){} }
+  });
+}
+
+/* Quantity produced, read from production_daily so it is the same number the
+   console report shows. Deliberately separate from dashboard_data, whose units
+   figure is attributed to the record completion date and therefore piles a
+   multi day job onto its last day. */
+function renderQty(){
+  const stats=document.getElementById("qtyStats");
+  const note=document.getElementById("qtyNote");
+  const card=document.getElementById("qtyCard");
+  if(!DAILY){
+    stats.innerHTML="";
+    card.innerHTML="";
+    const missing=/function|does not exist|schema cache/i.test(DAILYERR||"");
+    note.textContent = DAILYERR
+      ? (missing ? "Run batch54.sql in Supabase to turn this section on." : "Could not load it: "+DAILYERR)
+      : "";
+    return;
+  }
+  const rows=DAILY.slice();
+  const q=rows.reduce((a,r)=>a+Number(r.produced_qty||0),0);
+  const m=rows.reduce((a,r)=>a+Number(r.minutes||0),0);
+  const best=rows.reduce((a,r)=>Number(r.produced_qty||0)>Number(a?.produced_qty||0)?r:a, null);
+  const cell=(v,l)=>`<div class="stat"><b>${v}</b><span>${l}</span></div>`;
+  stats.innerHTML=
+    cell(fmt(q),"Pieces produced")+
+    cell(fmt(rows.length),"Days with output")+
+    cell(rows.length?fmt(Math.round(q/rows.length)):"0","Average per day")+
+    cell(best?fmt(best.produced_qty):"0","Best day")+
+    cell(m?(q/(m/60)).toFixed(1):"0","Per labour hour");
+  note.textContent = best ? `Best day was ${best.day}.` : "No worker entries fall in this range.";
+
+  if(!rows.length){ card.innerHTML=`<div class="empty">Nothing produced in this range.</div>`; return; }
+  // a plain bar list rather than a chart, so it still renders if the chart
+  // library does not load, which has happened before
+  const max=Math.max(...rows.map(r=>Number(r.produced_qty||0)),1);
+  card.innerHTML=`<h2>By day</h2><div class="pad"><div class="qd">${
+    rows.slice().sort((a,b)=>String(b.day).localeCompare(String(a.day))).slice(0,31).map(r=>`
+      <div class="qd-row">
+        <span class="qd-day">${esc(r.day)}</span>
+        <span class="qd-bar"><i style="width:${Math.round(Number(r.produced_qty||0)/max*100)}%"></i></span>
+        <span class="qd-n">${fmt(r.produced_qty)}</span>
+        <span class="qd-m">${fmt(r.records)} rec &middot; ${fmt(r.workers)} workers</span>
+      </div>`).join("")}</div>${rows.length>31?`<p class="sub">Showing the 31 most recent days of ${rows.length}.</p>`:""}</div>`;
 }
 
 function renderStats(){
@@ -1208,7 +1280,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-22 19:50";
+const NLC_BUILD = "2026-11-25 19:30";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
