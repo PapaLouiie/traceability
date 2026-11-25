@@ -145,6 +145,18 @@
     border:1px solid var(--line);border-radius:9px;padding:6px 11px;min-width:96px}
   .pricebox i{font-style:normal;font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);font-weight:800}
   .pricebox b{font-size:14px;color:var(--ink)}
+  .wchips{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:8px 0 2px}
+  .wchips:empty{margin:0}
+  .wchip{display:inline-flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--line);
+    border-radius:99px;padding:3px 5px 3px 11px;font-size:12.5px;font-weight:700;color:var(--navy)}
+  html[data-theme="dark"] .wchip{color:#aeb3ff}
+  .wchip[data-day]{border-color:var(--orange);color:var(--orange)}
+  .wchip button{border:0;background:transparent;cursor:pointer;font-size:15px;line-height:1;
+    color:var(--muted);padding:0 4px;border-radius:99px}
+  .wchip-n{font-size:12px;color:var(--muted)}
+  .wchip-clear{border:0;background:transparent;cursor:pointer;font-size:12.5px;color:var(--muted);
+    text-decoration:underline;padding:0 4px}
+
   .pcard .cref{color:var(--ink); line-height:1.35}
   .pcard .cref b{font-size:10px; letter-spacing:.5px; text-transform:uppercase; color:var(--muted);
     margin-right:4px; font-weight:800}
@@ -575,6 +587,7 @@
 <div id="root"><div class="spinner"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 const SUPABASE_URL="https://ekwjpezbepkzmcaiwzcm.supabase.co";
 const SUPABASE_ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVrd2pwZXpiZXBrem1jYWl3emNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzMTkwNTMsImV4cCI6MjA5ODg5NTA1M30.BE5m6snqwJzXkXBn-J8RllCvC0nWgFjJbg_t2466Q6M";
@@ -629,7 +642,10 @@ const root=document.getElementById("root");
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const STATUSES=["Draft","Warehouse","Returned to Engineering","Pushed","Accepted","Returned"];
 const STONE={Draft:"",Warehouse:"warn","Returned to Engineering":"hold",Pushed:"info",Accepted:"ok",Returned:"hold",Completed:"ok"};
-const WH_REASONS=["Driver wrong","LED wrong","EM wrong","Housing wrong"];
+/* The first four are a BOM being wrong. The last is nothing being wrong with
+   the BOM at all: the parts are simply not here and none are on the way,
+   which is a planning problem rather than an engineering one. */
+const WH_REASONS=["Driver wrong","LED wrong","EM wrong","Housing wrong","No stock and no cargo inbound"];
 const KBZ_STEPS=[0.65,0.75,0.85,1,1.15,1.35,1.6,1.9];
 const KB_COLW=205; // column min width at 100%; the grid reflows off this
 let KBZOOM=(()=>{ const v=parseFloat(localStorage.getItem("nlc-kbzoom")); return KBZ_STEPS.includes(v)?v:1; })();
@@ -655,7 +671,7 @@ function kbZoomStep(dir){
 }
 const CONVEYORS=Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 let SESSION=null, PERMS={}, PLANS=[], VIEW="kanban", WEEKPAGE=0, LIGHT_TYPES=[], FABFILTER="", MOF="", BACKLOGF=false;
-let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone", AFPF="";
+let STOCKF="", INDF="", STATUSF="", SORTSEL="recent", WEEKCOUNT=8, CARDMODE="full", ROLE="", WEEKF=[], DAYF="", GROUPMODE=false, CANCELF="hide", DNF="hidedone", AFPF="";
 const DNLABEL={assigned:"Ready",confirmed:"Waiting",waiting:"Waiting (other op)",done:"Done",draft:"Draft"};
 const GEXP=new Set();
 let WEEKOPTS_CACHE=null;
@@ -874,7 +890,8 @@ function renderShell(){
         <select id="indFilter" style="max-width:120px">
           <option value="">Timing: all</option><option>On Time</option><option>Late</option>
         </select>
-        <select id="weekFilter" style="max-width:160px"><option value="">Week: all</option></select>
+        <select id="weekFilter" style="max-width:170px"><option value="">Week: add\u2026</option></select>
+        <input type="date" id="dayFilter" style="max-width:160px" title="One planned date. Choosing a day clears the weeks.">
         <select id="statusFilter" style="max-width:130px">
           <option value="">Status: all</option><option>Draft</option><option>Warehouse</option>
           <option>Returned to Engineering</option><option>Pushed</option>
@@ -944,7 +961,18 @@ function renderShell(){
   document.getElementById("statusFilter").onchange=e=>{ STATUSF=e.target.value; draw(); };
   const wf=document.getElementById("weekFilter");
   wf.insertAdjacentHTML("beforeend", weekOptionsBase().replace('<option value=""></option>',''));
-  wf.onchange=e=>{ WEEKF=e.target.value; draw(); };
+  wf.onchange=e=>{
+    const w=e.target.value; e.target.value="";
+    if(!w || WEEKF.includes(w)) return;
+    WEEKF=[...WEEKF,w].sort();
+    DAYF=""; const d=document.getElementById("dayFilter"); if(d) d.value="";
+    draw();
+  };
+  document.getElementById("dayFilter").onchange=e=>{
+    DAYF=e.target.value||"";
+    if(DAYF) WEEKF=[];            // a day and a set of weeks would contradict each other
+    draw();
+  };
   document.getElementById("sortSel").onchange=e=>{ SORTSEL=e.target.value; draw(); };
   document.getElementById("cancelFilter").onchange=e=>{ CANCELF=e.target.value; draw(); };
   document.getElementById("dnFilter").onchange=e=>{ DNF=e.target.value; draw(); };
@@ -1365,7 +1393,9 @@ function filtered(){
   if(BACKLOGF) rows=rows.filter(isBacklog);
   if(INDF) rows=rows.filter(p=>p.plan_indicator===INDF);
   if(STATUSF) rows=rows.filter(p=>p.plan_status===STATUSF);
-  if(WEEKF) rows=rows.filter(p=>p.planned_date && isoWeekStr(p.planned_date)===WEEKF);
+  if(DAYF) rows=rows.filter(p=>p.planned_date===DAYF);
+  else if(WEEKF.length) rows=rows.filter(p=>p.planned_date && WEEKF.includes(isoWeekStr(p.planned_date)));
+  paintPlanChips();
   if(CANCELF==="hide") rows=rows.filter(p=>p.odoo_state!=="cancel");
   else if(CANCELF==="only") rows=rows.filter(p=>p.odoo_state==="cancel");
   if(DNF==="hidedone") rows=rows.filter(p=>p.odoo_state!=="done");
@@ -1734,13 +1764,60 @@ function drawCalendar(v){
 
 /* ---------------- spreadsheet ---------------- */
 let SHHIDE=new Set(); try{ SHHIDE=new Set(JSON.parse(localStorage.getItem("nlc-sheet-hide")||"[]")); }catch(e){}
+/* Production, Sample, Reassembly and Labeling are what the planning team
+   distinguishes. Sticker and Non-Production came before and are not offered
+   any more, but a plan already carrying one keeps it rather than being
+   silently switched to Production the next time somebody opens it. */
+/* The chosen weeks as chips. Same reasoning as the console: a multiple select
+   hides the chosen period behind a scroll box, and the period is the filter
+   people most often forget they left on. */
+function paintPlanChips(){
+  let box=document.getElementById("planChips");
+  if(!box){
+    const bar=document.querySelector("#weekFilter")?.closest(".toolbar, .filters, div");
+    if(!bar || !bar.parentNode) return;
+    box=document.createElement("div"); box.id="planChips"; box.className="wchips";
+    bar.parentNode.insertBefore(box, bar.nextSibling);
+  }
+  if(!WEEKF.length && !DAYF){ box.innerHTML=""; return; }
+  box.innerHTML=
+    (DAYF?`<span class="wchip" data-day="1">${esc(DAYF)}<button type="button" data-rmday="1">&times;</button></span>`:"")
+    + WEEKF.map(w=>`<span class="wchip">${esc(w)}<button type="button" data-rmweek="${esc(w)}">&times;</button></span>`).join("")
+    + (WEEKF.length>1?`<span class="wchip-n">${WEEKF.length} weeks</span>`:"")
+    + `<button type="button" class="wchip-clear" id="planChipClear">Clear period</button>`;
+  box.querySelectorAll("[data-rmweek]").forEach(b=>b.onclick=()=>{
+    WEEKF=WEEKF.filter(x=>x!==b.dataset.rmweek); draw(); });
+  const rd=box.querySelector("[data-rmday]");
+  if(rd) rd.onclick=()=>{ DAYF=""; const e=document.getElementById("dayFilter"); if(e) e.value=""; draw(); };
+  const cl=document.getElementById("planChipClear");
+  if(cl) cl.onclick=()=>{ WEEKF=[]; DAYF="";
+    const e=document.getElementById("dayFilter"); if(e) e.value=""; draw(); };
+}
+
+const KINDS=["Production","Sample","Reassembly","Labeling"];
+const KINDS_RETIRED=["Sticker","Non-Production"];
+function KIND_OPTIONS(selected){
+  const list=KINDS.slice();
+  if(selected && !list.includes(selected)) list.push(selected);
+  return list.map(k=>`<option ${k===selected?"selected":""}>${esc(k)}</option>`).join("");
+}
+/* Where Odoo says the order stands. Cancelled is the one that matters on the
+   sheet: a cancelled order still sitting in planning is work nobody should be
+   doing. The other values are the delivery states DNLABEL already names. */
+function odooStateLabel(v){
+  if(!v) return "";
+  if(v==="cancel") return "Cancelled";
+  return DNLABEL[v] || v;
+}
+
 const SHF={};   // spreadsheet per-column filters: key -> text
 let SHFOCUS=null; // which filter input to refocus after redraw
 const SHEETCOLS=[
   ["odoo_so","Odoo SO","text"],["sap_so","SAP SO","text"],["customer","Client","text"],
   ["product_name","Product","text"],["c_ref","C.Ref","text"],["so_qty","DN Qty","number"],
   ["model","Model","text"],["planned_qty","Plan Qty","number"],["planned_date","Plan week","week"],
-  ["record_kind","Type","select:Production,Sample,Sticker,Non-Production"],
+  ["record_kind","Type","select:Production,Sample,Reassembly,Labeling,Sticker,Non-Production"],
+  ["odoo_state","Order status","ro"],
   ["needs_fabrication","Fab","select:false,true"],
   ["bom_stock_status","BOM stock","select:,In Stock,Partial Stock,Cargo/PO Item"],
   ["odoo_mo","MO","ro"],
@@ -1756,6 +1833,9 @@ function drawSheet(v){
     if(k==="planned_date") return p.planned_date?isoWeekStr(p.planned_date):"";
     if(k==="needs_fabrication") return String(!!p.needs_fabrication);
     if(k==="record_kind") return p.record_kind||"Production";
+    // filter on what the cell shows, not on Odoo's internal word, so typing
+    // "cancelled" finds the cancelled ones
+    if(k==="odoo_state") return odooStateLabel(p.odoo_state);
     return p[k]==null?"":String(p[k]);
   };
   allRows=allRows.filter(p=>{
@@ -1824,6 +1904,9 @@ function drawSheet(v){
         if(k==="planned_date") val=p.planned_date?isoWeekStr(p.planned_date):"";
         if(k==="needs_fabrication") val=String(!!p.needs_fabrication);
         if(k==="record_kind") val=p.record_kind||"Production";
+        if(k==="odoo_state") return `<td>${p.odoo_state==="cancel"
+          ? '<span class="late">CANCELLED</span>'
+          : esc(odooStateLabel(p.odoo_state))}</td>`;
         if(k==="sales_person") val=cleanSales(val);
         if(k==="odoo_so") return `<td>${soLink(p, esc(val))}</td>`;
         if(k==="odoo_mo") return `<td>${val?moLink(p,`<span class="chip" data-tone="ok" style="font-weight:700">\u2699 ${esc(val)}</span>`):""}</td>`;
@@ -1832,6 +1915,11 @@ function drawSheet(v){
         if(ty==="week")
           return `<td class="cell"><select data-id="${p.id}" data-col="${k}" data-wk="${esc(val)}">${weekOptionsBase()}</select></td>`;
         if(ty.startsWith("select:")){
+          // the sheet offers the same four kinds the plan dialog does, plus
+          // whatever a row already carries, so a retired value is never
+          // silently rewritten by opening the sheet
+          if(k==="record_kind")
+            return `<td class="cell"><select data-id="${p.id}" data-col="${k}">${KIND_OPTIONS(val||"Production")}</select></td>`;
           const opts=ty.slice(7).split(",");
           const lab=o=>k==="needs_fabrication"?(o==="true"?"Yes":"No"):(o||"-");
           return `<td class="cell"><select data-id="${p.id}" data-col="${k}">${opts.map(o=>`<option value="${esc(o)}" ${String(val)===o?"selected":""}>${esc(lab(o))}</option>`).join("")}</select></td>`;
@@ -2081,7 +2169,8 @@ function queueStrip(status, shown){
   take("delivered in Odoo",  p=>DNF==="hidedone"   && p.odoo_state==="done");
   take("cancelled in Odoo",  p=>CANCELF==="hide"   && p.odoo_state==="cancel");
   take("not in the backlog", p=>BACKLOGF           && !isBacklog(p));
-  take("another week",       p=>WEEKF              && isoWeekStr(p.planned_date)!==WEEKF);
+  take("another week",       p=>WEEKF.length       && !WEEKF.includes(isoWeekStr(p.planned_date)));
+  take("another day",        p=>DAYF               && p.planned_date!==DAYF);
   take("the search term",    p=>!!q);
   take("another filter",     p=>true);
 
@@ -2097,7 +2186,9 @@ function wireQueueStrip(v){
   b.onclick=()=>{
     DNF="";      const d=document.getElementById("dnFilter");     if(d) d.value="";
     CANCELF="";  const c=document.getElementById("cancelFilter"); if(c) c.value="";
-    WEEKF="";    const w=document.getElementById("weekFilter");   if(w) w.value="";
+    WEEKF=[]; DAYF="";
+    const w=document.getElementById("weekFilter"); if(w) w.value="";
+    const dy=document.getElementById("dayFilter"); if(dy) dy.value="";
     BACKLOGF=false;
     if(SEARCHCTL&&SEARCHCTL.get()){ SEARCHCTL.set([]); const qi=document.getElementById("q"); if(qi) qi.value=""; }
     draw(); if(typeof refreshBacklogBar==="function") refreshBacklogBar();
@@ -2105,6 +2196,44 @@ function wireQueueStrip(v){
 }
 
 /* ---------------- warehouse material issuance queue ---------------- */
+/* One row per plan waiting on the warehouse, with each BOM slot as its own
+   pair of columns so the sheet can be sorted by what is missing. The ticks are
+   written out as words rather than TRUE and FALSE, because a blank and an
+   unticked box mean different things here: not checked yet, versus checked and
+   confirmed not available. */
+function exportWarehouseQueue(rows){
+  if(typeof XLSX === "undefined"){ banner("The spreadsheet library did not load. Check your connection and reload."); return; }
+  const tick = v => v===true ? "available" : (v===false ? "not available" : "not checked");
+  const num  = v => v==null || v==="" ? "" : Number(v);
+  const head=["SO","SAP SO","Customer","C.Ref","Model","Product","Planned qty","Planned date",
+              "Stock status","Stock checked on","Stock checked by","Needs fabrication",
+              "Driver","Driver qty","Driver available",
+              "LED","LED qty","LED available",
+              "EM","EM qty","EM available",
+              "Housing","Housing qty","Housing available",
+              "Fabricated","Fabricated qty","Fabricated available",
+              "BOM remarks","Planning remarks","Cargo remarks","Cargo ETA"];
+  const body=rows.map(p=>[
+    p.odoo_so||"", p.sap_so||"", p.customer||"", p.c_ref||"", p.model||"", p.product_name||"",
+    num(p.planned_qty), p.planned_date||"",
+    p.bom_stock_status||"", String(p.stock_confirmed_at||"").slice(0,10), p.stock_confirmed_by||"",
+    p.needs_fabrication?"yes":"no",
+    p.bom_driver||"",     num(p.bom_driver_qty),     tick(p.bom_driver_avail),
+    p.bom_led||"",        num(p.bom_led_qty),        tick(p.bom_led_avail),
+    p.bom_em||"",         num(p.bom_em_qty),         tick(p.bom_em_avail),
+    p.bom_housing||"",    num(p.bom_housing_qty),    tick(p.bom_housing_avail),
+    p.bom_fabricated||"", num(p.bom_fabricated_qty), tick(p.bom_fabricated_avail),
+    p.bom_remarks||"", p.plan_remarks||"", p.cargo_remarks||"", p.cargo_eta||""]);
+  const ws=XLSX.utils.aoa_to_sheet([head,...body]);
+  ws["!cols"]=[12,12,26,16,26,30,11,12,14,16,18,16,
+               18,10,14, 18,10,14, 18,10,14, 18,10,14, 18,12,16,
+               30,30,30,12].map(w=>({wch:w}));
+  ws["!autofilter"]={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(body.length,1),c:head.length-1}})};
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Warehouse queue");
+  XLSX.writeFile(wb,`ProTrace_warehouse_queue_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
 function drawWarehouse(v){
   const rows=filtered().filter(p=>p.plan_status==="Warehouse");
   const canAct=may("warehouse","edit");
@@ -2127,7 +2256,8 @@ function drawWarehouse(v){
   // view, including read-only roles, and whether or not the queue has rows today
   const repBar=`<div class="toolbar" style="margin-bottom:12px">
       <button class="btn ghost" id="whIssued">Materials issued report</button>
-      <span class="m" style="color:var(--muted)">What was issued, by date</span>
+      <button class="btn ghost" id="whXls"${rows.length?"":" disabled"}>Export queue to Excel (${rows.length})</button>
+      <span class="m" style="color:var(--muted)">What was issued, by date. The export is whatever the filters above are showing.</span>
     </div>`;
   v.innerHTML=queueStrip("Warehouse",rows)+repBar+bulkBar+(rows.length?rows.map(p=>`
     <div class="qrow">
@@ -2160,6 +2290,8 @@ function drawWarehouse(v){
       ?"Every plan in this queue is hidden by the filters above. Use Show all to see them."
       :"Nothing waiting on the warehouse. Pushed plans arrive here for material issuance before assembly."}</div>`);
   wireQueueStrip(v);
+  const wx=v.querySelector("#whXls");
+  if(wx) wx.onclick=()=>exportWarehouseQueue(rows);
   const ib=v.querySelector("#whIssued");
   if(ib) ib.onclick=()=>issuedReportModal();
   if(!canAct) return;
@@ -2633,6 +2765,10 @@ function returnModal(id){
           <div id="rr-parts" style="padding-left:24px">
             <div class="checks">${["Driver","LED","EM","Housing"].map(x=>`<label><input type="checkbox" class="rr-part" value="${x}"> ${x}</label>`).join("")}</div>
           </div>
+          <label><input type="radio" name="rr" value="nocargo"> No stock and no cargo inbound</label>
+          <div id="rr-cargo-parts" style="padding-left:24px;display:none">
+            <div class="checks">${["Driver","LED","EM","Housing"].map(x=>`<label><input type="checkbox" class="rr-cargo-part" value="${x}"> ${x}</label>`).join("")}</div>
+          </div>
           <label><input type="radio" name="rr" value="other"> Other</label>
           <input id="rr-text" placeholder="Describe the reason" style="width:100%;display:none">
         </div></div>
@@ -2647,22 +2783,31 @@ function returnModal(id){
   bg.querySelector(".x").onclick=close;
   bg.querySelector("#rr-cancel").onclick=close;
   bg.onclick=e=>{ if(e.target===bg) close(); };
+  const picked=()=>bg.querySelector('input[name="rr"]:checked').value;
   const sync=()=>{
-    const other=bg.querySelector('input[name="rr"][value="other"]').checked;
-    bg.querySelector("#rr-text").style.display=other?"block":"none";
-    bg.querySelector("#rr-parts").style.display=other?"none":"block";
+    const v=picked();
+    bg.querySelector("#rr-text").style.display       = v==="other"   ?"block":"none";
+    bg.querySelector("#rr-parts").style.display      = v==="nostock" ?"block":"none";
+    bg.querySelector("#rr-cargo-parts").style.display= v==="nocargo" ?"block":"none";
   };
   bg.querySelectorAll('input[name="rr"]').forEach(r=>r.onchange=sync);
   bg.querySelector("#rr-go").onclick=async()=>{
-    const other=bg.querySelector('input[name="rr"][value="other"]').checked;
+    const v=picked();
+    const warn=t=>{ const m=bg.querySelector("#rr-msg"); m.textContent=t; m.className="banner show err"; };
     let reason;
-    if(other){
+    if(v==="other"){
       reason=bg.querySelector("#rr-text").value.trim();
-      if(!reason){ const m=bg.querySelector("#rr-msg"); m.textContent="Describe the reason."; m.className="banner show err"; return; }
+      if(!reason){ warn("Describe the reason."); return; }
       reason="Other: "+reason;
+    } else if(v==="nocargo"){
+      const parts=[...bg.querySelectorAll(".rr-cargo-part:checked")].map(x=>x.value);
+      if(!parts.length){ warn("Tick what is missing."); return; }
+      // said in full, because the planner reads this and the two cases need
+      // different action: one is a wait, the other is a purchase
+      reason="No stock and no cargo inbound: "+parts.join(", ");
     } else {
       const parts=[...bg.querySelectorAll(".rr-part:checked")].map(x=>x.value);
-      if(!parts.length){ const m=bg.querySelector("#rr-msg"); m.textContent="Tick what has no stock."; m.className="banner show err"; return; }
+      if(!parts.length){ warn("Tick what has no stock."); return; }
       reason="No stock: "+parts.join(", ");
     }
     busy(true);
@@ -2840,7 +2985,8 @@ async function planModal(pLite){
         <div class="field"><label>Light type</label><select id="p-light_type"><option value=""></option>${LIGHT_TYPES.map(x=>`<option ${x===g("light_type")?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
         <div class="field"><label>Voltage</label><input id="p-voltage" value="${esc(g("voltage"))}" placeholder="e.g. 220V"></div>
         <div class="field"><label>Piece type</label><select id="p-record_kind">
-          ${["Production","Sample","Sticker","Non-Production"].map(k=>`<option ${k===(g("record_kind")||"Production")?"selected":""}>${k}</option>`).join("")}</select></div>
+          ${KIND_OPTIONS(g("record_kind")||"Production")}</select>
+          <span class="hint">Only Production counts towards cycle time averages. The others are timed but kept out of the benchmarks, because a sample or a relabel is not comparable to a production run.</span></div>
         <div class="field"><label>Fabrication needed</label><select id="p-needs_fabrication">
           <option value="false" ${!p||!p.needs_fabrication?"selected":""}>No</option>
           <option value="true" ${p&&p.needs_fabrication?"selected":""}>Yes</option></select></div>
@@ -3384,9 +3530,8 @@ function nlcmSetup(){
 })();
 
 
-  
 
-const NLC_BUILD = "2026-11-22 19:20";
+const NLC_BUILD = "2026-11-25 19:30";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
