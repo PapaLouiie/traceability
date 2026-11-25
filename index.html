@@ -27,6 +27,53 @@
   /* card headings are navy on a navy card in dark mode, which measured 1.18:1.
      Every screen in the console is affected, not just one. */
   html[data-theme="dark"] .card h2{color:#aeb3ff}
+  .qbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:12.5px;color:var(--muted)}
+  .qbar .qnum{font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums}
+  html[data-theme="dark"] .qbar .qnum{color:#aeb3ff}
+  .qbar .qtrack{display:inline-block;width:92px;height:6px;border-radius:99px;background:var(--line);overflow:hidden}
+  .qbar .qtrack i{display:block;height:100%;background:var(--navy);border-radius:99px}
+  .qbar[data-q="done"] .qtrack i{background:var(--ok)}
+  .qbar[data-q="part"] .qtrack i{background:var(--orange)}
+  .qbar .qpct{font-variant-numeric:tabular-nums}
+  .qbar .qleft{color:var(--orange);font-weight:700}
+  .qbar .qdays{border:1px solid var(--line);border-radius:99px;padding:0 7px;font-size:11px}
+  .rq{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin:0 0 14px}
+  .rq-main{display:flex;align-items:center;gap:26px;flex-wrap:wrap}
+  .rq-main>div{display:flex;flex-direction:column}
+  .rq-main b{font-size:24px;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums;line-height:1.1}
+  html[data-theme="dark"] .rq-main b{color:#aeb3ff}
+  .rq-main span{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted)}
+  .rq-track{flex:1;min-width:120px;height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+  .rq-track i{display:block;height:100%;background:var(--navy);border-radius:99px}
+  html[data-theme="dark"] .rq-track i{background:#6b74d6}
+  .rq-days{margin-top:10px;font-size:12.5px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap}
+  .rq-days b{color:var(--navy);font-variant-numeric:tabular-nums}
+  html[data-theme="dark"] .rq-days b{color:#aeb3ff}
+  .rq-note{margin-top:8px;font-size:12px;color:var(--muted)}
+  .wchips{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:-4px 0 12px}
+  .wchips:empty{margin:0}
+  .wchip{display:inline-flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--line);
+    border-radius:99px;padding:3px 5px 3px 11px;font-size:12.5px;font-weight:700;color:var(--navy)}
+  html[data-theme="dark"] .wchip{color:#aeb3ff}
+  .wchip[data-day]{border-color:var(--orange);color:var(--orange)}
+  .wchip button{border:0;background:transparent;cursor:pointer;font-size:15px;line-height:1;
+    color:var(--muted);padding:0 4px;border-radius:99px}
+  .wchip button:hover{color:var(--hold)}
+  .wchip-n{font-size:12px;color:var(--muted)}
+  .wchip-clear{border:0;background:transparent;cursor:pointer;font-size:12.5px;color:var(--muted);
+    text-decoration:underline;padding:0 4px}
+  .fgb-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  .fgb{display:grid;grid-template-columns:90px 1fr 150px auto;gap:10px;align-items:center;
+    background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+  .fgb-n b{color:var(--navy)} html[data-theme="dark"] .fgb-n b{color:#aeb3ff}
+  .fgb-q b{font-variant-numeric:tabular-nums}
+  .fgb-q span{color:var(--muted);font-size:12px;margin-left:6px}
+  .fgb-why{font-size:11.5px;color:var(--hold);overflow-wrap:anywhere;margin-top:3px}
+  .fgb-p{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .fgb-miss{font-size:11.5px;color:var(--muted);align-self:center}
+  .fgb-w{grid-column:1/-1;font-size:11.5px;color:var(--muted)}
+  @media(max-width:760px){ .fgb{grid-template-columns:1fr} .fgb-p{justify-content:flex-start} }
+
   /* --navy has no dark mode value, so every modal title was rendering at a
      contrast ratio of 1.18 to 1 against the dark card: effectively invisible */
   html[data-theme="dark"] .modal .mh{color:#aeb3ff}
@@ -563,6 +610,14 @@ const LOGO          = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAWUAAABkCAY
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 const root = document.getElementById("root");
 const STATUSES = ["Open","In Progress","QC","Completed","Hold"];
+/* The same four planning picks, so a record and its plan describe the piece
+   the same way. Sticker and Non-Production came before and are not offered
+   any more, but a record already carrying one keeps it rather than being
+   silently turned into Production the next time somebody opens it. */
+const KINDS = ["Production","Sample","Reassembly","Labeling"];
+const KIND_COLOUR = { Production:"#24275E", Sample:"#F6851F", Reassembly:"#7a4fd0", Labeling:"#2e7d32" };
+const kindList = sel => KINDS.includes(sel)||!sel ? KINDS : [...KINDS, sel];
+const kindColour = k => KIND_COLOUR[k] || "#5a5f86";
 const CONVEYORS = Array.from({length:10},(_,i)=>"Conveyor #"+String(i+1).padStart(2,"0"));
 try{ if(localStorage.getItem("nlc-theme")==="dark") document.documentElement.dataset.theme="dark"; }catch(e){}
 // keep the login token fresh: refresh when the tab wakes, and recover
@@ -850,6 +905,7 @@ async function route(){
   if(h==="#/admin" && may("admin","view")){ renderAdmin(); return; }
   if(h==="#/staff" && may("people","view")){ renderStaff(); return; }
   if(h==="#/emails" && may("admin","view")){ renderEmails(); return; }
+  if(h==="#/report" && may("records","view")){ renderReport(); return; }
   if(h==="#/bom" && may("engineering","edit")){ renderBomEditor(); return; }
   if(h==="#/history"){ renderHistory(); return; }
   if(h==="#/feedback"){ renderFeedback(); return; }
@@ -892,6 +948,7 @@ function shell(inner){
       ${may("engineering","edit")?'<a id="navBom" class="brand-home">BOM editor</a>':''}
       <a id="navHist" class="brand-home">History</a>
       <a id="navFb" class="brand-home" title="Report an issue or request a feature">Feedback</a>
+      ${may("records","view")?'<a id="navReport" class="brand-home" title="What was produced each day, and who was in">Production</a>':''}
       ${may("people","view")?'<a id="navStaff" class="brand-home" title="Workers, foremen and production stages">People</a>':''}
       ${may("admin","view")?'<a id="adminBtn" class="brand-home">Admin</a>':''}
       <a class="brand-home" id="themeBtn" title="Light / dark">${document.documentElement.dataset.theme==="dark"?"\u2600":"\u263E"}</a>
@@ -911,6 +968,7 @@ function wireShell(){
   const nb=document.getElementById("navBom"); if(nb) nb.onclick=e=>{ e.preventDefault(); renderBomEditor(); };
   const ns=document.getElementById("navStaff"); if(ns) ns.onclick=e=>{ e.preventDefault(); renderStaff(); };
   const nh=document.getElementById("navHist"); if(nh) nh.onclick=e=>{ e.preventDefault(); renderHistory(); };
+  const nr=document.getElementById("navReport"); if(nr) nr.onclick=e=>{ e.preventDefault(); renderReport(); };
   const nf=document.getElementById("navFb");   if(nf) nf.onclick=e=>{ e.preventDefault(); renderFeedback(); };
   updateQueueBadge();
 }
@@ -1492,7 +1550,8 @@ async function renderHome(){
     <div class="toolbar">
       <select id="f-month" style="max-width:140px"><option value="">All months</option>${months.map(m=>`<option value="${m[0]}">${m[1]}</option>`).join("")}</select>
       <select id="f-year" style="max-width:110px"><option value="">All years</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
-      <select id="f-week" style="max-width:170px"><option value="">All weeks</option>${(()=>{let o="";const now=new Date();for(let i=-30;i<=35;i++){const d=new Date(now);d.setDate(now.getDate()+i*7);const w=wkStr(d.toISOString().slice(0,10));const mon=wkMon(w);const a=new Date(mon+"T00:00:00Z");const f=a.toLocaleDateString("en",{day:"numeric",month:"short",timeZone:"UTC"});o+=`<option value="${w}">${w} (${f})</option>`;}return o;})()}</select>
+      <select id="f-week" style="max-width:180px"><option value="">Add a week\u2026</option>${(()=>{let o="";const now=new Date();for(let i=-30;i<=35;i++){const d=new Date(now);d.setDate(now.getDate()+i*7);const w=wkStr(d.toISOString().slice(0,10));const mon=wkMon(w);const a=new Date(mon+"T00:00:00Z");const f=a.toLocaleDateString("en",{day:"numeric",month:"short",timeZone:"UTC"});o+=`<option value="${w}">${w} (${f})</option>`;}return o;})()}</select>
+      <input type="date" id="f-day" style="max-width:165px" title="One day. Choosing a day clears the weeks.">
       <select id="f-tag" style="max-width:190px">
         <option value="">Any issue status</option>
         <option value="any">Has any open issue</option>
@@ -1513,10 +1572,9 @@ async function renderHome(){
         <option value="missing">Confirmed not applied</option>
         <option value="nr">Not required</option>
       </select>
-      <select id="f-kind" style="max-width:150px">
+      <select id="f-kind" style="max-width:160px">
         <option value="">All pieces</option>
-        <option value="Production">Production only</option>
-        <option value="Sample">Samples only</option>
+        ${KINDS.map(k=>`<option value="${k}">${k} only</option>`).join("")}
       </select>
       <select id="f-sort" style="max-width:180px">
         <option value="production_date|desc">Date, newest first</option>
@@ -1539,6 +1597,7 @@ async function renderHome(){
       <button class="btn ghost" id="clearFil">Clear</button>
       <button class="btn orange" id="exportBtn" style="margin-left:auto">Export Excel</button>
     </div>
+    <div id="weekChips" class="wchips"></div>
     <div class="card"><h2>Records</h2><div id="list"><div class="spinner"></div></div></div>
   `);
   wireShell();
@@ -1550,17 +1609,29 @@ async function renderHome(){
   searchCtl.set(HOME_TERMS);
   window.__homeSearch=searchCtl;
   document.getElementById("searchBtn").onclick=()=>{ searchCtl.commit(); loadList(searchCtl.get().trim()); };
-  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.week=document.getElementById("f-week").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.status=document.getElementById("f-status").value; listFilter.qr=document.getElementById("f-qr").value; LPAGE=30; listFilter.sort=document.getElementById("f-sort").value; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
+  const applyFil=()=>{ listFilter.month=document.getElementById("f-month").value; listFilter.year=document.getElementById("f-year").value; listFilter.tag=document.getElementById("f-tag").value; listFilter.kind=document.getElementById("f-kind").value; listFilter.status=document.getElementById("f-status").value; listFilter.qr=document.getElementById("f-qr").value; LPAGE=30; listFilter.sort=document.getElementById("f-sort").value; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("f-month").onchange=applyFil;
   document.getElementById("f-year").onchange=applyFil;
-  document.getElementById("f-week").onchange=applyFil;
+  document.getElementById("f-week").onchange=e=>{
+    const w=e.target.value; e.target.value="";
+    if(!w || listFilter.weeks.includes(w)) return;
+    listFilter.weeks=[...listFilter.weeks,w].sort();
+    listFilter.day="";                 // a day and a set of weeks would contradict each other
+    const dEl=document.getElementById("f-day"); if(dEl) dEl.value="";
+    reloadWithFilter();
+  };
+  document.getElementById("f-day").onchange=e=>{
+    listFilter.day=e.target.value||"";
+    if(listFilter.day) listFilter.weeks=[];
+    reloadWithFilter();
+  };
   document.getElementById("f-tag").onchange=applyFil;
   document.getElementById("f-kind").onchange=applyFil;
   document.getElementById("f-status").onchange=applyFil;
   document.getElementById("f-qr").onchange=applyFil;
   document.getElementById("f-sort").onchange=applyFil;
-  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-week").value=listFilter.week||""; document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-status").value=listFilter.status||"open"; document.getElementById("f-qr").value=listFilter.qr||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
-  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",week:"",tag:"",kind:"",status:"open",qr:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-tag","f-kind","f-qr"].forEach(id=>document.getElementById(id).value=""); document.getElementById("f-status").value="open"; document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
+  document.getElementById("f-month").value=listFilter.month; document.getElementById("f-year").value=listFilter.year; document.getElementById("f-day").value=listFilter.day||""; paintWeekChips(); document.getElementById("f-tag").value=listFilter.tag||""; document.getElementById("f-kind").value=listFilter.kind||""; document.getElementById("f-status").value=listFilter.status||"open"; document.getElementById("f-qr").value=listFilter.qr||""; document.getElementById("f-sort").value=listFilter.sort||"production_date|desc";
+  document.getElementById("clearFil").onclick=()=>{ listFilter={year:"",month:"",weeks:[],day:"",tag:"",kind:"",status:"open",qr:"",sort:"production_date|desc"}; ["f-month","f-year","f-week","f-day","f-tag","f-kind","f-qr"].forEach(id=>{const el=document.getElementById(id); if(el) el.value="";}); paintWeekChips(); document.getElementById("f-status").value="open"; document.getElementById("f-sort").value="production_date|desc"; loadList((window.__homeSearch?window.__homeSearch.get():"").trim()); };
   document.getElementById("exportBtn").onclick=openExport;
   loadList("");
 }
@@ -1577,7 +1648,7 @@ function monthRange(year,month){
   return null;
 }
 
-let listFilter={year:"",month:"",week:"",tag:"",kind:"",sort:"production_date|desc"};
+let listFilter={year:"",month:"",weeks:[],day:"",tag:"",kind:"",sort:"production_date|desc"};
 let LAST_LIST=[]; const QRSEL=new Set(); let LPAGE=30;
 
 /* ---------------- moving between records ----------------
@@ -1635,11 +1706,22 @@ async function updateQueueBadge(){
 setInterval(updateQueueBadge, 90000);
 async function loadList(q){
   const list=document.getElementById("list");
-  let rng=monthRange(listFilter.year,listFilter.month);
-  if(listFilter.week){
-    const mon=wkMon(listFilter.week);
-    if(mon){ const end=new Date(mon+"T00:00:00Z"); end.setUTCDate(end.getUTCDate()+7);
-      rng=[mon, end.toISOString().slice(0,10)]; }
+  // One range for a month or a day, several for a set of weeks. They go into
+  // the query rather than being filtered afterwards, or the totals and the
+  // Load more count would describe rows that are not on screen.
+  let ranges=[];
+  const mr=monthRange(listFilter.year,listFilter.month);
+  if(listFilter.day){
+    const nxt=new Date(listFilter.day+"T00:00:00Z"); nxt.setUTCDate(nxt.getUTCDate()+1);
+    ranges=[[listFilter.day, nxt.toISOString().slice(0,10)]];
+  } else if(listFilter.weeks && listFilter.weeks.length){
+    ranges=listFilter.weeks.map(w=>{
+      const mon=wkMon(w); if(!mon) return null;
+      const end=new Date(mon+"T00:00:00Z"); end.setUTCDate(end.getUTCDate()+7);
+      return [mon, end.toISOString().slice(0,10)];
+    }).filter(Boolean);
+  } else if(mr){
+    ranges=[mr];
   }
   let [scol,sdir]=(listFilter.sort||"production_date|desc").split("|");
   const weekGroup=(scol==="week"); if(weekGroup) scol="production_date";
@@ -1664,7 +1746,13 @@ async function loadList(q){
   const stF=listFilter.status||"open";
   const mk=(sel,opts,withStatus)=>{
     let qq=db.from("production_records").select(sel,opts||{});
-    if(rng){ qq=qq.gte("production_date",rng[0]).lt("production_date",rng[1]); }
+    if(ranges.length===1){
+      qq=qq.gte("production_date",ranges[0][0]).lt("production_date",ranges[0][1]);
+    } else if(ranges.length>1){
+      // weeks are not necessarily next to each other, so each one is its own
+      // bracket rather than one span from the first to the last
+      qq=qq.or(ranges.map(([a,b])=>`and(production_date.gte.${a},production_date.lt.${b})`).join(","));
+    }
     if(tagIds){ qq=qq.in("id",tagIds); }
     if(excludeIds && excludeIds.length){ qq=qq.not("id","in","("+excludeIds.join(",")+")"); }
     if(listFilter.kind){ qq=qq.eq("record_kind",listFilter.kind); }
@@ -1689,6 +1777,14 @@ async function loadList(q){
     mk("id",{count:"exact",head:true},"completed"),
   ]);
   const totAll=totRes?.count??0, totComp=compRes?.count??0, totOpen=Math.max(0,totAll-totComp);
+  // how much of each planned quantity has actually been made, for the rows on
+  // screen only. One call for the page rather than one per row.
+  PROG={};
+  if(data && data.length){
+    const { data:pg }=await db.rpc("record_progress",{ p_ids:data.map(r=>r.id) })
+      .then(r=>r,()=>({data:null}));
+    (pg||[]).forEach(x=>{ PROG[x.record_id]={ made:Number(x.produced_qty||0), days:Number(x.days||0) }; });
+  }
   const shownTotal=stF==="completed"?totComp:(stF==="open"?totOpen:totAll);
   const countBar=`<div class="cnt-strip">
     <div class="cnt"><span class="n">${fmt(totAll)}</span><span class="l">Total records</span></div>
@@ -1701,7 +1797,7 @@ async function loadList(q){
   if(error){
     if(isJwtErr(error)&&await recoverSession()) return loadList(q);
     list.innerHTML=`<div class="empty">Could not load records: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ list.innerHTML=countBar+`<div class="empty">${(q||rng||listFilter.week||listFilter.tag||listFilter.kind||stF!=="all")?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
+  if(!data.length){ list.innerHTML=countBar+`<div class="empty">${(q||ranges.length||listFilter.day||listFilter.tag||listFilter.kind||stF!=="all")?"No records match the current search or filters.":"No records yet. Create your first one."}</div>`; return; }
 
   // open issue types per listed record, for badges
   let flags={};
@@ -1719,8 +1815,9 @@ async function loadList(q){
   list.innerHTML=countBar+data.map(r=>`${weekGroup?(w=>{const h=w&&w!==lastWeek?`<div class="wk-head">${w}</div>`:""; lastWeek=w; return h;})(isoW(r.production_date)):""}<div class="rec" data-id="${r.id}">
       <input type="checkbox" class="qr-sel" data-qr="${r.id}" title="Select for QR printing" onclick="event.stopPropagation()">
       <div>
-        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind==="Sample"?'<span class="badge-sample">SAMPLE</span>':""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${qrListBadge(r)} ${tagsHTML(flags[r.id])}</div>
-        <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.planned_qty!=null?" &middot; qty "+r.planned_qty:""}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
+        <div class="sn">${esc(r.serial||"(no serial)")} ${r.record_kind&&r.record_kind!=="Production"?`<span class="badge-sample" style="background:${kindColour(r.record_kind)}">${esc(r.record_kind.toUpperCase())}</span>`:""} ${r.needs_fabrication?`<span class="badge-sample" style="background:#3457b2" title="${esc(r.fabrication_stage||"Not started")}">FAB${r.fabrication_stage==="Fabrication Complete"?" \u2713":""}</span>`:""} ${r.mo_number?moLink(r,`\u2699 ${esc(r.mo_number)}`,"mobadge"):""} ${qrListBadge(r)} ${tagsHTML(flags[r.id])}</div>
+        <div class="meta">${esc(r.model||"")}${r.light_type?" &middot; "+esc(r.light_type):""} &middot; SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}${r.customer_reference?" &middot; "+esc(r.customer_reference):""}</div>
+        ${qtyLine(r)}
       </div>
       <div class="r-right">
         <span class="chip" data-tone="${tone(r.status)}">${esc(r.status||"Open")}</span>
@@ -1764,7 +1861,7 @@ async function loadList(q){
     const tags=recs.filter(r=>r.serial).map(r=>{
       const url=location.origin+location.pathname.replace(/index\.html?$/,"")+"mo.html?sn="+encodeURIComponent(r.serial);
       const qr="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data="+encodeURIComponent(url);
-      const border=r.record_kind==="Sample"?"#F6851F":"#24275E";
+      const border=kindColour(r.record_kind||"Production");
       return `<div class="tag" style="border-color:${border}">
         <img src="${qr}" alt="QR">
         <div class="sn">${esc(r.serial)}</div>
@@ -2014,6 +2111,7 @@ function renderEditor(rec){
     <h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${isNew?"New record":esc(r.serial||"Record")}
       ${isNew?"":recNavHtml(r.id)}</h1>
     <p class="sub">${isNew?"Enter the essentials to create the record. You can fill the rest later.":"Update fields anytime. Changes save to the database."}</p>
+    ${isNew?"":`<div id="recQty"></div>`}
     <div class="banner" id="banner"></div>
 
     <div class="card"><h2>Record</h2><div class="pad">
@@ -2035,10 +2133,11 @@ function renderEditor(rec){
         <div class="field"><label>Quantity *</label><input id="f-qty" type="number" min="0" value="${r.planned_qty!=null?r.planned_qty:""}" placeholder="e.g. 120">
           <div class="hint" id="qtyHint"></div></div>
         <div class="field"><label>Piece type</label>
-          <div class="radios">
-            <label class="radio"><input type="radio" name="kind" value="Production" ${(r.record_kind||"Production")==="Production"?"checked":""}> Production</label>
-            <label class="radio"><input type="radio" name="kind" value="Sample" ${r.record_kind==="Sample"?"checked":""}> Sample</label>
-          </div></div>
+          <div class="radios">${kindList(r.record_kind).map(k=>
+            `<label class="radio"><input type="radio" name="kind" value="${esc(k)}" ${
+              (r.record_kind||"Production")===k?"checked":""}> ${esc(k)}</label>`).join("")}
+          </div>
+          <span class="hint">Only Production counts towards the cycle time benchmarks. The others are timed but kept out of them.</span></div>
         <div class="field"><label>Fabrication needed?</label>
           <div class="radios">
             <label class="radio"><input type="radio" name="fab" value="no" ${!r.needs_fabrication?"checked":""}> No</label>
@@ -2448,21 +2547,27 @@ function drawStages(body,canEdit,stageErr,call){
       ${stageErr?`<div class="empty">The production stages table is not set up yet. Run the SQL batch for this release, then reload.<br><span class="meta">${esc(stageErr.message)}</span></div>`:`
       <p class="hint" style="margin:0 0 12px">A product is not always finished in one go. These are the stages a worker entry can be logged against, so a job split across days can be recorded properly.
         Order is the order they appear in the picker. A stage that has been used is retired rather than deleted.</p>
+      <p class="hint" style="margin:0 0 12px"><b>One stage is the final assembly</b>, the point at which the finished goods exist. Quantities logged against that stage are what counts as produced, everywhere in the system. Work logged at the other stages is still recorded, but is not counted again as output, otherwise the same pieces would be counted once per stage.
+        ${STAGES.some(x=>x.is_final)?"":`<br><span style="color:var(--hold)"><b>No stage is marked as final assembly yet.</b> Until one is, every stage counts, and a job that passes through two stages counts twice.</span>`}</p>
       ${canEdit?`<div class="row">
         <div class="field"><label>Stage name</label><input id="st-name" placeholder="Fitting LED and Driver into Tray"></div>
         <div class="field"><label>Order</label><input id="st-sort" type="number" min="0" step="10" placeholder="30"></div>
       </div>
       <button class="btn primary" id="st-add">Add stage</button>`:""}`}
     </div>
-    ${stageErr?"":`<div class="tbl-wrap"><table><thead><tr><th style="width:70px">Order</th><th>Stage</th><th style="width:190px"></th></tr></thead><tbody>${
+    ${stageErr?"":`<div class="tbl-wrap"><table><thead><tr><th style="width:70px">Order</th><th>Stage</th><th style="width:150px">Final assembly</th><th style="width:190px"></th></tr></thead><tbody>${
       STAGES.length?STAGES.map(s=>`<tr${s.active===false?' style="opacity:.6"':''}>
         <td style="color:var(--muted)">${esc(s.sort_order??"")}</td>
-        <td><b>${esc(s.name||"")}</b>${s.active===false?' <span class="chip" data-tone="hold">retired</span>':""}</td>
+        <td><b>${esc(s.name||"")}</b>${s.active===false?' <span class="chip" data-tone="hold">retired</span>':""}${
+          s.is_final?' <span class="chip" data-tone="ok">counts as produced</span>':""}</td>
+        <td><label class="radio"><input type="radio" name="stFinal" data-final="${esc(s.id)}"
+          ${s.is_final?"checked":""} ${canEdit&&s.active!==false?"":"disabled"}>
+          <span style="font-weight:500;color:var(--muted)">${s.is_final?"yes":"set"}</span></label></td>
         <td style="white-space:nowrap">${canEdit?`
           <button class="btn ghost sm" data-edit-stage="${esc(s.id)}">Edit</button>
           <button class="btn ${s.active===false?"primary":"danger"} sm" data-off-stage="${esc(s.id)}" data-to="${s.active===false?"1":"0"}">
             ${s.active===false?"Bring back":"Retire"}</button>`:""}</td>
-      </tr>`).join(""):`<tr><td colspan="3" style="color:var(--muted)">No stages yet. Add the ones your foremen use.</td></tr>`}
+      </tr>`).join(""):`<tr><td colspan="4" style="color:var(--muted)">No stages yet. Add the ones your foremen use.</td></tr>`}
     </tbody></table></div>`}
     </div>`;
   if(!canEdit||stageErr) return;
@@ -2474,7 +2579,7 @@ function drawStages(body,canEdit,stageErr,call){
     if(!n){ banner("Type the stage name first."); return; }
     if(STAGES.some(s=>(s.name||"").toLowerCase()===n.toLowerCase())){ banner(`${n} is already a stage.`); return; }
     sadd.disabled=true;
-    await call("upsert_production_stage",{ p_id:null, p_name:n, p_sort:o===""?null:Number(o), p_active:true },`Stage "${n}" added.`);
+    await call("upsert_production_stage",{ p_id:null, p_name:n, p_sort:o===""?null:Number(o), p_active:true, p_final:null },`Stage "${n}" added.`);
     sadd.disabled=false;
   };
   body.querySelectorAll("[data-off-stage]").forEach(b=>b.onclick=async()=>{
@@ -2482,7 +2587,7 @@ function drawStages(body,canEdit,stageErr,call){
     const on=b.dataset.to==="1";
     if(!on && !confirm(`Retire "${s.name}"?\n\nIt stops being offered on new entries. Entries already logged against it keep it.`)) return;
     b.disabled=true;
-    await call("upsert_production_stage",{ p_id:String(s.id), p_name:s.name, p_sort:s.sort_order, p_active:on },
+    await call("upsert_production_stage",{ p_id:String(s.id), p_name:s.name, p_sort:s.sort_order, p_active:on, p_final:on?null:false },
       on?`"${s.name}" is back.`:`"${s.name}" retired.`);
   });
   body.querySelectorAll("[data-edit-stage]").forEach(b=>b.onclick=()=>{
@@ -2490,8 +2595,348 @@ function drawStages(body,canEdit,stageErr,call){
     const n=prompt("Stage name",s.name||""); if(n===null) return;
     if(!n.trim()){ banner("A stage name is required."); return; }
     const o=prompt("Order in the picker (lower comes first)",String(s.sort_order??"")); if(o===null) return;
-    call("upsert_production_stage",{ p_id:String(s.id), p_name:n.trim(), p_sort:o.trim()===""?null:Number(o), p_active:s.active!==false },"Saved.");
+    call("upsert_production_stage",{ p_id:String(s.id), p_name:n.trim(), p_sort:o.trim()===""?null:Number(o), p_active:s.active!==false, p_final:null },"Saved.");
   });
+  body.querySelectorAll("[data-final]").forEach(r=>r.onchange=()=>{
+    const s=STAGES.find(x=>String(x.id)===r.dataset.final); if(!s) return;
+    if(!confirm(`Count "${s.name}" as the final assembly stage?\n\nQuantities logged at this stage become the produced figures everywhere: the dashboard, the daily report and the emails. Any stage currently holding it loses it.`)){
+      r.checked=!!s.is_final; return; }
+    call("upsert_production_stage",{ p_id:String(s.id), p_name:s.name, p_sort:s.sort_order,
+      p_active:s.active!==false, p_final:true },`"${s.name}" is now the final assembly stage.`);
+  });
+}
+
+/* The chosen weeks, shown as chips under the filter bar. A multiple select
+   hides what is chosen behind a scroll box, and on this screen the period is
+   the filter people get wrong most often, so it is spelled out. */
+function paintWeekChips(){
+  const box=document.getElementById("weekChips");
+  if(!box) return;
+  const ws=listFilter.weeks||[];
+  if(!ws.length && !listFilter.day){ box.innerHTML=""; return; }
+  box.innerHTML=
+    (listFilter.day?`<span class="wchip" data-day="1">${esc(listFilter.day)}
+       <button type="button" data-rmday="1" title="Clear the day">&times;</button></span>`:"")
+    + ws.map(w=>`<span class="wchip">${esc(w)}
+       <button type="button" data-rmweek="${esc(w)}" title="Remove this week">&times;</button></span>`).join("")
+    + (ws.length>1?`<span class="wchip-n">${ws.length} weeks</span>`:"")
+    + ((ws.length||listFilter.day)?`<button type="button" class="wchip-clear" id="wchipClear">Clear period</button>`:"");
+  box.querySelectorAll("[data-rmweek]").forEach(b=>b.onclick=()=>{
+    listFilter.weeks=listFilter.weeks.filter(x=>x!==b.dataset.rmweek); reloadWithFilter(); });
+  const rd=box.querySelector("[data-rmday]");
+  if(rd) rd.onclick=()=>{ listFilter.day=""; const e=document.getElementById("f-day"); if(e) e.value=""; reloadWithFilter(); };
+  const cl=document.getElementById("wchipClear");
+  if(cl) cl.onclick=()=>{ listFilter.weeks=[]; listFilter.day="";
+    const e=document.getElementById("f-day"); if(e) e.value=""; reloadWithFilter(); };
+}
+
+function reloadWithFilter(){
+  LPAGE=30;
+  paintWeekChips();
+  loadList((window.__homeSearch?window.__homeSearch.get():"").trim());
+}
+
+/* The headline on a record page. It counts the same entries the report counts,
+   so the two can never disagree, and it breaks the quantity down by day when
+   the job was built up over more than one. */
+function paintRecQty(entries){
+  const box=document.getElementById("recQty");
+  if(!box||!current) return;
+  const finals=STAGES.filter(s=>s.is_final).map(s=>s.name);
+  const kept=(entries||[]).filter(e=>!e.stage || finals.includes(e.stage));
+  const made=kept.reduce((a,e)=>a+(Number(e.qty)||0),0);
+  const planned=current.planned_qty==null?null:Number(current.planned_qty);
+  const left=planned==null?null:Math.max(0,planned-made);
+  const pct=planned?Math.min(100,Math.round(made/planned*100)):0;
+  const byDay=new Map();
+  kept.forEach(e=>{ const d=e.work_date||current.production_date||"no date";
+    byDay.set(d,(byDay.get(d)||0)+(Number(e.qty)||0)); });
+  const days=[...byDay.entries()].sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const skipped=(entries||[]).length-kept.length;
+  box.innerHTML=`<div class="rq">
+    <div class="rq-main">
+      <div><b>${nfm(made)}</b><span>produced</span></div>
+      <div><b>${planned==null?"\u2014":nfm(planned)}</b><span>planned</span></div>
+      <div><b${left?' style="color:var(--orange)"':''}>${left==null?"\u2014":nfm(left)}</b><span>remaining</span></div>
+      ${planned!=null?`<div class="rq-track" title="${pct}% of the planned quantity"><i style="width:${pct}%"></i></div>`:""}
+    </div>
+    ${days.length>1?`<div class="rq-days">Built up over ${days.length} days: ${
+      days.map(([d,q])=>`<span><b>${nfm(q)}</b> on ${esc(d)}</span>`).join("")}</div>`:""}
+    ${skipped?`<div class="rq-note">${skipped} ${skipped===1?"entry is":"entries are"} at an earlier stage and not counted here, so the same pieces are not counted twice.</div>`:""}
+    ${!finals.length&&(entries||[]).some(e=>e.stage)?`<div class="rq-note" style="color:var(--hold)">No stage is marked as final assembly, so every stage is being counted and this figure may be too high.</div>`:""}
+  </div>`;
+}
+
+/* ---------------- planned against produced ----------------
+   Produced is what the final assembly stage logged, so it is the same number
+   the report and the dashboard show. A record with no entries yet reads as
+   nothing made rather than as complete, which is the honest state. */
+let PROG={};
+
+function qtyLine(r){
+  const planned=r.planned_qty==null?null:Number(r.planned_qty);
+  const made=PROG[r.id]?PROG[r.id].made:null;
+  const days=PROG[r.id]?PROG[r.id].days:0;
+  if(planned==null && made==null) return "";
+  if(made==null) return `<div class="qbar"><span class="qnum">${nfm(planned)}</span> planned</div>`;
+  const left=planned==null?null:Math.max(0,planned-made);
+  const pct=planned?Math.min(100,Math.round(made/planned*100)):0;
+  const tone=planned==null?"":(made>=planned?"done":(made>0?"part":"none"));
+  return `<div class="qbar" data-q="${tone}">
+    <span class="qnum">${nfm(made)}</span>${planned!=null?` of <span class="qnum">${nfm(planned)}</span>`:""} made
+    ${planned!=null?`<span class="qtrack"><i style="width:${pct}%"></i></span><span class="qpct">${pct}%</span>`:""}
+    ${left?`<span class="qleft">${nfm(left)} left</span>`:""}
+    ${days>1?`<span class="qdays" title="Built up over ${days} days">${days} days</span>`:""}
+  </div>`;
+}
+
+/* ---------------- daily production and attendance ----------------
+   Both read pts_counted_entries through their functions, so the quantity here
+   is the same quantity the dashboard and the emails use: logged at the final
+   assembly stage, on the day the work actually happened rather than the day
+   the record was closed. */
+let RPTAB="daily", RPFROM="", RPTO="";
+
+function ymd(d){ return new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10); }
+function isoWeek(s){
+  const d=new Date(s+"T00:00:00Z");
+  if(isNaN(d.getTime())) return "";
+  const t=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));
+  t.setUTCDate(t.getUTCDate()+4-(t.getUTCDay()||7));
+  const n=Math.ceil((((t-Date.UTC(t.getUTCFullYear(),0,1))/864e5)+1)/7);
+  return `${t.getUTCFullYear()}-WK${String(n).padStart(2,"0")}`;
+}
+const hhmm = m => { const v=Math.round(Number(m)||0); return `${Math.floor(v/60)}h ${String(v%60).padStart(2,"0")}m`; };
+const nfm  = x => Number(x||0).toLocaleString("en-US");
+
+async function renderReport(){
+  setHash("#/report");
+  document.body.classList.add("wide");
+  if(!RPFROM){
+    const t=new Date(), f=new Date(t.getTime()-13*864e5);
+    RPFROM=ymd(f); RPTO=ymd(t);
+  }
+  root.innerHTML=shell(`
+    <button class="btn link" id="back">&larr; All records</button>
+    <h1>Production report</h1>
+    <p class="sub">What was produced, on the day it was produced, and who was in.</p>
+    <div class="banner" id="banner"></div>
+    <div class="toolbar">
+      <div class="tabs" id="rpTabs">
+        <button data-t="daily" class="${RPTAB==="daily"?"on":""}">By day</button>
+        <button data-t="week"  class="${RPTAB==="week"?"on":""}">By week</button>
+        <button data-t="att"   class="${RPTAB==="att"?"on":""}">Attendance</button>
+      </div>
+      <div class="field" style="max-width:170px"><label>From</label><input id="rp-from" type="date" value="${esc(RPFROM)}"></div>
+      <div class="field" style="max-width:170px"><label>To</label><input id="rp-to" type="date" value="${esc(RPTO)}"></div>
+      <button class="btn ghost sm" id="rp-7">Last 7 days</button>
+      <button class="btn ghost sm" id="rp-30">Last 30 days</button>
+      <button class="btn ghost sm" id="rp-today">Today</button>
+      <button class="btn primary" id="rp-xls">Export to Excel</button>
+    </div>
+    <div id="rpBody"><div class="spinner"></div></div>`);
+  wireShell();
+  document.getElementById("back").onclick=renderHome;
+  document.querySelectorAll("#rpTabs button").forEach(b=>b.onclick=()=>{ RPTAB=b.dataset.t; renderReport(); });
+  const setRange=(f,t)=>{ RPFROM=f; RPTO=t; renderReport(); };
+  document.getElementById("rp-from").onchange=e=>{ RPFROM=e.target.value; drawReport(); };
+  document.getElementById("rp-to").onchange  =e=>{ RPTO=e.target.value;   drawReport(); };
+  document.getElementById("rp-7").onclick    =()=>setRange(ymd(new Date(Date.now()-6*864e5)), ymd(new Date()));
+  document.getElementById("rp-30").onclick   =()=>setRange(ymd(new Date(Date.now()-29*864e5)), ymd(new Date()));
+  document.getElementById("rp-today").onclick=()=>{ const d=ymd(new Date()); setRange(d,d); };
+  await drawReport();
+}
+
+let RPDATA={ daily:[], att:[] };
+
+async function drawReport(){
+  const body=document.getElementById("rpBody");
+  body.innerHTML=`<div class="spinner"></div>`;
+  const args={ p_from:RPFROM||null, p_to:RPTO||null };
+  const [dR,aR]=await Promise.all([
+    db.rpc("production_daily",args),
+    db.rpc("production_attendance",args)
+  ]);
+  if(dR.error){
+    const missing=/function|does not exist|schema cache/i.test(dR.error.message||"");
+    body.innerHTML=`<div class="card"><div class="empty">${missing
+      ? "The production report functions are not installed yet. Run batch54.sql in Supabase."
+      : "Could not load the report: "+esc(dR.error.message)}</div></div>`;
+    return;
+  }
+  RPDATA={ daily:dR.data||[], att:aR.data||[] };
+  const warn=STAGES.length>1 && !STAGES.some(s=>s.is_final)
+    ? `<div class="banner show err">No stage is marked as final assembly, so every stage is being counted. A job that passed through two stages is counted twice here. Set it on the People screen, Production stages tab.</div>`
+    : "";
+  body.innerHTML=warn+(RPTAB==="att"?attHtml():RPTAB==="week"?weekHtml():dailyHtml());
+  const x=document.getElementById("rp-xls");
+  if(x) x.onclick=exportReport;
+}
+
+function tiles(list){
+  const q=list.reduce((a,r)=>a+Number(r.produced_qty||0),0);
+  const m=list.reduce((a,r)=>a+Number(r.minutes||0),0);
+  const days=list.length;
+  return `<div class="rp-tiles">
+    <div><b>${nfm(q)}</b><span>pieces produced</span></div>
+    <div><b>${nfm(days)}</b><span>${days===1?"day":"days"} with output</span></div>
+    <div><b>${days?nfm(Math.round(q/days)):0}</b><span>average per day</span></div>
+    <div><b>${hhmm(m)}</b><span>labour logged</span></div>
+    <div><b>${m?(q/(m/60)).toFixed(1):"0"}</b><span>pieces per labour hour</span></div>
+  </div>`;
+}
+
+const RPSTYLE=`<style>
+  .rp-tiles{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 4px}
+  .rp-tiles div{flex:1 1 150px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+  .rp-tiles b{display:block;font-size:24px;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums;line-height:1.15}
+  html[data-theme="dark"] .rp-tiles b{color:#aeb3ff}
+  .rp-tiles span{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted)}
+  .rp-sub{font-size:12px;color:var(--muted);margin-top:3px}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tr.rp-tot td{font-weight:800;border-top:2px solid var(--line)}
+  tr.rp-dayhead td{background:var(--bg);font-weight:700;letter-spacing:.4px}
+</style>`;
+
+function dailyHtml(){
+  const rows=RPDATA.daily;
+  if(!rows.length) return RPSTYLE+`<div class="card"><div class="empty">Nothing was produced in this range, or no worker entries carry a date in it.</div></div>`;
+  const tot=k=>rows.reduce((a,r)=>a+Number(r[k]||0),0);
+  return RPSTYLE+tiles(rows)+`
+    <div class="card"><h2>Produced by day</h2>
+    <div class="tbl-wrap"><table><thead><tr>
+      <th style="min-width:130px">Day</th><th>Week</th>
+      <th class="num">Pieces</th><th class="num">Records</th><th class="num">Orders</th>
+      <th class="num">Workers</th><th class="num">Labour</th><th class="num">Per labour hour</th>
+    </tr></thead><tbody>
+    ${rows.map(r=>`<tr>
+      <td><b>${esc(r.day)}</b><div class="rp-sub">${new Date(r.day+"T00:00:00").toLocaleDateString("en-GB",{weekday:"long"})}</div></td>
+      <td style="color:var(--muted)">${esc(isoWeek(r.day))}</td>
+      <td class="num"><b>${nfm(r.produced_qty)}</b></td>
+      <td class="num">${nfm(r.records)}</td>
+      <td class="num">${nfm(r.orders)}</td>
+      <td class="num">${nfm(r.workers)}</td>
+      <td class="num">${hhmm(r.minutes)}</td>
+      <td class="num">${Number(r.minutes)?(Number(r.produced_qty)/(Number(r.minutes)/60)).toFixed(1):""}</td>
+    </tr>`).join("")}
+    <tr class="rp-tot"><td>Total</td><td></td>
+      <td class="num">${nfm(tot("produced_qty"))}</td>
+      <td class="num" title="Left blank on purpose. A record worked over three days appears on all three, so adding the column up would count it three times.">&mdash;</td>
+      <td class="num">&mdash;</td><td class="num">&mdash;</td>
+      <td class="num">${hhmm(tot("minutes"))}</td>
+      <td class="num">${(()=>{const q=tot("produced_qty"),m=tot("minutes");return m?(q/(m/60)).toFixed(1):"";})()}</td></tr>
+    </tbody></table></div></div>`;
+}
+
+function byWeek(){
+  const m=new Map();
+  RPDATA.daily.forEach(r=>{
+    const w=isoWeek(r.day); if(!w) return;
+    const o=m.get(w)||{ week:w, produced_qty:0, records:0, minutes:0, days:0, first:r.day, last:r.day };
+    o.produced_qty+=Number(r.produced_qty||0);
+    o.records     +=Number(r.records||0);
+    o.minutes     +=Number(r.minutes||0);
+    o.days++;
+    if(r.day<o.first) o.first=r.day;
+    if(r.day>o.last)  o.last=r.day;
+    m.set(w,o);
+  });
+  return [...m.values()].sort((a,b)=>b.week.localeCompare(a.week));
+}
+
+function weekHtml(){
+  const rows=byWeek();
+  if(!rows.length) return RPSTYLE+`<div class="card"><div class="empty">Nothing was produced in this range.</div></div>`;
+  const tot=k=>rows.reduce((a,r)=>a+Number(r[k]||0),0);
+  return RPSTYLE+tiles(RPDATA.daily)+`
+    <div class="card"><h2>Produced by week</h2>
+    <div class="tbl-wrap"><table><thead><tr>
+      <th style="min-width:120px">Week</th><th>Days covered</th>
+      <th class="num">Pieces</th><th class="num">Days worked</th>
+      <th class="num">Average per day</th><th class="num">Labour</th><th class="num">Per labour hour</th>
+    </tr></thead><tbody>
+    ${rows.map(r=>`<tr>
+      <td><b>${esc(r.week)}</b></td>
+      <td style="color:var(--muted)">${esc(r.first)} to ${esc(r.last)}</td>
+      <td class="num"><b>${nfm(r.produced_qty)}</b></td>
+      <td class="num">${nfm(r.days)}</td>
+      <td class="num">${nfm(Math.round(r.produced_qty/r.days))}</td>
+      <td class="num">${hhmm(r.minutes)}</td>
+      <td class="num">${r.minutes?(r.produced_qty/(r.minutes/60)).toFixed(1):""}</td>
+    </tr>`).join("")}
+    <tr class="rp-tot"><td>Total</td><td></td>
+      <td class="num">${nfm(tot("produced_qty"))}</td><td class="num">${nfm(tot("days"))}</td>
+      <td class="num">${tot("days")?nfm(Math.round(tot("produced_qty")/tot("days"))):""}</td>
+      <td class="num">${hhmm(tot("minutes"))}</td>
+      <td class="num">${(()=>{const q=tot("produced_qty"),m=tot("minutes");return m?(q/(m/60)).toFixed(1):"";})()}</td></tr>
+    </tbody></table></div></div>`;
+}
+
+function attHtml(){
+  const rows=RPDATA.att;
+  if(!rows.length) return RPSTYLE+`<div class="card"><div class="empty">No attendance in this range. Attendance is worked out from worker entries, so a day with no entries shows nobody.</div></div>`;
+  const days=[...new Set(rows.map(r=>r.day))].sort().reverse();
+  const people=new Set(rows.map(r=>r.staff_id));
+  return RPSTYLE+`
+    <div class="rp-tiles">
+      <div><b>${nfm(days.length)}</b><span>days</span></div>
+      <div><b>${nfm(people.size)}</b><span>people recorded</span></div>
+      <div><b>${hhmm(rows.reduce((a,r)=>a+Number(r.minutes||0),0))}</b><span>labour logged</span></div>
+      <div><b>${nfm(Math.round(rows.length/days.length))}</b><span>average people per day</span></div>
+    </div>
+    <p class="hint">Attendance is derived from the work logged, not from a clock. Somebody who was in but has no entry against them does not appear, and an entry naming four people counts as four people present sharing that batch.</p>
+    <div class="card"><h2>Who was in</h2>
+    <div class="tbl-wrap"><table><thead><tr>
+      <th style="min-width:160px">Worker</th><th>Employee ID</th>
+      <th class="num">Entries</th><th class="num">Records</th><th class="num">Pieces</th>
+      <th class="num">Labour</th><th class="num">First in</th><th class="num">Last out</th>
+    </tr></thead><tbody>
+    ${days.map(d=>{
+      const dr=rows.filter(r=>r.day===d);
+      return `<tr class="rp-dayhead"><td colspan="8">${esc(d)} &middot; ${new Date(d+"T00:00:00").toLocaleDateString("en-GB",{weekday:"long"})}
+        &middot; ${dr.length} ${dr.length===1?"person":"people"}
+        &middot; ${hhmm(dr.reduce((a,r)=>a+Number(r.minutes||0),0))}</td></tr>`
+        + dr.map(r=>`<tr>
+          <td>${esc(r.full_name||"(not named)")}</td>
+          <td style="color:var(--muted)">${esc(r.employee_id||"")}</td>
+          <td class="num">${nfm(r.entries)}</td>
+          <td class="num">${nfm(r.records)}</td>
+          <td class="num">${nfm(r.produced_qty)}</td>
+          <td class="num">${hhmm(r.minutes)}</td>
+          <td class="num">${esc((r.first_in||"").slice(0,5))}</td>
+          <td class="num">${esc((r.last_out||"").slice(0,5))}</td>
+        </tr>`).join("");
+    }).join("")}
+    </tbody></table></div></div>`;
+}
+
+function exportReport(){
+  const wb=XLSX.utils.book_new();
+  // freeze panes are a SheetJS Pro feature and are silently dropped by the
+  // community build, so only the column widths and the filter are set here
+  const W=(ws,widths)=>{ ws["!cols"]=widths.map(w=>({wch:w}));
+    ws["!autofilter"]={ref:XLSX.utils.encode_range({s:{r:0,c:0},
+      e:{r:Math.max((ws["!ref"]?XLSX.utils.decode_range(ws["!ref"]).e.r:1),1), c:widths.length-1}})};
+    return ws; };
+
+  const d=[["Day","Weekday","Week","Pieces","Records","Orders","Workers","Minutes","Pieces per labour hour"],
+    ...RPDATA.daily.map(r=>[r.day, new Date(r.day+"T00:00:00").toLocaleDateString("en-GB",{weekday:"long"}),
+      isoWeek(r.day), Number(r.produced_qty||0), Number(r.records||0), Number(r.orders||0),
+      Number(r.workers||0), Number(r.minutes||0),
+      Number(r.minutes)?Number((Number(r.produced_qty)/(Number(r.minutes)/60)).toFixed(2)):""])];
+  XLSX.utils.book_append_sheet(wb, W(XLSX.utils.aoa_to_sheet(d),[12,12,11,10,9,8,9,10,20]), "By day");
+
+  const w=[["Week","From","To","Pieces","Days worked","Average per day","Minutes"],
+    ...byWeek().map(r=>[r.week,r.first,r.last,r.produced_qty,r.days,Math.round(r.produced_qty/r.days),r.minutes])];
+  XLSX.utils.book_append_sheet(wb, W(XLSX.utils.aoa_to_sheet(w),[12,12,12,10,13,16,10]), "By week");
+
+  const a=[["Day","Weekday","Worker","Employee ID","Entries","Records","Pieces","Minutes","First in","Last out"],
+    ...RPDATA.att.map(r=>[r.day, new Date(r.day+"T00:00:00").toLocaleDateString("en-GB",{weekday:"long"}),
+      r.full_name||"", r.employee_id||"", Number(r.entries||0), Number(r.records||0),
+      Number(r.produced_qty||0), Number(r.minutes||0), (r.first_in||"").slice(0,5), (r.last_out||"").slice(0,5)])];
+  XLSX.utils.book_append_sheet(wb, W(XLSX.utils.aoa_to_sheet(a),[12,12,24,13,9,9,10,10,10,10]), "Attendance");
+
+  XLSX.writeFile(wb, `ProTrace_production_${RPFROM||"all"}_to_${RPTO||"all"}.xlsx`);
 }
 
 /* ---------------- completion email queue ----------------
@@ -3736,6 +4181,7 @@ async function loadWorkers(){
       ? `<span class="chip" data-tone="info" title="${stages.size>1?stages.size+" different stages":""}${stages.size>1&&days.size>1?", ":""}${days.size>1?days.size+" different days":""}">multi stage</span>`
       : "";
   }
+  paintRecQty(data);
   if(!data.length){ box.innerHTML=`<div class="empty">No entries yet.</div>`; return; }
   const totQty=data.reduce((a,w)=>a+(w.qty||0),0);
   const totMin=data.reduce((a,w)=>a+(Number(w.total_mins)||0),0);
@@ -4427,6 +4873,8 @@ function fgAnswered(r){
   return !!r && (r.fg_skipped===true || !!r.fg_pallet_path || !!r.fg_piece_path);
 }
 function fgUnanswered(r){
+  // asked on either status: Partial complete means a lot is ready, Completed
+  // means the last one is
   return !!r && r.status==="Completed" && !fgAnswered(r);
 }
 function fgSpotlight(){
@@ -4661,8 +5109,7 @@ function fgModal(r){
 }
 
 function printTag(r){
-  const isSample=(r.record_kind==="Sample");
-  const bcol=isSample?"#F6851F":"#24275E";
+  const bcol=kindColour(r.record_kind||"Production");
   const w=window.open("","_blank","width=420,height=560");
   w.document.write(`<html><head><title>${esc(r.serial)}</title><style>
     body{font-family:Arial,sans-serif;text-align:center;padding:26px;color:#1c1e33}
@@ -4674,7 +5121,7 @@ function printTag(r){
     .b{height:6px;background:${bcol};margin:18px auto 0;width:272px;border-radius:3px}
   </style></head><body>
     <img src="${qrURL(r.serial)}" alt="QR">
-    <div class="kind">${isSample?"SAMPLE":"PRODUCTION"}</div>
+    <div class="kind">${esc((r.record_kind||"Production").toUpperCase())}</div>
     <div class="sn">${esc(r.serial)}</div>
     <div class="m">${esc(r.model||"")}</div>
     <div class="m">SO ${esc(r.so_number||"-")}${r.customer?" &middot; "+esc(r.customer):""}${r.planned_qty!=null?" &middot; Qty "+r.planned_qty:""}</div>
@@ -5020,7 +5467,7 @@ function nlcmSetup(){
 
 
 
-const NLC_BUILD = "2026-11-23 19:05";
+const NLC_BUILD = "2026-11-25 19:30";
 /* Baked into the file at export, unlike APP_VERSION which comes from the
    app_releases table and therefore reads the same before and after an
    upload. This is how you tell which build a browser actually has. */
